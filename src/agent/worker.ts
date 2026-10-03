@@ -10,9 +10,6 @@ import type {
   ToolSchema,
 } from './ipc';
 
-/** A model that never stops calling tools must not hold a round open forever. */
-export const MAX_TOOL_ITERATIONS = 50;
-
 export interface ToolOutcome {
   content: string;
   isError: boolean;
@@ -29,6 +26,8 @@ export interface ModelLoopOptions {
   user: string;
   tools: readonly ToolSchema[];
   roundContextCapTokens: number;
+  /** The most tool calls a round may make before it is ended by force. */
+  maxToolCallsPerRound: number;
   /** Sends the call to the supervisor, which owns every tool and every file. */
   requestTool(callId: string, name: string, argumentsJson: string): Promise<ToolOutcome>;
   emit(event: ModelLoopEvent): void;
@@ -48,7 +47,11 @@ export async function runModelLoop(options: ModelLoopOptions): Promise<void> {
     { role: 'user', content: options.user },
   ];
 
-  for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration += 1) {
+  let toolCallsMade = 0;
+
+  // Every pass either ends the round or adds at least one tool call, and tool
+  // calls are bounded by the configured limit, so this loop always terminates.
+  for (;;) {
     let response;
     try {
       response = await options.client.chat({ messages, tools: options.tools });
@@ -96,6 +99,17 @@ export async function runModelLoop(options: ModelLoopOptions): Promise<void> {
       return;
     }
 
+    if (toolCallsMade + calls.length > options.maxToolCallsPerRound) {
+      options.emit({
+        type: 'round_end',
+        endReason: 'iteration_cap',
+        finalReply: null,
+        error: `the model asked for ${toolCallsMade + calls.length} tool calls, over the round limit of ${options.maxToolCallsPerRound}`,
+      });
+      return;
+    }
+    toolCallsMade += calls.length;
+
     for (const call of calls) {
       let outcome: ToolOutcome;
       try {
@@ -109,13 +123,6 @@ export async function runModelLoop(options: ModelLoopOptions): Promise<void> {
       messages.push({ role: 'tool', toolCallId: call.id, content: outcome.content });
     }
   }
-
-  options.emit({
-    type: 'round_end',
-    endReason: 'iteration_cap',
-    finalReply: null,
-    error: `the model kept calling tools past ${MAX_TOOL_ITERATIONS} steps`,
-  });
 }
 
 // ---------------------------------------------------------------- process IPC
@@ -127,6 +134,7 @@ interface WorkerRuntime {
 export function createWorkerRuntime(send: (message: ChildToParentMessage) => void): WorkerRuntime {
   let client: ModelClient | null = null;
   let cap = 0;
+  let maxToolCalls = 0;
   let activeRound: number | null = null;
   const pending = new Map<string, (outcome: ToolOutcome) => void>();
 
@@ -157,6 +165,7 @@ export function createWorkerRuntime(send: (message: ChildToParentMessage) => voi
       user,
       tools,
       roundContextCapTokens: cap,
+      maxToolCallsPerRound: maxToolCalls,
       requestTool: (callId, name, argumentsJson) =>
         new Promise<ToolOutcome>((resolve) => {
           pending.set(callId, resolve);
@@ -179,8 +188,12 @@ export function createWorkerRuntime(send: (message: ChildToParentMessage) => voi
   return {
     handleMessage(message: ParentToChildMessage): void {
       if (message.type === 'init') {
-        client = new OpenAICompatibleClient(message.model);
+        client = new OpenAICompatibleClient(
+          message.model,
+          message.modelRequestTimeoutSeconds * 1000,
+        );
         cap = message.roundContextCapTokens;
+        maxToolCalls = message.maxToolCallsPerRound;
         return;
       }
       if (message.type === 'shutdown') {
@@ -279,7 +292,14 @@ function parseParentMessage(raw: unknown): ParentToChildMessage | null {
   if (type === 'init') {
     const model = raw['model'];
     const cap = raw['roundContextCapTokens'];
-    if (!isRecord(model) || typeof cap !== 'number') {
+    const maxToolCalls = raw['maxToolCallsPerRound'];
+    const timeoutSeconds = raw['modelRequestTimeoutSeconds'];
+    if (
+      !isRecord(model) ||
+      typeof cap !== 'number' ||
+      typeof maxToolCalls !== 'number' ||
+      typeof timeoutSeconds !== 'number'
+    ) {
       return null;
     }
     if (
@@ -293,6 +313,8 @@ function parseParentMessage(raw: unknown): ParentToChildMessage | null {
       type: 'init',
       model: { baseUrl: model['baseUrl'], apiKey: model['apiKey'], model: model['model'] },
       roundContextCapTokens: cap,
+      maxToolCallsPerRound: maxToolCalls,
+      modelRequestTimeoutSeconds: timeoutSeconds,
     };
   }
   if (type === 'wake') {

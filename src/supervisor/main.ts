@@ -149,6 +149,8 @@ interface AgentProcessDeps {
   homeDir: string;
   model: ModelSettings;
   roundContextCapTokens: number;
+  maxToolCallsPerRound: number;
+  modelRequestTimeoutSeconds: number;
   onProblem(agent: string, message: string): void;
 }
 
@@ -213,6 +215,8 @@ class AgentProcess implements WorkerTransport {
       type: 'init',
       model: this.deps.model,
       roundContextCapTokens: this.deps.roundContextCapTokens,
+      maxToolCallsPerRound: this.deps.maxToolCallsPerRound,
+      modelRequestTimeoutSeconds: this.deps.modelRequestTimeoutSeconds,
     });
   }
 
@@ -307,7 +311,10 @@ function main(): void {
   const ledger = new Ledger(paths.ledgerPath);
   const blackbox = new Blackbox(paths.blackboxDir);
   const registry = new RoundRegistry();
-  const memoryModel: ModelClient = new OpenAICompatibleClient(models.memory);
+  const memoryModel: ModelClient = new OpenAICompatibleClient(
+    models.memory,
+    values.modelRequestTimeoutSeconds * 1000,
+  );
   const now = (): number => Date.now();
 
   const state: Supervisor = {
@@ -354,6 +361,8 @@ function main(): void {
       homeDir: path.join(paths.agentsDir, agent),
       model: models.agent,
       roundContextCapTokens: values.roundContextCapTokens,
+      maxToolCallsPerRound: values.maxToolCallsPerRound,
+      modelRequestTimeoutSeconds: values.modelRequestTimeoutSeconds,
       onProblem: (name, message) => {
         runtimeOf(name).lastError = message;
         blackbox.append(name, 'worker_problem', now(), null, { message });

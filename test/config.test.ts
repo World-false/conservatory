@@ -15,6 +15,8 @@ const VALID_VALUES = {
   maxSlots: 1,
   memoryCapChars: 8000,
   roundContextCapTokens: 60000,
+  maxToolCallsPerRound: 50,
+  modelRequestTimeoutSeconds: 120,
   taskClaimTimeoutHours: 24,
   exchangeRate: null,
   consolePort: 4317,
@@ -62,6 +64,8 @@ describe('configuration', () => {
     expect(config.values.maxSlots).toBe(1);
     expect(config.values.memoryCapChars).toBe(8000);
     expect(config.values.roundContextCapTokens).toBe(60000);
+    expect(config.values.maxToolCallsPerRound).toBe(50);
+    expect(config.values.modelRequestTimeoutSeconds).toBe(120);
     expect(config.values.taskClaimTimeoutHours).toBe(24);
     expect(config.values.consolePort).toBe(4317);
     expect(config.values.exchangeRate).toBeNull();
@@ -110,6 +114,29 @@ describe('configuration', () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it('refuses a missing or ill-typed tool-call cap and request timeout', () => {
+    const withoutBoth: Record<string, unknown> = { ...VALID_VALUES };
+    delete withoutBoth['maxToolCallsPerRound'];
+    delete withoutBoth['modelRequestTimeoutSeconds'];
+    withConfigFile(withoutBoth, (root) => {
+      const message = configError(() => loadAppConfig({ rootDir: root, env: VALID_ENV }));
+      expect(message).toContain('"maxToolCallsPerRound"');
+      expect(message).toContain('"modelRequestTimeoutSeconds"');
+    });
+    withConfigFile({ ...VALID_VALUES, maxToolCallsPerRound: 0 }, (root) => {
+      const message = configError(() => loadAppConfig({ rootDir: root, env: VALID_ENV }));
+      expect(message).toContain('"maxToolCallsPerRound" must be at least 1');
+    });
+    withConfigFile({ ...VALID_VALUES, maxToolCallsPerRound: 2.5 }, (root) => {
+      const message = configError(() => loadAppConfig({ rootDir: root, env: VALID_ENV }));
+      expect(message).toContain('"maxToolCallsPerRound" must be an integer');
+    });
+    withConfigFile({ ...VALID_VALUES, modelRequestTimeoutSeconds: 0 }, (root) => {
+      const message = configError(() => loadAppConfig({ rootDir: root, env: VALID_ENV }));
+      expect(message).toContain('"modelRequestTimeoutSeconds" must be greater than 0');
+    });
   });
 
   it('requires every model environment variable, and names the missing ones', () => {

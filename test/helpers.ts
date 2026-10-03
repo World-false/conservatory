@@ -52,6 +52,8 @@ export function testValues(overrides: Partial<ConservatoryValues> = {}): Conserv
     maxSlots: 1,
     memoryCapChars: 8000,
     roundContextCapTokens: 60000,
+    maxToolCallsPerRound: 50,
+    modelRequestTimeoutSeconds: 120,
     taskClaimTimeoutHours: 24,
     exchangeRate: null,
     consolePort: 4317,
@@ -149,6 +151,7 @@ export class InProcessWorker implements WorkerTransport {
   private readonly client: ModelClient;
   private handler: ((message: ChildToParentMessage) => void) | null = null;
   private cap = 0;
+  private maxToolCalls = 0;
   private readonly pending = new Map<string, (outcome: ToolOutcome) => void>();
   readonly sent: ParentToChildMessage[] = [];
 
@@ -160,6 +163,7 @@ export class InProcessWorker implements WorkerTransport {
     this.sent.push(message);
     if (message.type === 'init') {
       this.cap = message.roundContextCapTokens;
+      this.maxToolCalls = message.maxToolCallsPerRound;
       return;
     }
     if (message.type === 'wake') {
@@ -195,6 +199,7 @@ export class InProcessWorker implements WorkerTransport {
       user: wake.user,
       tools,
       roundContextCapTokens: this.cap,
+      maxToolCallsPerRound: this.maxToolCalls,
       requestTool: (callId, name, argumentsJson) =>
         new Promise<ToolOutcome>((resolve) => {
           this.pending.set(callId, resolve);
@@ -266,6 +271,8 @@ export function initWorker(h: Harness, model: ModelClient): InProcessWorker {
     type: 'init',
     model: { baseUrl: 'http://127.0.0.1:1/v1', apiKey: 'test-key', model: 'test-model' },
     roundContextCapTokens: h.values.roundContextCapTokens,
+    maxToolCallsPerRound: h.values.maxToolCallsPerRound,
+    modelRequestTimeoutSeconds: h.values.modelRequestTimeoutSeconds,
   });
   return worker;
 }

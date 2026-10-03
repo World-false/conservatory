@@ -29,9 +29,6 @@ export interface ModelClient {
   chat(request: ChatRequest): Promise<ChatResponse>;
 }
 
-/** A stalled provider must not hold a round open forever. */
-const REQUEST_TIMEOUT_MS = 120_000;
-
 export function toSdkMessages(
   messages: readonly SerializedMessage[],
 ): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
@@ -105,16 +102,20 @@ function extractToolCalls(
   return calls;
 }
 
-/** The only implementation of ModelClient: an OpenAI-compatible chat endpoint. */
+/**
+ * The only implementation of ModelClient: an OpenAI-compatible chat endpoint.
+ * The timeout comes from the configuration, so a stalled provider cannot hold
+ * a round open forever.
+ */
 export class OpenAICompatibleClient implements ModelClient {
   private readonly client: OpenAI;
   private readonly model: string;
 
-  constructor(settings: ModelSettings) {
+  constructor(settings: ModelSettings, requestTimeoutMs: number) {
     this.client = new OpenAI({
       apiKey: settings.apiKey,
       baseURL: settings.baseUrl,
-      timeout: REQUEST_TIMEOUT_MS,
+      timeout: requestTimeoutMs,
     });
     this.model = settings.model;
   }

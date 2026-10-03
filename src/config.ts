@@ -20,6 +20,10 @@ export interface ConservatoryValues {
   maxSlots: number;
   memoryCapChars: number;
   roundContextCapTokens: number;
+  /** The most tool calls one round may make before it is ended by force. */
+  maxToolCallsPerRound: number;
+  /** How long one model request may take before it is given up on. */
+  modelRequestTimeoutSeconds: number;
   taskClaimTimeoutHours: number;
   /** null means "not set": crediting outside income must then be refused. */
   exchangeRate: number | null;
@@ -167,6 +171,13 @@ function readValues(configPath: string, errors: string[]): ConservatoryValues {
     maxSlots: readNumberField(source, 'maxSlots', { integer: true, min: 1 }, errors),
     memoryCapChars: readNumberField(source, 'memoryCapChars', { integer: true, min: 1 }, errors),
     roundContextCapTokens: readNumberField(source, 'roundContextCapTokens', { integer: true, min: 1 }, errors),
+    maxToolCallsPerRound: readNumberField(source, 'maxToolCallsPerRound', { integer: true, min: 1 }, errors),
+    modelRequestTimeoutSeconds: readNumberField(
+      source,
+      'modelRequestTimeoutSeconds',
+      { min: 0, exclusiveMin: true },
+      errors,
+    ),
     taskClaimTimeoutHours: readNumberField(source, 'taskClaimTimeoutHours', { min: 0, exclusiveMin: true }, errors),
     exchangeRate: readExchangeRate(source, errors),
     consolePort: readNumberField(source, 'consolePort', { integer: true, min: 1, max: 65535 }, errors),

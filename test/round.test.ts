@@ -195,6 +195,52 @@ describe('a round', () => {
     }
   });
 
+  it('forces an end once the model has asked for more tool calls than the config allows', async () => {
+    const h = createHarness({ values: { maxToolCallsPerRound: 3 } });
+    try {
+      const agent = birthAgent(h, 'ada');
+      // Two calls per answer: the first answer fits under the limit, the second
+      // would pass it and is refused whole, so no call is left unanswered.
+      const answer = (suffix: string) =>
+        toolCallResponse([
+          { id: `c_${suffix}_1`, name: 'get_status', args: {} },
+          { id: `c_${suffix}_2`, name: 'get_status', args: {} },
+        ]);
+      const { outcome, worker } = await runRound(h, agent, [answer('a'), answer('b')]);
+      expect(outcome.endReason).toBe('iteration_cap');
+      expect(outcome.error).toContain(`over the round limit of ${h.values.maxToolCallsPerRound}`);
+
+      // Exactly the allowed batches were run, and the round really did stop.
+      const results = worker.sent.filter((message) => message.type === 'tool_result');
+      expect(results.length).toBe(2);
+      const executed = results.filter((message) => message.type === 'tool_result');
+      expect(executed.map((message) => (message.type === 'tool_result' ? message.callId : ''))).toEqual([
+        'c_a_1',
+        'c_a_2',
+      ]);
+      expect(h.ledger.listRounds('ada', 1)[0].endReason).toBe('iteration_cap');
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  it('takes the tool-call limit from the config, not from a constant', async () => {
+    const h = createHarness({ values: { maxToolCallsPerRound: 1 } });
+    try {
+      const agent = birthAgent(h, 'ada');
+      const { outcome, worker } = await runRound(h, agent, [
+        toolCallResponse([
+          { id: 'c1', name: 'get_status', args: {} },
+          { id: 'c2', name: 'get_status', args: {} },
+        ]),
+      ]);
+      expect(outcome.endReason).toBe('iteration_cap');
+      expect(worker.sent.some((message) => message.type === 'tool_result')).toBe(false);
+    } finally {
+      h.cleanup();
+    }
+  });
+
   it('forces an end when the provider reports no usage, and logs it', async () => {
     const h = createHarness();
     try {

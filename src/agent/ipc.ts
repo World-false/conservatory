@@ -63,7 +63,13 @@ export type ChildToParentMessage =
   | { type: 'worker_log'; level: 'info' | 'error'; message: string };
 
 export type ParentToChildMessage =
-  | { type: 'init'; model: ModelSettings; roundContextCapTokens: number }
+  | {
+      type: 'init';
+      model: ModelSettings;
+      roundContextCapTokens: number;
+      maxToolCallsPerRound: number;
+      modelRequestTimeoutSeconds: number;
+    }
   | { type: 'wake'; roundId: number; system: string; user: string; tools: ToolSchema[] }
   | { type: 'tool_result'; roundId: number; callId: string; content: string; isError: boolean }
   | { type: 'shutdown' };

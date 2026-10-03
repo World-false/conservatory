@@ -9,6 +9,8 @@
   "maxSlots": 1,
   "memoryCapChars": 8000,
   "roundContextCapTokens": 60000,
+  "maxToolCallsPerRound": 50,
+  "modelRequestTimeoutSeconds": 120,
   "taskClaimTimeoutHours": 24,
   "exchangeRate": null,
   "consolePort": 4317
