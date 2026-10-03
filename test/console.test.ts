@@ -3,6 +3,7 @@ import type http from 'node:http';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createConsoleServer } from '../src/console/server';
+import { createPauseOrgan } from '../src/organs/pause';
 import { RoundRegistry } from '../src/organs/population';
 import { claimTask, createTask, submitTask } from '../src/organs/taskboard';
 import { birthAgent, createHarness, type Harness } from './helpers';
@@ -29,6 +30,20 @@ afterEach(async () => {
 
 async function startConsole(h: Harness, created: string[]): Promise<RunningConsole> {
   const registry = new RoundRegistry();
+  // The real pause organ, wired to the harness ledger, so the console tests
+  // exercise the same freeze/resume path the supervisor uses.
+  const pause = createPauseOrgan({
+    ledger: h.ledger,
+    values: h.values,
+    recordIntervention: (paused, pausedDurationMs, at) => {
+      h.ledger.appendIntervention(
+        paused ? 'conservatory_paused' : 'conservatory_resumed',
+        'conservatory',
+        paused ? 'paused' : `resumed after ${String(pausedDurationMs ?? 0)}ms`,
+        at,
+      );
+    },
+  });
   const server = createConsoleServer({
     values: h.values,
     paths: h.paths,
@@ -49,6 +64,11 @@ async function startConsole(h: Harness, created: string[]): Promise<RunningConso
       return { ok: true };
     },
     wakeAgent: async () => ({ ok: true, woken: false, reason: '该 agent 正在一轮中，本次唤醒已跳过' }),
+    setPaused: (paused) => ({
+      ok: true,
+      changed: pause.set(paused, h.clock.now()).changed,
+      state: pause.read(),
+    }),
     intervene: async () => ({ ok: true, balance: 110, satiety: 100 }),
     getNotices: () => [],
   });
@@ -216,5 +236,79 @@ describe('the operator console', () => {
     expect(response.status).toBe(400);
     expect(h.ledger.listTasks()).toEqual([]);
     expect(createTask(h.ledger, { id: 'task_0001', title: 'x', description: '', price: 1, at: 0 }).ok).toBe(true);
+  });
+});
+
+describe('the conservatory-wide pause switch', () => {
+  it('reports the pause in the state, freezes satiety, and records one intervention per real change', async () => {
+    const h = createHarness();
+    const agent = birthAgent(h, 'ada');
+    const console = await startConsole(h, []);
+
+    const initial = await getJson(console.base, '/api/state');
+    expect(initial.body['paused']).toBe(false);
+    expect(initial.body['pausedSince']).toBeNull();
+
+    h.clock.advanceSeconds(100);
+    const before = h.clock.now();
+    const paused = await postJson(console.base, '/api/settings/pause', { paused: true });
+    expect(paused.status).toBe(200);
+    expect(paused.body['ok']).toBe(true);
+    expect(paused.body['changed']).toBe(true);
+    expect(paused.body['paused']).toBe(true);
+    expect(paused.body['pausedSince']).toBe(before);
+
+    // The frozen value is exactly what the anchor held when the switch was thrown.
+    const frozen = h.ledger.getSatietyAnchor(agent.name)?.value;
+    expect(frozen).toBeCloseTo(95, 6);
+
+    h.clock.advanceSeconds(3600);
+    const frozenState = await getJson(console.base, '/api/state');
+    expect(frozenState.body['paused']).toBe(true);
+    expect(frozenState.body['pausedSince']).toBe(before);
+    const agents = frozenState.body['agents'] as { satiety: number }[];
+    expect(agents[0].satiety).toBeCloseTo(frozen as number, 6);
+    expect(h.ledger.getBalance('ada')).toBe(100);
+
+    // Setting the same state again is ok, but writes nothing and moves no anchor.
+    const again = await postJson(console.base, '/api/settings/pause', { paused: true });
+    expect(again.status).toBe(200);
+    expect(again.body['changed']).toBe(false);
+    expect(h.ledger.listInterventions().length).toBe(1);
+    expect(h.ledger.getSatietyAnchor(agent.name)?.value).toBeCloseTo(frozen as number, 6);
+
+    const resumed = await postJson(console.base, '/api/settings/pause', { paused: false });
+    expect(resumed.status).toBe(200);
+    expect(resumed.body['changed']).toBe(true);
+    expect(resumed.body['paused']).toBe(false);
+    expect(resumed.body['pausedSince']).toBeNull();
+
+    // The paused span is not charged: satiety falls again from the frozen value.
+    const afterResume = h.ledger.getSatietyAnchor(agent.name);
+    expect(afterResume?.value).toBeCloseTo(frozen as number, 6);
+    expect(afterResume?.asOf).toBe(h.clock.now());
+    h.clock.advanceSeconds(100);
+    const finalState = await getJson(console.base, '/api/state');
+    const finalAgents = finalState.body['agents'] as { satiety: number }[];
+    expect(finalAgents[0].satiety).toBeCloseTo((frozen as number) - 5, 6);
+
+    const kinds = h.ledger.listInterventions().map((row) => row.kind);
+    expect(kinds).toEqual(['conservatory_resumed', 'conservatory_paused']);
+  });
+
+  it('rejects a pause request whose type is wrong, and changes nothing', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    const console = await startConsole(h, []);
+
+    const wrongType = await postJson(console.base, '/api/settings/pause', { paused: 'yes' });
+    expect(wrongType.status).toBe(400);
+    const missing = await postJson(console.base, '/api/settings/pause', {});
+    expect(missing.status).toBe(400);
+    expect(h.ledger.getPauseState()).toEqual({ paused: false, pausedSince: null });
+    expect(h.ledger.listInterventions()).toEqual([]);
+
+    const state = await getJson(console.base, '/api/state');
+    expect(state.body['paused']).toBe(false);
   });
 });

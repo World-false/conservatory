@@ -46,28 +46,50 @@ export function computeSatiety(anchor: SatietyAnchor, now: number, decayPerSecon
   return Math.max(0, anchor.value - decayPerSecond * elapsedSeconds);
 }
 
-function requireAnchor(ledger: Ledger, agent: string): SatietyAnchor {
-  const anchor = ledger.getSatietyAnchor(agent);
-  if (anchor === null) {
-    throw new MetabolismError(`agent ${agent} has no satiety anchor`);
-  }
-  return anchor;
+/** The frozen value an anchor holds while the conservatory is paused. */
+export function frozenSatiety(anchor: SatietyAnchor): number {
+  return Math.max(0, anchor.value);
 }
 
-export function readSatiety(ledger: Ledger, values: ConservatoryValues, agent: string, now: number): number {
-  return computeSatiety(requireAnchor(ledger, agent), now, values.satietyDecayPerSecond);
+/**
+ * The one place the pause rule is applied: a paused conservatory returns the
+ * anchored value instead of decaying it, so no elapsed time is charged to
+ * anyone until the operator resumes. An agent with no anchor at all reads 0.
+ */
+export function satietyAt(
+  ledger: Ledger,
+  values: ConservatoryValues,
+  agent: string,
+  now: number,
+): number {
+  const anchor = ledger.getSatietyAnchor(agent);
+  if (anchor === null) {
+    return 0;
+  }
+  return ledger.getPauseState().paused
+    ? frozenSatiety(anchor)
+    : computeSatiety(anchor, now, values.satietyDecayPerSecond);
+}
+
+export function readSatiety(
+  ledger: Ledger,
+  values: ConservatoryValues,
+  agent: string | null,
+  now: number,
+): number {
+  return agent === null ? 0 : satietyAt(ledger, values, agent, now);
 }
 
 export function readBodyStatus(
   ledger: Ledger,
   values: ConservatoryValues,
-  agent: string,
+  agent: string | null,
   now: number,
 ): BodyStatus {
   return {
     satiety: readSatiety(ledger, values, agent, now),
     satietyMax: values.satietyMax,
-    balance: ledger.getBalance(agent),
+    balance: agent === null ? 0 : ledger.getBalance(agent),
     mealPrice: values.mealPrice,
     satietyPerMeal: values.satietyPerMeal,
   };

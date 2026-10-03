@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import http from 'node:http';
 import type { ConservatoryValues, RuntimePaths } from '../config';
 import { verifyIncome, rejectIncome, type IncomeResult } from '../organs/income';
-import type { IncomeReportRecord, InterventionKind, Ledger, TaskRecord } from '../organs/ledger';
+import type { IncomeReportRecord, InterventionKind, Ledger, PauseState, TaskRecord } from '../organs/ledger';
 import { readSatiety } from '../organs/metabolism';
 import { readMemoryFile } from '../organs/memory';
 import { NotebookError, listNotebook, readNotebookFile } from '../organs/notebook';
@@ -37,6 +37,13 @@ export interface ConsoleDeps {
   wakeAgent(
     name: string,
   ): Promise<{ ok: true; woken: boolean; reason: string | null } | { ok: false; error: string }>;
+  /**
+   * The conservatory-wide pause switch. Returns whether the call was a real
+   * transition; the implementation records the intervention and freezes or
+   * releases the anchors. `false` means the request matched the state already
+   * in force, and then nothing at all was written.
+   */
+  setPaused(paused: boolean): { ok: true; changed: boolean; state: PauseState };
   intervene(
     agent: string,
     kind: InterventionKind,
@@ -76,6 +83,7 @@ const MESSAGES: Record<string, string> = {
   not_found: '记事本里没有这个文件',
   agent_busy: '该 agent 正在一轮中，本次唤醒已跳过',
   invalid_amount_intervention: '干预数量必须是不小于 0 的数字',
+  invalid_paused: 'paused 必须是 true 或 false',
 };
 
 function messageFor(code: string): string {
@@ -202,6 +210,7 @@ function readNumber(body: Record<string, unknown>, key: string): number | null {
 function buildState(deps: ConsoleDeps): Record<string, unknown> {
   const { ledger, values } = deps;
   const now = deps.now();
+  const pause = ledger.getPauseState();
   const agents = ledger.listAgents().map((agent) => {
     const runtime = deps.getRuntime(agent.name);
     const anchor = ledger.getSatietyAnchor(agent.name);
@@ -227,6 +236,8 @@ function buildState(deps: ConsoleDeps): Record<string, unknown> {
   return {
     now,
     exchangeRate: values.exchangeRate,
+    paused: pause.paused,
+    pausedSince: pause.pausedSince,
     config: {
       satietyMax: values.satietyMax,
       satietyDecayPerSecond: values.satietyDecayPerSecond,
@@ -471,6 +482,24 @@ async function route(
       sendJson(response, 200, { ok: true, id });
       return;
     }
+  }
+
+  // POST /api/settings/pause
+  if (segments.length === 3 && segments[1] === 'settings' && segments[2] === 'pause' && method === 'POST') {
+    const body = await readJsonBody(request);
+    const paused = body['paused'];
+    if (typeof paused !== 'boolean') {
+      sendJson(response, 400, { ok: false, error: messageFor('invalid_paused') });
+      return;
+    }
+    const result = deps.setPaused(paused);
+    sendJson(response, 200, {
+      ok: true,
+      changed: result.changed,
+      paused: result.state.paused,
+      pausedSince: result.state.pausedSince,
+    });
+    return;
   }
 
   // POST /api/wake

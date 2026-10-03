@@ -61,6 +61,29 @@ export function testValues(overrides: Partial<ConservatoryValues> = {}): Conserv
   };
 }
 
+/**
+ * Windows keeps a database file handle alive for a moment after close, so a
+ * removal can fail with EPERM even though everything is closed. A few retries
+ * settle it; a leftover temp directory must never fail a test.
+ */
+function removeRuntimeDir(root: string): void {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+      return;
+    } catch (error) {
+      if (attempt === 4) {
+        return;
+      }
+      // A short synchronous pause; nothing in these tests is timing-sensitive.
+      const until = Date.now() + 25;
+      while (Date.now() < until) {
+        /* wait out the lingering file handle */
+      }
+    }
+  }
+}
+
 export interface Harness {
   root: string;
   paths: RuntimePaths;
@@ -90,8 +113,14 @@ export function createHarness(options: { values?: Partial<ConservatoryValues>; c
     clock,
     values: testValues(options.values),
     cleanup(): void {
-      ledger.close();
-      rmSync(root, { recursive: true, force: true });
+      // A test may close the ledger itself to simulate a supervisor restart;
+      // cleanup stays safe either way.
+      try {
+        ledger.close();
+      } catch (error) {
+        /* already closed */
+      }
+      removeRuntimeDir(root);
     },
   };
 }

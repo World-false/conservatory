@@ -113,7 +113,23 @@ export interface UsageRecord {
   at: number;
 }
 
-export type InterventionKind = 'give_balance' | 'give_satiety';
+export type InterventionKind =
+  | 'give_balance'
+  | 'give_satiety'
+  | 'conservatory_paused'
+  | 'conservatory_resumed';
+
+/**
+ * A conservatory-wide setting has no single agent, but the interventions table
+ * has no nullable owner. This marker stands in for "everyone at once".
+ */
+export const PAUSED_SETTING_AGENT = 'conservatory';
+
+/** Whether the whole conservatory is paused, and since when. */
+export interface PauseState {
+  paused: boolean;
+  pausedSince: number | null;
+}
 
 export interface InterventionRecord {
   id: number;
@@ -144,7 +160,15 @@ const INCOME_STATUSES: readonly IncomeStatus[] = ['pending', 'credited', 'reject
 
 const USAGE_SOURCES: readonly UsageSource[] = ['agent', 'memory'];
 
-const INTERVENTION_KINDS: readonly InterventionKind[] = ['give_balance', 'give_satiety'];
+const INTERVENTION_KINDS: readonly InterventionKind[] = [
+  'give_balance',
+  'give_satiety',
+  'conservatory_paused',
+  'conservatory_resumed',
+];
+
+const PAUSE_KEY = 'paused';
+const PAUSE_SINCE_KEY = 'paused_since';
 
 function readString(row: Row, column: string): string {
   const value = row[column];
@@ -293,6 +317,10 @@ CREATE TABLE IF NOT EXISTS interventions (
   detail TEXT NOT NULL,
   at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_usage_agent ON usage (agent, source);
 CREATE INDEX IF NOT EXISTS idx_messages_recipient ON messages (recipient, read_at);
 CREATE INDEX IF NOT EXISTS idx_balance_events_agent ON balance_events (agent);
@@ -412,6 +440,44 @@ export class Ledger {
       return null;
     }
     return { value: readNumber(row, 'value'), asOf: readNumber(row, 'as_of') };
+  }
+
+  // -------------------------------------------------------------- settings
+
+  getSetting(key: string): string | null {
+    const row = this.db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
+    return row === undefined ? null : readString(row, 'value');
+  }
+
+  setSetting(key: string, value: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO settings (key, value) VALUES (?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      )
+      .run(key, value);
+  }
+
+  /**
+   * The conservatory-wide pause. "paused" is stored as "1"/"0", and pausedSince
+   * is the instant the pause started, so a restart keeps the same anchor.
+   */
+  getPauseState(): PauseState {
+    const pausedSince = this.getSetting(PAUSE_SINCE_KEY);
+    const since = pausedSince === null ? Number.NaN : Number(pausedSince);
+    return {
+      paused: this.getSetting(PAUSE_KEY) === '1',
+      pausedSince: Number.isFinite(since) ? since : null,
+    };
+  }
+
+  setPauseState(paused: boolean, pausedSince: number | null): void {
+    this.setSetting(PAUSE_KEY, paused ? '1' : '0');
+    if (paused && pausedSince !== null) {
+      this.setSetting(PAUSE_SINCE_KEY, String(pausedSince));
+    } else {
+      this.db.prepare('DELETE FROM settings WHERE key = ?').run(PAUSE_SINCE_KEY);
+    }
   }
 
   // --------------------------------------------------------------- balance
@@ -613,6 +679,23 @@ export class Ledger {
       }
       return expired;
     });
+  }
+
+  /**
+   * Pushes the claim clock of every held task forward, so time that did not
+   * pass for the agents (a paused conservatory) is not counted against them.
+   */
+  shiftClaimedTaskTimes(shiftMs: number, at: number): number {
+    if (!Number.isFinite(shiftMs) || shiftMs <= 0) {
+      return 0;
+    }
+    const result = this.db
+      .prepare(
+        `UPDATE tasks SET claimed_at = claimed_at + ?, updated_at = ?
+         WHERE status IN ('claimed', 'rework') AND claimed_at IS NOT NULL`,
+      )
+      .run(shiftMs, at);
+    return changesOf(result);
   }
 
   appendTaskSubmission(taskId: string, agent: string, deliverable: string, at: number): void {

@@ -28,7 +28,7 @@ The supervisor wakes every living agent at a fixed interval; if the agent is act
 
 A wake-up starts a round. The round begins with a fresh context holding only the body manual, `MEMORY`, current satiety and balance, the task board, and unread messages. The agent acts through tools; the round ends when it stops calling tools and gives a final reply. A round whose context exceeds the cap is ended by force.
 
-A round is also ended by force when the agent asks for more tool calls than the configured per-round limit allows, or when a model request fails. The supervisor takes one immediate beat when it starts, so a living agent does not wait a whole interval for its first wake-up. If an agent's process exits unexpectedly, that is written to the black box and the next wake-up starts a new process for it; at this stage that is not death.
+A round is also ended by force when the agent asks for more tool calls than the configured per-round limit allows, or when a model request fails. The supervisor takes one immediate beat when it starts, so a living agent does not wait a whole interval for its first wake-up. If an agent's process exits unexpectedly, that is written to the black box and the next wake-up starts a new process for it; at this stage that is not death. While the operator has paused the conservatory, the heartbeat wakes no one, not even the supervisor's immediate first beat, and every claimed task's claim clock is frozen.
 
 After each round, the memory system folds that round's experience into `MEMORY` (see "Memory"). The next wake-up is again a fresh context: the model instance remembers nothing, and tomorrow's agent is the same agent because the body injects the same memory.
 
@@ -82,7 +82,7 @@ Satiety and balance must be values returned by a call rather than files, so that
 
 ### Metabolism
 
-Satiety falls with wall-clock time and nothing else, whether the agent is working or idle, and it has a ceiling. The agent sees satiety and balance and can write neither. Feeding is an autonomous purchase: the system provides a fixed eating tool, and the agent decides when to call it and spend balance on satiety. It has zero dependency on the operator and involves no begging. Satiety never automatically refills; if balance is exhausted and the purchase fails, the agent cannot replenish satiety.
+Satiety falls with wall-clock time and nothing else, whether the agent is working or idle, and it has a ceiling. The agent sees satiety and balance and can write neither. Feeding is an autonomous purchase: the system provides a fixed eating tool, and the agent decides when to call it and spend balance on satiety. It has zero dependency on the operator and involves no begging. Satiety never automatically refills; if balance is exhausted and the purchase fails, the agent cannot replenish satiety. A conservatory-wide pause freezes satiety at the value it held at the pause instant; resuming starts a fresh anchor from that frozen value, and the paused span is never charged as hunger.
 
 Model token usage, as reported by the provider, is recorded in the ledger so the operator can see their own spend, and is **charged to neither satiety nor balance**. A human brain does not eat more for thinking more, and the design copies the human: thinking more or less, hunger comes at the same pace.
 
@@ -142,7 +142,7 @@ Living agents may message each other (in English) and transfer balance to each o
 
 Through the console the operator always holds every power: posting tasks and paying for them, verifying income, chatting with agents, creating agents in empty slots, viewing everything including black boxes, and forcing termination in an emergency.
 
-Actions that bypass the body's mechanisms — giving money or food, treating a wound on the agent's behalf, editing `MEMORY` or the ledger, and the like — are all possible, but each one raises a warning and is recorded permanently in the ledger as an operator intervention. Death certificates and the console show these records, so that afterwards one can tell which agents survived on their own and which were rescued.
+Actions that bypass the body's mechanisms — giving money or food, treating a wound on the agent's behalf, editing `MEMORY` or the ledger, pausing or resuming the whole conservatory, and the like — are all possible, but each one raises a warning and is recorded permanently in the ledger as an operator intervention. Death certificates and the console show these records, so that afterwards one can tell which agents survived on their own and which were rescued.
 
 The one hard lock is death: a dead agent cannot be revived, by the operator either.
 

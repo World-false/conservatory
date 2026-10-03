@@ -103,24 +103,38 @@ export class RoundRegistry {
 export interface WakeReport {
   woken: string[];
   skipped: string[];
+  /** How many living agents were left alone, and why. */
+  reasons: { agent: string; reason: 'busy' | 'paused' }[];
 }
 
 /**
  * Wakes every living agent that is not already in a round. The heartbeat and
  * the console's "wake up now" both go through this, so they obey one rule.
+ *
+ * A paused conservatory wakes nobody: while the operator has stopped time, the
+ * heartbeat must not start a round for anyone. The console's explicit
+ * "wake up now" still can, which is what makes debugging a paused conservatory
+ * possible.
  */
 export function wakeLivingAgents(deps: {
   ledger: Ledger;
   registry: RoundRegistry;
+  paused?: boolean;
   wake(agent: AgentRecord): void;
 }): WakeReport {
-  const report: WakeReport = { woken: [], skipped: [] };
+  const report: WakeReport = { woken: [], skipped: [], reasons: [] };
   for (const agent of deps.ledger.listAgents()) {
     if (agent.status !== 'alive') {
       continue;
     }
+    if (deps.paused === true) {
+      report.skipped.push(agent.name);
+      report.reasons.push({ agent: agent.name, reason: 'paused' });
+      continue;
+    }
     if (deps.registry.isBusy(agent.name)) {
       report.skipped.push(agent.name);
+      report.reasons.push({ agent: agent.name, reason: 'busy' });
       continue;
     }
     report.woken.push(agent.name);

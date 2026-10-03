@@ -3,6 +3,12 @@ export interface HeartbeatOptions {
   now(): number;
   tick(): void | Promise<void>;
   onError(error: unknown): void;
+  /**
+   * While this returns true the heartbeat still runs, but its tick only checks
+   * the switch: no agent is woken for as long as the whole conservatory is
+   * paused. Time stops, but the clock that could restart it keeps beating.
+   */
+  isPaused?(): boolean;
 }
 
 /**
@@ -16,6 +22,7 @@ export class Heartbeat {
   private ticking = false;
   private lastTick: number | null = null;
   private skipped = 0;
+  private pausedSkips = 0;
 
   constructor(options: HeartbeatOptions) {
     this.options = options;
@@ -51,6 +58,11 @@ export class Heartbeat {
     return this.skipped;
   }
 
+  /** Beats that woke nobody because the conservatory was paused. */
+  get pausedTicks(): number {
+    return this.pausedSkips;
+  }
+
   /** Runs one tick now; used by the console's "wake up now" and by tests. */
   async runTick(): Promise<void> {
     if (this.ticking) {
@@ -60,6 +72,10 @@ export class Heartbeat {
     this.ticking = true;
     this.lastTick = this.options.now();
     try {
+      if (this.options.isPaused?.() === true) {
+        this.pausedSkips += 1;
+        return;
+      }
       await this.options.tick();
     } catch (error) {
       this.options.onError(error);

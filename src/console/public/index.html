@@ -292,6 +292,40 @@
       .banner.warn { background: var(--warn-soft); border: 1px solid #f2d9a8; color: #6b3d05; }
       .banner.danger { background: var(--danger-soft); border: 1px solid #f1c9c4; color: var(--danger); }
       .config-table td:first-child { color: var(--muted); width: 260px; }
+
+      /* ---------------------------------------------------------------- pause */
+      .pause-card { display: grid; gap: 6px; }
+      .pause-switch { cursor: pointer; font-weight: 600; }
+      .pause-card input[type="checkbox"] {
+        width: 16px;
+        height: 16px;
+        flex: 0 0 16px;
+        padding: 0;
+        margin: 0;
+        accent-color: var(--warn);
+        cursor: pointer;
+      }
+      .banner.pause-banner {
+        margin: 10px 18px 0;
+        cursor: pointer;
+        font-weight: 600;
+        border-left-width: 4px;
+      }
+      .banner.pause-banner[hidden] { display: none; }
+      .banner.pause-banner:hover { background: #fff3d6; }
+      .pause-rail {
+        border: 1px solid #f2d9a8;
+        border-left: 3px solid var(--warn);
+        background: var(--warn-soft);
+        color: #6b3d05;
+        border-radius: 8px;
+        padding: 5px 8px;
+        font-size: 11.5px;
+        font-weight: 600;
+        cursor: pointer;
+        margin: 0 10px 10px;
+      }
+      .pause-rail:hover { background: #fff3d6; }
     </style>
   </head>
   <body>
@@ -324,10 +358,12 @@
           </div>
         </nav>
         <div class="rail-foot" id="railFoot"></div>
+        <div class="pause-rail" id="railPause" data-act="goto-pause-settings" title="点击到设置页" hidden></div>
       </aside>
 
       <div class="main">
         <div class="notices" id="notices"></div>
+        <div id="pauseBanner" class="banner warn pause-banner" data-act="goto-pause-settings" title="点击到设置页恢复" hidden></div>
         <div class="pages" id="pages">
           <section class="page" id="page-agents">
             <h2 class="page-title">所有 Agent</h2>
@@ -367,7 +403,7 @@
           <section class="page" id="page-interventions">
             <h2 class="page-title">干预记录</h2>
             <div class="banner warn" style="margin-bottom: 12px">
-              这些记录永久保存。给余额或给饱食度会写入 interventions 表，并改变这两个数字；它不会改变饱食度自然下降的规则。
+              这些记录永久保存。给余额、给饱食度、暂停或恢复温室都会写入 interventions 表：前两者会改变这两个数字，暂停与恢复则冻结或恢复整个温室的时间流动。它们都不会改变饱食度自然下降的规则。
             </div>
             <div class="row" style="margin-bottom: 10px">
               <span class="small muted">按 Agent 筛选</span>
@@ -378,6 +414,7 @@
 
           <section class="page" id="page-settings">
             <h2 class="page-title">设置</h2>
+            <div id="pauseSwitchBox"></div>
             <div id="settingsBox"></div>
           </section>
         </div>
@@ -391,6 +428,7 @@
           <strong class="dlg-name" id="dlgName">—</strong>
           <span class="small muted" id="dlgState">—</span>
           <span class="dlg-sat"><span class="bar"><span id="dlgBar" style="width: 0"></span></span><span class="small num" id="dlgSat">—</span></span>
+          <span class="tag warn" id="dlgFrozen" hidden>已冻结</span>
           <span class="small muted">余额</span><span class="small num" id="dlgBal">—</span>
           <span class="grow"></span>
           <button class="btn" data-act="wake" id="dlgWake">立即唤醒</button>
@@ -575,7 +613,12 @@
         rejected: "已拒绝",
         rework: "返工中",
       };
-      const INTERVENTION_KIND = { give_balance: "给予余额", give_satiety: "给予饱食度" };
+      const INTERVENTION_KIND = {
+        give_balance: "给予余额",
+        give_satiety: "给予饱食度",
+        conservatory_paused: "暂停温室",
+        conservatory_resumed: "恢复温室",
+      };
       const taskTagClass = (status) =>
         status === "accepted" ? "tag ok" : status === "rejected" ? "tag bad" : status === "submitted" ? "tag warn" : "tag";
 
@@ -640,6 +683,14 @@
       const liveNotices = () => (state === null ? [] : state.notices.filter((n) => !dismissedNotices.has(noticeKey(n))));
       const noticesFor = (name) => liveNotices().filter((n) => n.agent === name);
       const freeSlots = () => (state === null ? 0 : Math.max(0, state.config.maxSlots - aliveAgents().length));
+      const isPaused = () => state !== null && state.paused === true;
+      const pauseMinutes = () => {
+        if (!isPaused()) return 0;
+        const since = state.pausedSince;
+        if (typeof since !== "number" || !Number.isFinite(since)) return 0;
+        return Math.max(0, Math.floor((Date.now() - since) / 60000));
+      };
+      const pauseText = () => `温室已暂停 · 已暂停 ${pauseMinutes()} 分钟`;
 
       // ------------------------------------------------------------ routing
       function parseHash() {
@@ -706,6 +757,7 @@
       function paint() {
         paintNav();
         paintRailFoot();
+        paintPauseBanner();
         paintNotices();
         paintAgentsPage();
         paintTasksPage();
@@ -737,6 +789,17 @@
             ? ""
             : `<div style="color: var(--danger)">刷新失败：${esc(refreshError)}</div>`);
       }
+      // Both pause banners live in the static HTML: polling only flips `hidden`
+      // and their text, so the nodes are never rebuilt under a click.
+      function paintPauseBanner() {
+        const paused = isPaused();
+        for (const id of ["pauseBanner", "railPause"]) {
+          const node = $(id);
+          if (node === null) continue;
+          node.hidden = !paused;
+          if (paused) node.textContent = pauseText();
+        }
+      }
       function paintNotices() {
         const list = liveNotices().slice(-8).reverse();
         const host = $("notices");
@@ -760,6 +823,7 @@
         const noticeCount = noticesFor(agent.name).length;
         const unread = unreadFor(agent.name);
         const reply = extra !== null && extra.finalReply ? firstLines(extra.finalReply, 2) : "";
+        const frozen = isPaused() ? ' <span class="tag warn">已冻结</span>' : "";
         return `
           <article class="card agent-card" data-act="open-agent" data-agent="${esc(agent.name)}">
             <div class="card-head">
@@ -770,7 +834,7 @@
               ${unread > 0 ? `<span class="badge">${unread > 99 ? "99+" : unread}</span>` : ""}
             </div>
             <div class="bar"><span style="width: ${(ratio * 100).toFixed(1)}%; background: ${satietyColor(ratio)}"></span></div>
-            <div class="kv" style="margin-top: 7px"><span class="k">饱食度</span><span class="num">${esc(num(agent.satiety))} / ${esc(num(agent.satietyMax))}</span></div>
+            <div class="kv" style="margin-top: 7px"><span class="k">饱食度${frozen}</span><span class="num">${esc(num(agent.satiety))} / ${esc(num(agent.satietyMax))}</span></div>
             <div class="kv"><span class="k">余额</span><span class="num">${esc(num(agent.balance))}</span></div>
             <div class="kv"><span class="k">上次唤醒</span><span>${timeHtml(agent.lastWakeAt)}</span></div>
             <div class="kv"><span class="k">模型</span><span class="mono small">${esc(agent.model)}</span></div>
@@ -996,12 +1060,17 @@
       }
 
       // ------------------------------------------- interventions page
+      function interventionOwner(row) {
+        // "conservatory" is the harness-wide marker the server writes for a
+        // conservatory-wide intervention (pause / resume).
+        return row.agent === "conservatory" ? "全局" : row.agent;
+      }
       function interventionRowsHtml(rows) {
         if (rows.length === 0) return '<div class="empty small">还没有干预记录。</div>';
         return `<table><thead><tr><th style="width: 150px">时间</th><th style="width: 120px">类型</th><th style="width: 140px">对象 Agent</th><th>详情</th></tr></thead><tbody>${rows
           .map(
             (row) =>
-              `<tr><td>${timeHtml(row.at)}</td><td>${esc(INTERVENTION_KIND[row.kind] || row.kind)}</td><td>${esc(row.agent)}</td><td>${esc(row.detail)}</td></tr>`,
+              `<tr><td>${timeHtml(row.at)}</td><td>${esc(INTERVENTION_KIND[row.kind] || row.kind)}</td><td>${esc(interventionOwner(row))}</td><td>${esc(row.detail)}</td></tr>`,
           )
           .join("")}</tbody></table>`;
       }
@@ -1026,8 +1095,33 @@
       }
 
       // ------------------------------------------------ settings page
+      // The switch is built once into its own box (the config table rebuilds
+      // into #settingsBox and would wipe anything living there). Polling only
+      // writes `checked` / the status text, so the node survives every refresh.
+      function paintPauseSwitch() {
+        const box = $("pauseSwitchBox");
+        if (box.dataset.built !== "1") {
+          box.dataset.built = "1";
+          box.innerHTML =
+            `<div class="card pause-card" style="margin-bottom: 12px">` +
+            `<div class="row"><input type="checkbox" id="pauseToggle" data-act="pause-toggle" />` +
+            `<label class="pause-switch" for="pauseToggle">暂停温室</label>` +
+            `<span class="grow"></span><span class="small muted" id="pauseStatus"></span></div>` +
+            `<div class="small muted">打开后整个温室对 Agent 停止：心跳不再唤醒任何 Agent，饱食度冻结在暂停那一刻，任务认领计时也冻结；余额不受影响。</div>` +
+            `</div>`;
+        }
+        const toggle = $("pauseToggle");
+        if (toggle === null) return;
+        const paused = isPaused();
+        if (toggle.checked !== paused) toggle.checked = paused;
+        const status = $("pauseStatus");
+        if (status !== null) {
+          status.textContent = paused ? `已暂停 · ${pauseMinutes()} 分钟` : "运行中";
+        }
+      }
       function paintSettingsPage() {
         if (state === null) return;
+        paintPauseSwitch();
         const config = state.config;
         const key = JSON.stringify({ config, rate: state.exchangeRate, agents: state.agents.length });
         if (key === settingsKey) return;
@@ -1074,6 +1168,8 @@
         }
       }
       function paintDialogHeader() {
+        const frozen = $("dlgFrozen");
+        if (frozen !== null) frozen.hidden = !isPaused();
         const agent = agentByName(dlgAgent);
         if (agent === null) {
           $("dlgName").textContent = "—";
@@ -1574,7 +1670,12 @@
       function paintAgentInterventions() {
         const agent = agentByName(dlgAgent);
         if (agent === null || state === null) return;
-        const rows = state.interventions.filter((row) => row.agent === agent.name).slice().reverse();
+        // Conservatory-wide rows carry the "conservatory" marker; they affect
+        // every agent, so this pane shows them too (rendered as 全局).
+        const rows = state.interventions
+          .filter((row) => row.agent === agent.name || row.agent === "conservatory")
+          .slice()
+          .reverse();
         repaint($("agentInt"), interventionRowsHtml(rows));
       }
 
@@ -1588,6 +1689,25 @@
         }
         if (act === "open-agent") {
           openAgent(target.dataset.agent, "life");
+          return;
+        }
+        if (act === "goto-pause-settings") {
+          goPage("settings");
+          return;
+        }
+        if (act === "pause-toggle") {
+          // A checkbox click has already flipped `checked`, so that is the
+          // desired new state. Cancel snaps it back to the server's state.
+          const wanted = target.checked === true;
+          const question = wanted
+            ? "暂停温室：所有 Agent 不会醒来，也不会饿；这会被永久记录为操作员干预。"
+            : "恢复温室：时间重新流动；这会被永久记录为操作员干预。";
+          if (!confirm(question)) {
+            target.checked = isPaused();
+            return;
+          }
+          await post("/api/settings/pause", { paused: wanted });
+          await refresh();
           return;
         }
         if (act === "dlg-close") {
