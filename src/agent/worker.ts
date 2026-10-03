@@ -354,6 +354,10 @@ export function startWorkerProcess(): void {
     }
     runtime.handleMessage(message);
   });
+  // If the supervisor goes away, this agent's process goes with it.
+  process.on('disconnect', () => {
+    process.exit(0);
+  });
   send({ type: 'ready', pid: process.pid });
 }
 

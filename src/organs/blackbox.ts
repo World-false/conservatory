@@ -56,6 +56,7 @@ export class Blackbox {
     return path.join(this.rootDir, agent, `${day}.jsonl`);
   }
 
+  /** Day ids present for this agent, oldest first, without the file extension. */
   listDays(agent: string): string[] {
     const dir = path.join(this.rootDir, agent);
     if (!existsSync(dir)) {
@@ -63,6 +64,7 @@ export class Blackbox {
     }
     return readdirSync(dir)
       .filter((name) => name.endsWith('.jsonl'))
+      .map((name) => name.slice(0, -'.jsonl'.length))
       .sort();
   }
 
