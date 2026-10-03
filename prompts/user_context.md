@@ -1,12 +1,11 @@
-=== MEMORY ===
+# MEMORY
 {{memory}}
-=== END MEMORY ===
 
-=== BODY STATE ===
+# BODY STATE
 {{body_state}}
 
-=== TASK BOARD ===
+# TASK BOARD
 {{task_board}}
 
-=== MESSAGES FROM THE OPERATOR ===
+# MESSAGES FROM THE OPERATOR
 {{messages}}

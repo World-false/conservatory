@@ -375,7 +375,7 @@ describe('the prompt templates in the console', () => {
     writePrompts(h, {
       'manual.md': BODY_MANUAL,
       'memory_system.md': MEMORY_SYSTEM_PROMPT,
-      'user_context.md': '=== MEMORY ===\n(no placeholder at all)\n',
+      'user_context.md': '# MEMORY\n(no placeholder at all)\n',
     });
     const console = await startConsole(h, []);
 

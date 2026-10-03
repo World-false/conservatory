@@ -341,7 +341,7 @@ describe('a round', () => {
       const wake = wakeOf(second.worker);
       expect(wake.user).toContain(written);
       expect(wake.user).not.toContain('first reply text');
-      expect(wake.user).toContain('=== BODY STATE ===');
+      expect(wake.user).toContain('# BODY STATE');
       expect(wake.user).toMatch(/satiety: \d/);
       expect(wake.user).toMatch(/balance: \d/);
       expect(wake.user).toContain('Count the clouds');
@@ -364,7 +364,7 @@ describe('a round', () => {
       const { worker } = await runRound(h, agent, [textResponse('checking')]);
       const wake = wakeOf(worker);
       expect(wake.user).toContain('Are you hungry?');
-      expect(wake.user).toContain('=== MESSAGES FROM THE OPERATOR ===');
+      expect(wake.user).toContain('# MESSAGES FROM THE OPERATOR');
     } finally {
       h.cleanup();
     }

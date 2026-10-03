@@ -25,19 +25,22 @@ export const BODY_STATE_PLACEHOLDER = '{{body_state}}';
 export const TASK_BOARD_PLACEHOLDER = '{{task_board}}';
 export const MESSAGES_PLACEHOLDER = '{{messages}}';
 
-/** The safe template: it is what the file is supposed to be, and the fallback. */
+/**
+ * The safe template: it is what the file is supposed to be, and the fallback.
+ * The headings are plain Markdown, so the agent reads the same text the
+ * operator sees when they open prompts/user_context.md.
+ */
 export const DEFAULT_USER_CONTEXT_TEMPLATE = [
-  '=== MEMORY ===',
+  '# MEMORY',
   MEMORY_PLACEHOLDER,
-  '=== END MEMORY ===',
   '',
-  '=== BODY STATE ===',
+  '# BODY STATE',
   BODY_STATE_PLACEHOLDER,
   '',
-  '=== TASK BOARD ===',
+  '# TASK BOARD',
   TASK_BOARD_PLACEHOLDER,
   '',
-  '=== MESSAGES FROM THE OPERATOR ===',
+  '# MESSAGES FROM THE OPERATOR',
   MESSAGES_PLACEHOLDER,
 ].join('\n');
 

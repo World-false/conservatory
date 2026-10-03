@@ -98,7 +98,7 @@ describe('the prompt templates on disk', () => {
   it('refuses a user context template that lost its memory placeholder', () => {
     const h = createHarness();
     try {
-      writePrompts(h, { 'user_context.md': '=== BODY STATE ===\n{{body_state}}\n' });
+      writePrompts(h, { 'user_context.md': '# BODY STATE\n{{body_state}}\n' });
       const template = testPrompts(h).userContext();
       expect(template.fromFile).toBe(false);
       expect(template.text).toBe(DEFAULT_USER_CONTEXT_TEMPLATE);
@@ -241,13 +241,12 @@ describe('assembling the user context', () => {
       const context = coordinator.buildContext(agent, h.clock.now());
       expect(warnings).toEqual([MISSING_MEMORY_WARNING]);
       // The memory survives the fallback, which is the whole point.
-      expect(context.user).toContain('=== MEMORY ===');
+      expect(context.user).toContain('# MEMORY');
       expect(context.user).toContain('Name: ada');
-      expect(context.user).toContain(`=== END MEMORY ===`);
-      expect(context.user).toContain('=== BODY STATE ===');
+      expect(context.user).toContain('# BODY STATE');
       expect(context.user).toContain('satiety: 100 / 100');
-      expect(context.user).toContain('=== TASK BOARD ===');
-      expect(context.user).toContain('=== MESSAGES FROM THE OPERATOR ===');
+      expect(context.user).toContain('# TASK BOARD');
+      expect(context.user).toContain('# MESSAGES FROM THE OPERATOR');
       expect(context.user).not.toContain('BODY ONLY');
     } finally {
       h.cleanup();
@@ -291,9 +290,9 @@ describe('assembling the user context', () => {
 
       const wake = wakeOf(worker);
       expect(wake.system).toBe('MANUAL FROM DISK');
-      expect(wake.user).toContain('=== MEMORY ===');
+      expect(wake.user).toContain('# MEMORY');
       expect(wake.user).toContain('Name: ada');
-      expect(wake.user).toContain('=== BODY STATE ===');
+      expect(wake.user).toContain('# BODY STATE');
       expect(wake.user).toContain('Name: ada');
 
       const system = memoryModel.requests[0].messages.find((message) => message.role === 'system');
