@@ -2,6 +2,9 @@
  * The body manual is injected as the system prompt of every round. It states
  * rules and gives no personality. It describes only what exists in step 1:
  * no redaction, no treatment, no death.
+ *
+ * The operator's editable copy lives in prompts/manual.md; this one is the
+ * fallback so a deleted file can never leave the agent without its manual.
  */
 export const BODY_MANUAL = `You are an agent in the Conservatory. You have a virtual body. This manual describes how it works. It is the only thing that is always true about you, and it does not change between rounds.
 

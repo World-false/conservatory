@@ -38,6 +38,8 @@ Every round injects a fixed body manual stating that the agent gets hungry, what
 
 The manual states rules and gives no personality. A newborn's `MEMORY` begins with only its name and birth time; who it is and what it cares about grow out of its own experience. A given persona pushes it toward performance, which is exactly what the first risk below fears.
 
+The manual is a template, not code: `prompts/manual.md` holds its text, and the copy in the source is only the fallback for a file that is missing, empty, or unreadable. `prompts/memory_system.md` and `prompts/user_context.md` do the same for the memory system prompt and for the shape of the round's user prompt, whose four blocks — memory, body state, the task board, and unread messages — are filled into `{{memory}}`, `{{body_state}}`, `{{task_board}}` and `{{messages}}`. Templates are reread on every wake-up by default, so saving one takes effect without a restart; the console can hold them in memory instead and reload them on demand. A user context template that has lost `{{memory}}` is refused whole and the built-in template is used, because the one thing an edit must never do is silently erase the agent's past.
+
 ## 3. Body Structure
 
 ### One Agent Per Process and Directory Layout

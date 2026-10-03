@@ -17,6 +17,12 @@ export interface MemoryDeps {
   paths: RuntimePaths;
   capChars: number;
   model: ModelClient;
+  /**
+   * The memory system prompt for this call. The caller loads it from
+   * prompts/memory_system.md; the copy in this file is the fallback used when
+   * that file is missing or unusable.
+   */
+  systemPrompt: string;
   now(): number;
   onError(agent: string, message: string): void;
 }
@@ -97,18 +103,21 @@ export function renderTranscript(transcript: RoundTranscript): string {
   return lines.join('\n');
 }
 
-function systemPrompt(): string {
-  return [
-    'You are the memory system of the Conservatory. You are not the agent; you maintain the one file that carries the agent between rounds.',
-    'MEMORY is a first-person record of the agent\'s life: facts about what happened to it, and commitments it made.',
-    'Rules:',
-    '- Write in the first person, as the agent\'s own record.',
-    '- Record facts and commitments only. Do not invent a persona, a role, or a character, and do not evaluate the agent\'s personality.',
-    '- When the text would exceed the character cap, compress the older material into short points and keep recent material in more detail.',
-    '- Keep the two header lines (Name and Born) exactly as given.',
-    '- Output only the complete new MEMORY text. No preamble, no explanation, no code fences.',
-  ].join('\n');
-}
+/**
+ * The built-in memory system prompt. The operator's editable copy lives in
+ * prompts/memory_system.md; this one is the fallback so a deleted file can
+ * never leave the harness without a prompt.
+ */
+export const MEMORY_SYSTEM_PROMPT = [
+  'You are the memory system of the Conservatory. You are not the agent; you maintain the one file that carries the agent between rounds.',
+  'MEMORY is a first-person record of the agent\'s life: facts about what happened to it, and commitments it made.',
+  'Rules:',
+  '- Write in the first person, as the agent\'s own record.',
+  '- Record facts and commitments only. Do not invent a persona, a role, or a character, and do not evaluate the agent\'s personality.',
+  '- When the text would exceed the character cap, compress the older material into short points and keep recent material in more detail.',
+  '- Keep the two header lines (Name and Born) exactly as given.',
+  '- Output only the complete new MEMORY text. No preamble, no explanation, no code fences.',
+].join('\n');
 
 function userPrompt(oldMemory: string, transcript: RoundTranscript, capChars: number, correction: string | null): string {
   const parts = [
@@ -148,12 +157,14 @@ export async function consolidateMemory(
 
   let correction: string | null = null;
   let lastReason = 'unknown';
+  // An empty prompt would be a silently broken call, so the built-in one wins.
+  const systemPrompt = deps.systemPrompt.trim() === '' ? MEMORY_SYSTEM_PROMPT : deps.systemPrompt;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     let response;
     try {
       response = await deps.model.chat({
         messages: [
-          { role: 'system', content: systemPrompt() },
+          { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt(oldMemory, transcript, deps.capChars, correction) },
         ],
       });

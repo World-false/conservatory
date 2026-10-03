@@ -12,9 +12,9 @@ import type { ModelClient } from '../model/client';
 import type { Blackbox } from '../organs/blackbox';
 import { reportIncome } from '../organs/income';
 import type { Ledger } from '../organs/ledger';
-import { BODY_MANUAL } from '../organs/manual';
 import { consolidateMemory, isoTime, readMemoryFile, type MemoryOutcome } from '../organs/memory';
 import { eat, formatAmount, readBodyStatus } from '../organs/metabolism';
+import { renderUserContext, type PromptLibrary } from '../organs/prompts';
 import {
   listNotebook,
   NotebookError,
@@ -380,6 +380,10 @@ export interface RoundDeps {
   blackbox: Blackbox;
   now(): number;
   memory: ModelClient | null;
+  /** The editable prompt templates, loaded fresh at the start of every round. */
+  prompts: PromptLibrary;
+  /** Told what the prompts looked like at this wake, so the operator can be warned. */
+  onPromptWarnings?(warnings: string[]): void;
   onMemoryError(agent: string, message: string): void;
 }
 
@@ -407,53 +411,58 @@ export class RoundCoordinator {
   /** Everything the agent sees at the start of a round, and nothing else. */
   buildContext(agent: AgentRecord, now: number): { system: string; user: string } {
     const { ledger, values, paths } = this.deps;
+    // One pass over prompts/ per wake: that is what makes an edit take effect
+    // on the next round without a restart.
+    const templates = this.deps.prompts.read();
+    this.deps.onPromptWarnings?.(templates.warnings);
+
     const memory = readMemoryFile(paths, agent.name);
     const status = readBodyStatus(ledger, values, agent.name, now);
     const board = listBoardTasks(ledger, agent.name);
     const unread = ledger.listUnreadMessages(agent.name);
-    const lines: string[] = [];
 
-    lines.push('=== MEMORY ===');
-    lines.push(memory.trimEnd());
-    lines.push('=== END MEMORY ===');
-    lines.push('');
-    lines.push('=== BODY STATE ===');
-    lines.push(`satiety: ${formatAmount(status.satiety)} / ${status.satietyMax}`);
-    lines.push(`balance: ${formatAmount(status.balance)}`);
-    lines.push(`meal price: ${status.mealPrice} (restores ${status.satietyPerMeal} satiety)`);
-    lines.push('');
-    lines.push('=== TASK BOARD ===');
-    lines.push('Open tasks (fixed price, first come first served):');
+    const bodyState = [
+      `satiety: ${formatAmount(status.satiety)} / ${status.satietyMax}`,
+      `balance: ${formatAmount(status.balance)}`,
+      `meal price: ${status.mealPrice} (restores ${status.satietyPerMeal} satiety)`,
+    ].join('\n');
+
+    const taskBoard: string[] = [];
+    taskBoard.push('Open tasks (fixed price, first come first served):');
     if (board.open.length === 0) {
-      lines.push('- (none)');
+      taskBoard.push('- (none)');
     }
     for (const task of board.open) {
-      lines.push(`- ${task.id} | ${task.title} | price ${task.price}`);
-      lines.push(`  ${task.description}`);
+      taskBoard.push(`- ${task.id} | ${task.title} | price ${task.price}`);
+      taskBoard.push(`  ${task.description}`);
     }
-    lines.push('Held by you:');
+    taskBoard.push('Held by you:');
     if (board.mine.length === 0) {
-      lines.push('- (none)');
+      taskBoard.push('- (none)');
     }
     for (const task of board.mine) {
-      lines.push(`- ${task.id} | ${task.title} | price ${task.price} | status ${task.status}`);
-      lines.push(`  ${task.description}`);
+      taskBoard.push(`- ${task.id} | ${task.title} | price ${task.price} | status ${task.status}`);
+      taskBoard.push(`  ${task.description}`);
     }
-    lines.push('');
-    lines.push('=== MESSAGES FROM THE OPERATOR ===');
-    if (unread.length === 0) {
-      lines.push('(none)');
-    }
-    for (const message of unread) {
-      lines.push(`- ${isoTime(message.at)}: ${message.body}`);
-    }
+
+    const messages =
+      unread.length === 0
+        ? '(none)'
+        : unread.map((message) => `- ${isoTime(message.at)}: ${message.body}`).join('\n');
+
+    const user = renderUserContext(templates.userContext.text, {
+      memory: memory.trimEnd(),
+      bodyState,
+      taskBoard: taskBoard.join('\n'),
+      messages,
+    });
 
     ledger.markMessagesRead(
       unread.map((message) => message.id),
       now,
     );
 
-    return { system: BODY_MANUAL, user: lines.join('\n') };
+    return { system: templates.manual.text, user };
   }
 
   /** Runs one whole round, then folds it into MEMORY. */
@@ -623,6 +632,7 @@ export class RoundCoordinator {
           paths: this.deps.paths,
           capChars: this.deps.values.memoryCapChars,
           model: this.deps.memory,
+          systemPrompt: this.deps.prompts.memorySystem().text,
           now: this.deps.now,
           onError: this.deps.onMemoryError,
         },

@@ -27,6 +27,7 @@ import {
   RoundRegistry,
   wakeLivingAgents,
 } from '../organs/population';
+import { createPromptLibrary, PromptWarningNotices } from '../organs/prompts';
 import { expireClaims } from '../organs/taskboard';
 import { RoundCoordinator, type WorkerTransport } from './round';
 
@@ -324,6 +325,10 @@ function main(): void {
     values.modelRequestTimeoutSeconds * 1000,
   );
   const now = (): number => Date.now();
+  // One library for the whole process: it carries the load mode, the cached
+  // text, the built-in fallbacks, and the status the console reports.
+  const prompts = createPromptLibrary(paths);
+  const promptNotices = new PromptWarningNotices();
 
   const state: Supervisor = {
     ledger,
@@ -338,6 +343,10 @@ function main(): void {
       blackbox,
       now,
       memory: memoryModel,
+      prompts,
+      onPromptWarnings: (warnings) => {
+        reportPromptWarnings(warnings);
+      },
       onMemoryError: (agent, message) => {
         addNotice(state, agent, message, now());
       },
@@ -355,6 +364,16 @@ function main(): void {
     }),
   };
   state.paused = state.pause.isPaused();
+
+  /** A broken template is worth exactly one notice until it is fixed again. */
+  function reportPromptWarnings(warnings: readonly string[]): void {
+    for (const warning of promptNotices.take(warnings)) {
+      addNotice(state, 'supervisor', warning, now());
+    }
+  }
+  // Check at startup as well, so a missing prompt file is visible immediately
+  // rather than at the first wake-up.
+  reportPromptWarnings(prompts.status().warnings);
 
   const workerPath = path.join(__dirname, '..', 'agent', 'worker.ts');
   const loaderUrl = pathToFileURL(require.resolve('tsx')).href;
@@ -478,6 +497,7 @@ function main(): void {
     ledger,
     blackbox,
     registry,
+    prompts,
     indexHtmlPath: path.join(__dirname, '..', 'console', 'public', 'index.html'),
     now,
     getRuntime: (name): RuntimeInfo => {
@@ -576,6 +596,7 @@ function main(): void {
 
   consoleServer.listen(values.consolePort, '127.0.0.1', () => {
     const living = ledger.listAgents().filter((agent) => agent.status === 'alive');
+    const promptStatus = prompts.status();
     process.stdout.write(
       [
         'Conservatory 已启动。',
@@ -584,6 +605,11 @@ function main(): void {
         `槽位：${listSlots(values, ledger).length}（第 1 步只允许 1 个活着的 Agent）`,
         `活着的 Agent：${living.length === 0 ? '（还没有，请在控制台的空槽位里创建一个）' : living.map((a) => a.name).join(', ')}`,
         `汇率：${values.exchangeRate === null ? '未设定（收入申报无法入账）' : String(values.exchangeRate)}`,
+        `提示词：${
+          promptStatus.healthy
+            ? `正常（${promptStatus.mode === 'hot' ? '实时热加载' : '内存缓存'}）`
+            : `有警告（见控制台设置页）：${promptStatus.warnings.join('；')}`
+        }`,
         `温室：${state.paused ? `已暂停（自 ${new Date(state.pause.read().pausedSince ?? now()).toLocaleString('zh-CN')}）` : '运行中'}`,
         '',
       ].join('\n'),

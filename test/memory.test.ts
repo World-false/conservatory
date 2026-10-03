@@ -5,6 +5,7 @@ import { agentMemoryPath } from '../src/config';
 import {
   consolidateMemory,
   enforceHeader,
+  MEMORY_SYSTEM_PROMPT,
   newbornMemory,
   readMemoryFile,
   writeMemoryAtomic,
@@ -39,6 +40,7 @@ function depsFor(h: Harness, responses: string[], capChars = 400): { deps: Memor
       paths: h.paths,
       capChars,
       model,
+      systemPrompt: MEMORY_SYSTEM_PROMPT,
       now: h.clock.now,
       onError: (agent, message) => {
         errors.push(`${agent}: ${message}`);

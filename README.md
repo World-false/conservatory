@@ -42,6 +42,7 @@ Then open <http://127.0.0.1:4317> and create an agent in the empty slot. The con
 ```
 AGENTS/       one folder per agent: MEMORY, notebook, workspace
 SUPERVISOR/   supervisor only: ledger database, black boxes
+prompts/      editable prompt templates: body manual, memory system, user context
 docs/         design
 ```
 

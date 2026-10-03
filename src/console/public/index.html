@@ -415,6 +415,7 @@
           <section class="page" id="page-settings">
             <h2 class="page-title">设置</h2>
             <div id="pauseSwitchBox"></div>
+            <div id="promptBox"></div>
             <div id="settingsBox"></div>
           </section>
         </div>
@@ -764,6 +765,7 @@
         paintIncomePage();
         paintInterventionsPage();
         paintSettingsPage();
+        paintPromptPanel();
         paintDialogHeader();
         paintPanes();
       }
@@ -1118,6 +1120,61 @@
         if (status !== null) {
           status.textContent = paused ? `已暂停 · ${pauseMinutes()} 分钟` : "运行中";
         }
+      }
+      // Built once as well: polling only writes the checked radio, the hint and
+      // the template rows, so a click on the mode or the reload button survives
+      // every refresh.
+      function paintPromptPanel() {
+        if (state === null || state.prompts === undefined) return;
+        const box = $("promptBox");
+        if (box.dataset.built !== "1") {
+          box.dataset.built = "1";
+          box.innerHTML =
+            `<div class="card" style="margin-bottom: 12px">` +
+            `<div class="row"><strong class="grow">提示词模板</strong><span id="promptHealth"></span></div>` +
+            `<div class="row" style="margin-top: 8px">` +
+            `<label class="pause-switch"><input type="radio" name="promptMode" value="hot" data-act="prompt-mode" />实时热加载</label>` +
+            `<label class="pause-switch"><input type="radio" name="promptMode" value="cached" data-act="prompt-mode" />内存缓存</label>` +
+            `<span class="grow"></span>` +
+            `<button class="btn tiny" data-act="prompt-reload" id="promptReload">重新加载提示词</button>` +
+            `</div>` +
+            `<div class="small muted" id="promptHint"></div>` +
+            `<div id="promptRows" style="margin-top: 10px"></div>` +
+            `</div>`;
+        }
+        const status = state.prompts;
+        const cached = status.mode === "cached";
+        for (const input of box.querySelectorAll('input[name="promptMode"]')) {
+          input.checked = input.value === status.mode;
+        }
+        $("promptHealth").innerHTML = status.healthy
+          ? '<span class="tag ok">正常</span>'
+          : '<span class="tag bad">警告</span>';
+        $("promptHint").textContent = cached
+          ? "已缓存：修改 prompts/ 下的文件后，需点『重新加载提示词』才生效。"
+          : "实时热加载：每次唤醒都读取文件最新内容，保存后即刻生效，无需重启服务。";
+        $("promptReload").disabled = !cached;
+        const host = $("promptRows");
+        const key = JSON.stringify({ mode: status.mode, dir: status.dir, templates: status.templates, warnings: status.warnings });
+        if (host.dataset.key === key) return;
+        host.dataset.key = key;
+        const rows = status.templates
+          .map(
+            (template) =>
+              `<tr><td class="mono">${esc(template.file)}</td>` +
+              `<td>${template.warning === null ? '<span class="tag ok">正常</span>' : '<span class="tag warn">兜底</span>'}</td>` +
+              `<td class="mono small">${esc(template.path)}</td></tr>`,
+          )
+          .join("");
+        host.innerHTML =
+          `<table class="config-table"><tbody>` +
+          `<tr><td>加载模式</td><td>${cached ? "内存缓存" : "实时热加载"}</td></tr>` +
+          `<tr><td>模板目录</td><td class="mono small">${esc(status.dir)}</td></tr>` +
+          rows +
+          `</tbody></table>` +
+          (status.warnings.length === 0
+            ? ""
+            : `<div class="banner warn" style="margin-top: 8px">${status.warnings.map(esc).join("<br />")}</div>`);
       }
       function paintSettingsPage() {
         if (state === null) return;
@@ -1708,6 +1765,25 @@
           }
           await post("/api/settings/pause", { paused: wanted });
           await refresh();
+          return;
+        }
+        if (act === "prompt-mode") {
+          const wanted = target.value === "cached" ? "cached" : "hot";
+          const current = state === null || state.prompts === undefined ? "hot" : state.prompts.mode;
+          if (wanted === current) return;
+          try {
+            await post("/api/prompts/mode", { mode: wanted });
+          } finally {
+            await refresh();
+          }
+          return;
+        }
+        if (act === "prompt-reload") {
+          try {
+            await post("/api/prompts/reload", {});
+          } finally {
+            await refresh();
+          }
           return;
         }
         if (act === "dlg-close") {

@@ -14,6 +14,7 @@ import {
   InProcessWorker,
   memoryResponse,
   ScriptedModelClient,
+  testPrompts,
   textResponse,
   toolCallResponse,
   type Harness,
@@ -23,6 +24,7 @@ function makeCoordinator(
   h: Harness,
   memoryResponses: ReturnType<typeof memoryResponse>[],
   errors: string[],
+  onPromptWarnings?: (warnings: string[]) => void,
 ): RoundCoordinator {
   return new RoundCoordinator({
     ledger: h.ledger,
@@ -31,6 +33,8 @@ function makeCoordinator(
     blackbox: h.blackbox,
     now: h.clock.now,
     memory: new ScriptedModelClient(memoryResponses),
+    prompts: testPrompts(h),
+    onPromptWarnings,
     onMemoryError: (agent, message) => {
       errors.push(`${agent}: ${message}`);
     },

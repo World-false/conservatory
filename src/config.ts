@@ -49,6 +49,8 @@ export interface RuntimePaths {
   supervisorDir: string;
   ledgerPath: string;
   blackboxDir: string;
+  /** The editable prompt templates. They are source, not runtime state. */
+  promptsDir: string;
 }
 
 export interface AppConfig {
@@ -67,6 +69,7 @@ export interface LoadAppConfigOptions {
 
 export const CONFIG_FILE_NAME = 'conservatory.config.json';
 export const ENV_FILE_NAME = '.env';
+export const PROMPTS_DIR_NAME = 'prompts';
 
 const ENV_KEYS = [
   'AGENT_MODEL_BASE_URL',
@@ -223,6 +226,7 @@ export function createRuntimePaths(rootDir: string, configPath: string, envPath:
     supervisorDir,
     ledgerPath: path.join(supervisorDir, 'ledger.db'),
     blackboxDir: path.join(supervisorDir, 'blackbox'),
+    promptsDir: path.join(resolvedRoot, PROMPTS_DIR_NAME),
   };
 }
 

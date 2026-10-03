@@ -3,10 +3,17 @@ import type http from 'node:http';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createConsoleServer } from '../src/console/server';
+import { BODY_MANUAL } from '../src/organs/manual';
+import { MEMORY_SYSTEM_PROMPT } from '../src/organs/memory';
 import { createPauseOrgan } from '../src/organs/pause';
 import { RoundRegistry } from '../src/organs/population';
+import {
+  DEFAULT_USER_CONTEXT_TEMPLATE,
+  type PromptLibrary,
+  type PromptStatus,
+} from '../src/organs/prompts';
 import { claimTask, createTask, submitTask } from '../src/organs/taskboard';
-import { birthAgent, createHarness, type Harness } from './helpers';
+import { birthAgent, createHarness, testPrompts, writePrompts, type Harness } from './helpers';
 
 interface RunningConsole {
   server: http.Server;
@@ -28,7 +35,11 @@ afterEach(async () => {
   harnesses.splice(0).forEach((h) => h.cleanup());
 });
 
-async function startConsole(h: Harness, created: string[]): Promise<RunningConsole> {
+async function startConsole(
+  h: Harness,
+  created: string[],
+  prompts: PromptLibrary = testPrompts(h),
+): Promise<RunningConsole> {
   const registry = new RoundRegistry();
   // The real pause organ, wired to the harness ledger, so the console tests
   // exercise the same freeze/resume path the supervisor uses.
@@ -50,6 +61,7 @@ async function startConsole(h: Harness, created: string[]): Promise<RunningConso
     ledger: h.ledger,
     blackbox: h.blackbox,
     registry,
+    prompts,
     indexHtmlPath: path.join(process.cwd(), 'src', 'console', 'public', 'index.html'),
     now: h.clock.now,
     getRuntime: () => ({
@@ -310,5 +322,75 @@ describe('the conservatory-wide pause switch', () => {
 
     const state = await getJson(console.base, '/api/state');
     expect(state.body['paused']).toBe(false);
+  });
+});
+
+describe('the prompt templates in the console', () => {
+  it('reports the healthy templates, their paths and the load mode', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    writePrompts(h, {
+      'manual.md': BODY_MANUAL,
+      'memory_system.md': MEMORY_SYSTEM_PROMPT,
+      'user_context.md': DEFAULT_USER_CONTEXT_TEMPLATE,
+    });
+    const console = await startConsole(h, []);
+
+    const response = await getJson(console.base, '/api/prompts');
+    expect(response.status).toBe(200);
+    const prompts = response.body['prompts'] as unknown as PromptStatus;
+    expect(prompts.mode).toBe('hot');
+    expect(prompts.healthy).toBe(true);
+    expect(prompts.warnings).toEqual([]);
+    expect(prompts.dir).toBe(h.paths.promptsDir);
+    expect(prompts.templates.map((template) => template.file)).toEqual([
+      'manual.md',
+      'user_context.md',
+      'memory_system.md',
+    ]);
+    for (const template of prompts.templates) {
+      expect(template.fromFile).toBe(true);
+      expect(template.warning).toBeNull();
+      expect(path.isAbsolute(template.path)).toBe(true);
+      expect(template.path.startsWith(h.paths.promptsDir)).toBe(true);
+    }
+
+    // The state the page polls carries the same view.
+    const state = await getJson(console.base, '/api/state');
+    expect((state.body['prompts'] as unknown as PromptStatus).healthy).toBe(true);
+
+    const cached = await postJson(console.base, '/api/prompts/mode', { mode: 'cached' });
+    expect(cached.status).toBe(200);
+    expect((cached.body['prompts'] as unknown as PromptStatus).mode).toBe('cached');
+    const reloaded = await postJson(console.base, '/api/prompts/reload', {});
+    expect(reloaded.status).toBe(200);
+    expect((reloaded.body['prompts'] as unknown as PromptStatus).mode).toBe('cached');
+    const after = await getJson(console.base, '/api/prompts');
+    expect((after.body['prompts'] as unknown as PromptStatus).mode).toBe('cached');
+  });
+
+  it('reports a template without {{memory}} as a warning, and refuses an unknown mode', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    writePrompts(h, {
+      'manual.md': BODY_MANUAL,
+      'memory_system.md': MEMORY_SYSTEM_PROMPT,
+      'user_context.md': '=== MEMORY ===\n(no placeholder at all)\n',
+    });
+    const console = await startConsole(h, []);
+
+    const response = await getJson(console.base, '/api/prompts');
+    const prompts = response.body['prompts'] as unknown as PromptStatus;
+    expect(prompts.healthy).toBe(false);
+    expect(prompts.warnings).toEqual(['提示词模板缺少 {{memory}} 占位符，已降级使用安全模板']);
+    const userContext = prompts.templates.find((template) => template.file === 'user_context.md');
+    expect(userContext?.fromFile).toBe(false);
+    expect(userContext?.warning).toBe('提示词模板缺少 {{memory}} 占位符，已降级使用安全模板');
+
+    const wrong = await postJson(console.base, '/api/prompts/mode', { mode: 'sometimes' });
+    expect(wrong.status).toBe(400);
+    expect(String(wrong.body['error'])).toContain('hot');
+    const stillHot = await getJson(console.base, '/api/prompts');
+    expect((stillHot.body['prompts'] as unknown as PromptStatus).mode).toBe('hot');
   });
 });

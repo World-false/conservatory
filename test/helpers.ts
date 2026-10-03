@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type {
@@ -15,6 +15,7 @@ import { Blackbox } from '../src/organs/blackbox';
 import type { AgentRecord } from '../src/organs/ledger';
 import { Ledger } from '../src/organs/ledger';
 import { createAgent } from '../src/organs/population';
+import { createPromptLibrary, type PromptLibrary, type PromptLoadMode } from '../src/organs/prompts';
 import type { WorkerTransport } from '../src/supervisor/round';
 
 /** Every test runs on a fake clock, so nothing depends on real time. */
@@ -304,4 +305,21 @@ export function initWorker(h: Harness, model: ModelClient): InProcessWorker {
     modelRequestTimeoutSeconds: h.values.modelRequestTimeoutSeconds,
   });
   return worker;
+}
+
+/**
+ * The prompt templates of a test conservatory. The harness root starts empty,
+ * so unless a test writes prompts/ the built-in fallbacks are what get used.
+ */
+export function testPrompts(h: Harness, mode: PromptLoadMode = 'hot'): PromptLibrary {
+  return createPromptLibrary(h.paths, mode);
+}
+
+/** Writes prompt files into the harness root, keyed by file name. */
+export function writePrompts(h: Harness, files: Record<string, string>): string {
+  mkdirSync(h.paths.promptsDir, { recursive: true });
+  for (const [name, text] of Object.entries(files)) {
+    writeFileSync(path.join(h.paths.promptsDir, name), text, 'utf8');
+  }
+  return h.paths.promptsDir;
 }

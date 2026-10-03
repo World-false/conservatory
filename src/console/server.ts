@@ -6,6 +6,7 @@ import type { IncomeReportRecord, InterventionKind, Ledger, PauseState, TaskReco
 import { readSatiety } from '../organs/metabolism';
 import { readMemoryFile } from '../organs/memory';
 import { NotebookError, listNotebook, readNotebookFile } from '../organs/notebook';
+import type { PromptLibrary } from '../organs/prompts';
 import { createTask, reviewTask, type ReviewDecision } from '../organs/taskboard';
 import type { Blackbox } from '../organs/blackbox';
 import type { RoundRegistry } from '../organs/population';
@@ -30,6 +31,8 @@ export interface ConsoleDeps {
   ledger: Ledger;
   blackbox: Blackbox;
   registry: RoundRegistry;
+  /** The live prompt templates: the console reports them and switches their mode. */
+  prompts: PromptLibrary;
   indexHtmlPath: string;
   now(): number;
   getRuntime(name: string): RuntimeInfo;
@@ -84,6 +87,7 @@ const MESSAGES: Record<string, string> = {
   agent_busy: '该 agent 正在一轮中，本次唤醒已跳过',
   invalid_amount_intervention: '干预数量必须是不小于 0 的数字',
   invalid_paused: 'paused 必须是 true 或 false',
+  invalid_prompt_mode: '提示词加载模式必须是 hot 或 cached',
 };
 
 function messageFor(code: string): string {
@@ -238,6 +242,7 @@ function buildState(deps: ConsoleDeps): Record<string, unknown> {
     exchangeRate: values.exchangeRate,
     paused: pause.paused,
     pausedSince: pause.pausedSince,
+    prompts: deps.prompts.status(),
     config: {
       satietyMax: values.satietyMax,
       satietyDecayPerSecond: values.satietyDecayPerSecond,
@@ -482,6 +487,30 @@ async function route(
       sendJson(response, 200, { ok: true, id });
       return;
     }
+  }
+
+  // /api/prompts
+  if (segments.length === 2 && segments[1] === 'prompts' && method === 'GET') {
+    sendJson(response, 200, { ok: true, prompts: deps.prompts.status() });
+    return;
+  }
+  // POST /api/prompts/mode
+  if (segments.length === 3 && segments[1] === 'prompts' && segments[2] === 'mode' && method === 'POST') {
+    const body = await readJsonBody(request);
+    const mode = readString(body, 'mode');
+    if (mode !== 'hot' && mode !== 'cached') {
+      sendJson(response, 400, { ok: false, error: messageFor('invalid_prompt_mode') });
+      return;
+    }
+    deps.prompts.setMode(mode);
+    sendJson(response, 200, { ok: true, prompts: deps.prompts.status() });
+    return;
+  }
+  // POST /api/prompts/reload
+  if (segments.length === 3 && segments[1] === 'prompts' && segments[2] === 'reload' && method === 'POST') {
+    deps.prompts.reload();
+    sendJson(response, 200, { ok: true, prompts: deps.prompts.status() });
+    return;
   }
 
   // POST /api/settings/pause

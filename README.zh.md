@@ -42,6 +42,7 @@ Windows PowerShell 下用 `Copy-Item .env.example .env` 复制模板。
 ```
 AGENTS/       每个 agent 一个文件夹：MEMORY、笔记本、工作区
 SUPERVISOR/   只有监管进程能碰：账本数据库、黑匣子
+prompts/      可直接编辑的提示词模板：身体说明书、记忆系统、用户上下文
 docs/         设计
 ```
 
