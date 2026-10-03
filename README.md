@@ -14,7 +14,7 @@ The conservatory is first a body for the AI and exists for the agents themselves
 
 ## Status
 
-Step 1 is implemented: one agent's survival loop — heartbeat, satiety, balance, eating, the fixed-price task board, income reports credited only after the operator verifies them, memory consolidation, token metering, operator interventions, and a simple web console. The agent still has no command execution, so it can only act through its body's fixed tools.
+Step 1 is implemented: one agent's survival loop — heartbeat, satiety, balance, eating, the fixed-price task board, income reports credited only after the operator verifies them, memory consolidation, token metering, operator interventions, and an operator console: a white left-rail layout where every agent is one card, and clicking a card opens a dialog holding only that agent's rounds, body, MEMORY, notebook, messages, tasks and intervention records. The agent still has no command execution, so it can only act through its body's fixed tools.
 
 Planned in four steps:
 

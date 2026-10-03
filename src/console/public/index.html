@@ -3,187 +3,468 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Conservatory 操作台</title>
+    <title>CONSERVATORY · 操作台</title>
     <style>
       :root {
-        --bg: #0b0f17;
-        --panel: #101726;
-        --panel-2: #0b101a;
-        --line: #1e293b;
-        --text: #e2e8f0;
-        --muted: #94a3b8;
-        --accent: #10b981;
-        --accent-dim: #064e3b;
-        --danger: #ef4444;
-        --warn: #f59e0b;
+        --bg: #ffffff;
+        --rail: #f7f7f8;
+        --line: #e5e7eb;
+        --text: #1f2328;
+        --muted: #6b7280;
+        --accent: #1f7a4d;
+        --accent-soft: #eef6f1;
+        --danger: #b42318;
+        --danger-soft: #fdf3f2;
+        --warn: #b54708;
+        --warn-soft: #fffaeb;
       }
       * { box-sizing: border-box; }
+      html, body { height: 100%; }
       body {
         margin: 0;
         background: var(--bg);
         color: var(--text);
-        font: 14px/1.6 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+        font: 14px/1.55 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+        overflow: hidden;
       }
-      header {
-        position: sticky;
-        top: 0;
-        z-index: 5;
-        display: flex;
-        flex-wrap: wrap;
-        gap: 12px;
-        align-items: center;
-        justify-content: space-between;
-        padding: 12px 20px;
-        background: #0e1422;
-        border-bottom: 1px solid var(--line);
-      }
-      h1 { font-size: 16px; margin: 0; letter-spacing: 0.05em; }
-      h2 { font-size: 14px; margin: 0 0 10px; color: var(--muted); font-weight: 600; }
-      main { padding: 16px 20px 60px; display: grid; gap: 16px; grid-template-columns: minmax(320px, 1fr) minmax(360px, 1.4fr); }
-      @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
-      .panel {
-        background: var(--panel);
-        border: 1px solid var(--line);
-        border-radius: 12px;
-        padding: 14px;
-      }
-      .muted { color: var(--muted); }
+      .mono, pre, code, .num { font-family: Consolas, "Cascadia Mono", monospace; }
       .small { font-size: 12px; }
-      .mono { font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; }
+      .muted { color: var(--muted); }
+      .empty { color: var(--muted); font-style: italic; }
+      .grow { flex: 1 1 auto; }
       .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+      .col-stack { display: grid; gap: 10px; }
+      .contents { display: contents; }
+
+      /* ---------------------------------------------------------------- shell */
+      .app { display: flex; height: 100vh; }
+      .rail {
+        flex: 0 0 220px;
+        width: 220px;
+        background: var(--rail);
+        border-right: 1px solid var(--line);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      .brand { padding: 16px 16px 12px; font-size: 16px; font-weight: 700; }
+      .brand small { display: block; font-weight: 400; font-size: 10px; color: var(--muted); letter-spacing: 0.16em; }
+      .nav { flex: 1; overflow: auto; padding: 2px 8px 8px; }
+      .nav-item {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        height: 36px;
+        padding: 0 10px;
+        border-radius: 8px;
+        cursor: pointer;
+        color: var(--text);
+        user-select: none;
+      }
+      .nav-item + .nav-item { margin-top: 2px; }
+      .nav-item:hover { background: #ececee; }
+      .nav-item.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+      .nav-item svg { width: 16px; height: 16px; flex: 0 0 16px; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+      .nav-label { flex: 1; }
+      .badge {
+        min-width: 18px;
+        height: 18px;
+        padding: 0 5px;
+        border-radius: 999px;
+        background: var(--accent);
+        color: #fff;
+        font-size: 11px;
+        line-height: 18px;
+        text-align: center;
+      }
+      .badge.warn { background: var(--warn); }
+      .rail-foot {
+        border-top: 1px solid var(--line);
+        padding: 10px 14px 12px;
+        font-size: 12px;
+        color: var(--muted);
+        display: grid;
+        gap: 3px;
+      }
+      .rail-foot strong { color: var(--text); font-weight: 600; }
+      .main { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
+
+      /* -------------------------------------------------------------- notices */
+      .notices { padding: 10px 18px 0; display: grid; gap: 6px; }
+      .notices:empty { padding: 0; }
+      .notice {
+        display: flex;
+        gap: 10px;
+        align-items: flex-start;
+        border: 1px solid #f2d9a8;
+        border-left: 3px solid var(--warn);
+        background: var(--warn-soft);
+        color: #6b3d05;
+        border-radius: 8px;
+        padding: 7px 10px;
+        font-size: 12.5px;
+      }
+      .notice b { color: var(--warn); }
+      .notice .close { margin-left: auto; }
+
+      /* ---------------------------------------------------------------- pages */
+      .pages { flex: 1; overflow: auto; padding: 16px 18px 40px; }
+      .page { display: none; }
+      .page.active { display: block; }
+      h2.page-title { font-size: 17px; margin: 0 0 14px; font-weight: 600; }
+      .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; align-content: start; }
+      @media (min-width: 1500px) { .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+      @media (max-width: 1080px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+      .split { display: grid; grid-template-columns: minmax(320px, 420px) minmax(320px, 1fr); gap: 16px; align-items: start; }
+      .list { display: grid; gap: 8px; }
+      .scroll-list { max-height: 46vh; overflow: auto; padding-right: 2px; }
+
+      /* ---------------------------------------------------------------- cards */
       .card {
-        background: var(--panel-2);
+        background: #fff;
         border: 1px solid var(--line);
         border-radius: 10px;
-        padding: 10px 12px;
-        margin-bottom: 10px;
+        padding: 12px;
       }
-      .card.busy { border-color: var(--accent); }
+      .agent-card { cursor: pointer; }
+      .agent-card:hover { border-color: var(--accent); }
+      .card-head { display: flex; align-items: center; gap: 7px; margin-bottom: 8px; }
+      .card-name { font-weight: 600; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .dot { width: 8px; height: 8px; border-radius: 50%; background: #9ca3af; flex: 0 0 8px; }
+      .dot.busy { background: var(--accent); }
       .tag {
         display: inline-block;
-        padding: 1px 7px;
+        padding: 0 7px;
         border-radius: 999px;
         font-size: 11px;
+        line-height: 18px;
         border: 1px solid var(--line);
         color: var(--muted);
+        background: #fff;
+        white-space: nowrap;
       }
-      .tag.ok { color: var(--accent); border-color: var(--accent-dim); }
-      .tag.bad { color: var(--danger); border-color: #7f1d1d; }
-      .tag.warn { color: var(--warn); border-color: #78350f; }
-      input, textarea, select, button {
-        background: #0c111c;
-        color: var(--text);
+      .tag.ok { color: var(--accent); border-color: #cbe3d6; background: var(--accent-soft); }
+      .tag.bad { color: var(--danger); border-color: #f1c9c4; background: var(--danger-soft); }
+      .tag.warn { color: var(--warn); border-color: #f2d9a8; background: var(--warn-soft); }
+      .bar { height: 8px; border-radius: 999px; background: #eef0f2; overflow: hidden; }
+      .bar > span { display: block; height: 100%; background: var(--accent); }
+      .kv { display: flex; justify-content: space-between; gap: 10px; font-size: 12.5px; }
+      .kv .k { color: var(--muted); }
+      .card-reply { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); font-size: 12px; color: var(--muted); white-space: pre-wrap; word-break: break-word; max-height: 46px; overflow: hidden; }
+      .slot-card { border-style: dashed; background: #fcfcfd; display: grid; gap: 8px; align-content: start; }
+      .slot-card .slot-title { color: var(--muted); font-size: 12.5px; }
+      .slot-card input { width: 100%; }
+
+      /* --------------------------------------------------------------- inputs */
+      input, textarea, select, button { font: inherit; color: var(--text); }
+      input, textarea, select {
+        background: #fff;
         border: 1px solid var(--line);
         border-radius: 8px;
         padding: 6px 9px;
-        font: inherit;
+        min-width: 0;
       }
-      textarea { min-height: 60px; width: 100%; resize: vertical; }
-      button { cursor: pointer; }
-      button:hover { border-color: var(--accent); }
-      button.primary { background: var(--accent-dim); border-color: var(--accent); color: #d1fae5; }
-      button.danger:hover { border-color: var(--danger); color: #fecaca; }
-      .bar { height: 7px; border-radius: 999px; background: #1f2937; overflow: hidden; margin: 6px 0; }
-      .bar > span { display: block; height: 100%; background: var(--accent); }
-      .bar.low > span { background: var(--danger); }
-      .kv { display: flex; justify-content: space-between; gap: 10px; }
-      ul { margin: 6px 0 0; padding-left: 18px; }
-      li { margin-bottom: 4px; }
+      input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(31, 122, 77, 0.12); }
+      textarea { min-height: 62px; width: 100%; resize: vertical; }
+      .btn {
+        background: #fff;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 6px 12px;
+        cursor: pointer;
+      }
+      .btn:hover { border-color: var(--accent); color: var(--accent); }
+      .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+      .btn.primary:hover { color: #fff; opacity: 0.92; }
+      .btn.danger { color: var(--danger); border-color: #f1c9c4; }
+      .btn.danger:hover { background: var(--danger-soft); border-color: var(--danger); color: var(--danger); }
+      .btn.tiny { padding: 2px 9px; font-size: 12px; }
+      .btn.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+      .btn.icon { padding: 4px 8px; line-height: 0; }
+      .btn.icon svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; }
+      .chips { display: flex; gap: 6px; flex-wrap: wrap; margin: 10px 0; }
+      .list-item { border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; cursor: pointer; background: #fff; }
+      .list-item:hover { border-color: var(--accent); }
+      .list-item.active { border-color: var(--accent); background: var(--accent-soft); }
+      .list-item .title { font-weight: 600; }
+      .list-item .sub { font-size: 12px; color: var(--muted); }
+
       pre {
-        background: #0c111c;
+        background: #fafafa;
         border: 1px solid var(--line);
         border-radius: 8px;
         padding: 10px;
-        max-height: 380px;
+        margin: 0;
         overflow: auto;
         white-space: pre-wrap;
         word-break: break-word;
-        margin: 0;
+        max-height: 420px;
+        font-size: 12.5px;
+        line-height: 1.5;
       }
-      .notice { border-left: 3px solid var(--warn); padding: 6px 10px; background: #1c1917; border-radius: 6px; margin-bottom: 6px; }
-      .full { grid-column: 1 / -1; }
-      .empty { color: var(--muted); font-style: italic; }
+      details { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; background: #fff; }
+      details + details { margin-top: 8px; }
+      details > summary { cursor: pointer; font-size: 12.5px; color: var(--muted); }
+      details[open] > summary { margin-bottom: 8px; }
+      table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+      th, td { text-align: left; padding: 7px 9px; border-bottom: 1px solid var(--line); vertical-align: top; }
+      th { color: var(--muted); font-weight: 600; background: #fafafa; }
+      a { color: var(--accent); }
+
+      /* --------------------------------------------------------------- dialog */
+      dialog#dlg {
+        width: 92vw;
+        max-width: 92vw;
+        height: 88vh;
+        max-height: 88vh;
+        padding: 0;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        box-shadow: 0 10px 30px rgba(17, 24, 39, 0.1);
+        overflow: hidden;
+        color: var(--text);
+      }
+      dialog#dlg::backdrop { background: rgba(17, 24, 39, 0.35); }
+      .dlg-wrap { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+      .dlg-head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--line);
+        flex-wrap: wrap;
+      }
+      .dlg-name { font-size: 16px; }
+      .dlg-sat { display: flex; align-items: center; gap: 6px; width: 190px; }
+      .dlg-sat .bar { flex: 1; }
+      .dlg-tabs { display: flex; gap: 2px; padding: 0 12px; border-bottom: 1px solid var(--line); overflow-x: auto; }
+      .tab {
+        border: 0;
+        background: none;
+        padding: 9px 12px;
+        color: var(--muted);
+        cursor: pointer;
+        border-bottom: 2px solid transparent;
+        white-space: nowrap;
+      }
+      .tab:hover { color: var(--text); }
+      .tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+      .dlg-body { flex: 1; min-height: 0; display: flex; }
+      .pane { display: none; flex: 1; min-height: 0; padding: 14px 16px; }
+      .pane.active { display: flex; flex-direction: column; gap: 10px; overflow: auto; }
+      #pane-messages.active { overflow: hidden; }
+      .pane.active.split { display: grid; grid-template-columns: minmax(240px, 300px) minmax(280px, 1fr); gap: 14px; overflow: hidden; }
+      .pane-col { min-height: 0; overflow: auto; display: grid; gap: 8px; align-content: start; }
+
+      /* ----------------------------------------------------------- life tab */
+      .round-item { border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; cursor: pointer; background: #fff; }
+      .round-item:hover { border-color: var(--accent); }
+      .round-item.active { border-color: var(--accent); background: var(--accent-soft); }
+      .round-item .r1 { display: flex; gap: 8px; align-items: center; font-size: 12.5px; }
+      .say { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; background: #fff; white-space: pre-wrap; word-break: break-word; }
+      .say.meta { font-size: 11.5px; color: var(--muted); margin-top: 4px; white-space: normal; }
+      .tool-item { border-left: 3px solid var(--accent); }
+      .tool-item.bad { border-left-color: var(--danger); }
+      .tool-sum { color: var(--muted); margin-left: 6px; }
+      .final { border: 1px solid #cbe3d6; background: var(--accent-soft); border-radius: 10px; padding: 10px; }
+      .final .label { font-size: 12px; color: var(--accent); font-weight: 600; margin-bottom: 6px; }
+      .final pre { background: #fff; border-color: #d9e9e0; max-height: 300px; }
+      .event-line { font-size: 12.5px; color: var(--muted); }
+
+      /* -------------------------------------------------------- memory/notebook */
+      .mem-body { border: 1px solid var(--line); border-radius: 8px; overflow: auto; max-height: 52vh; background: #fff; }
+      .mem-line { padding: 1px 10px; white-space: pre-wrap; word-break: break-word; line-height: 1.75; font-family: Consolas, "Cascadia Mono", monospace; font-size: 12.5px; }
+      .mem-born { background: #f3f4f6; color: var(--muted); }
+      .mem-born .hint { color: #9ca3af; font-size: 11px; margin-left: 8px; }
+      .nb-file { text-align: left; }
+
+      /* ------------------------------------------------------------- messages */
+      .chat { display: flex; flex-direction: column; min-height: 0; flex: 1; gap: 8px; }
+      .chat-list { flex: 1; min-height: 0; overflow: auto; display: grid; gap: 8px; align-content: start; padding-right: 2px; }
+      .msg { max-width: 72%; padding: 7px 10px; border-radius: 10px; border: 1px solid var(--line); background: #fff; }
+      .msg.op { justify-self: end; background: var(--accent-soft); border-color: #d9e9e0; }
+      .msg .who { font-size: 11px; color: var(--muted); margin-bottom: 3px; }
+      .msg .body { white-space: pre-wrap; word-break: break-word; }
+      .chat-input { display: flex; gap: 8px; }
+      .chat-input input { flex: 1; }
+
+      .banner { border-radius: 8px; padding: 9px 11px; font-size: 13px; }
+      .banner.warn { background: var(--warn-soft); border: 1px solid #f2d9a8; color: #6b3d05; }
+      .banner.danger { background: var(--danger-soft); border: 1px solid #f1c9c4; color: var(--danger); }
+      .config-table td:first-child { color: var(--muted); width: 260px; }
     </style>
   </head>
   <body>
-    <header>
-      <h1>CONSERVATORY · 操作台</h1>
-      <div class="row small muted">
-        <span id="configLine">读取中…</span>
-        <span>·</span>
-        <span id="pollLine">每 3 秒刷新</span>
+    <div class="app">
+      <aside class="rail">
+        <div class="brand">Conservatory<small>OPERATOR CONSOLE</small></div>
+        <nav class="nav" id="nav">
+          <div class="nav-item" data-act="nav" data-page="agents">
+            <svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2" /><path d="M3.5 19c0-3 2.5-5 5.5-5s5.5 2 5.5 5" /><path d="M16 6.6a3 3 0 0 1 0 5.8" /><path d="M17.5 19c0-2.1-.7-3.8-2-4.8" /></svg>
+            <span class="nav-label">所有 Agent</span>
+            <span class="badge" data-badge="agents" hidden></span>
+          </div>
+          <div class="nav-item" data-act="nav" data-page="tasks">
+            <svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2" /><path d="M7.5 9.5h6M7.5 13.5h9M7.5 17h6" /></svg>
+            <span class="nav-label">任务板</span>
+            <span class="badge warn" data-badge="tasks" hidden></span>
+          </div>
+          <div class="nav-item" data-act="nav" data-page="income">
+            <svg viewBox="0 0 24 24"><path d="M6 3.5h12v17l-2.6-1.8-2.4 1.8-2.4-1.8L8.6 20.5 6 18.7z" /><path d="M9.5 8.5h5M9.5 12h5" /></svg>
+            <span class="nav-label">收入申报</span>
+            <span class="badge warn" data-badge="income" hidden></span>
+          </div>
+          <div class="nav-item" data-act="nav" data-page="interventions">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" /><path d="M12 7.5V12l3.2 1.9" /></svg>
+            <span class="nav-label">干预记录</span>
+          </div>
+          <div class="nav-item" data-act="nav" data-page="settings">
+            <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16" /><circle cx="9" cy="7" r="2" /><circle cx="15" cy="12" r="2" /><circle cx="8" cy="17" r="2" /></svg>
+            <span class="nav-label">设置</span>
+          </div>
+        </nav>
+        <div class="rail-foot" id="railFoot"></div>
+      </aside>
+
+      <div class="main">
+        <div class="notices" id="notices"></div>
+        <div class="pages" id="pages">
+          <section class="page" id="page-agents">
+            <h2 class="page-title">所有 Agent</h2>
+            <div class="grid" id="cardGrid">
+              <div class="contents" id="agentCards"></div>
+              <div class="contents" id="slotCards"></div>
+            </div>
+          </section>
+
+          <section class="page" id="page-tasks">
+            <h2 class="page-title">任务板（一口价 · 先到先得）</h2>
+            <div class="split">
+              <div class="col-stack">
+                <div class="card col-stack">
+                  <div class="small muted">发布任务</div>
+                  <input id="taskTitle" placeholder="标题" />
+                  <input id="taskPrice" type="number" min="0" placeholder="价格（harness 余额）" />
+                  <textarea id="taskDesc" placeholder="描述（Agent 会看到）"></textarea>
+                  <div class="row"><button class="btn primary" data-act="post-task">发布任务</button></div>
+                </div>
+                <div class="chips" id="taskFilters"></div>
+                <div class="list scroll-list" id="taskList"></div>
+              </div>
+              <div class="col-stack" id="taskDetail"></div>
+            </div>
+          </section>
+
+          <section class="page" id="page-income">
+            <h2 class="page-title">收入申报</h2>
+            <div id="rateWarn"></div>
+            <div class="split" style="margin-top: 10px">
+              <div class="list scroll-list" id="incomeList"></div>
+              <div class="col-stack" id="incomeDetail"></div>
+            </div>
+          </section>
+
+          <section class="page" id="page-interventions">
+            <h2 class="page-title">干预记录</h2>
+            <div class="banner warn" style="margin-bottom: 12px">
+              这些记录永久保存。给余额或给饱食度会写入 interventions 表，并改变这两个数字；它不会改变饱食度自然下降的规则。
+            </div>
+            <div class="row" style="margin-bottom: 10px">
+              <span class="small muted">按 Agent 筛选</span>
+              <select id="intFilter"></select>
+            </div>
+            <div id="intTable"></div>
+          </section>
+
+          <section class="page" id="page-settings">
+            <h2 class="page-title">设置</h2>
+            <div id="settingsBox"></div>
+          </section>
+        </div>
       </div>
-    </header>
+    </div>
 
-    <main>
-      <section class="panel">
-        <h2>Agent 与槽位</h2>
-        <div id="agents"></div>
-        <div class="card">
-          <div class="small muted" style="margin-bottom: 6px">空槽位：创建新的 Agent</div>
-          <div class="row">
-            <input id="newAgentName" placeholder="名字（小写字母/数字/下划线）" />
-            <button class="primary" id="createAgentBtn">创建</button>
-          </div>
+    <dialog id="dlg">
+      <div class="dlg-wrap">
+        <div class="dlg-head">
+          <span class="dot" id="dlgDot"></span>
+          <strong class="dlg-name" id="dlgName">—</strong>
+          <span class="small muted" id="dlgState">—</span>
+          <span class="dlg-sat"><span class="bar"><span id="dlgBar" style="width: 0"></span></span><span class="small num" id="dlgSat">—</span></span>
+          <span class="small muted">余额</span><span class="small num" id="dlgBal">—</span>
+          <span class="grow"></span>
+          <button class="btn" data-act="wake" id="dlgWake">立即唤醒</button>
+          <button class="btn icon" data-act="dlg-close" title="关闭">
+            <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" /></svg>
+          </button>
         </div>
-        <div id="notices"></div>
-      </section>
+        <div class="dlg-tabs" id="dlgTabs"></div>
+        <div class="dlg-body">
+          <section class="pane split" id="pane-life">
+            <div class="pane-col">
+              <div class="row">
+                <span class="small muted">加载最近</span>
+                <button class="btn tiny" data-act="life-range" data-range="5">5</button>
+                <button class="btn tiny" data-act="life-range" data-range="20">20</button>
+                <button class="btn tiny" data-act="life-range" data-range="50">50</button>
+                <span class="grow"></span>
+                <button class="btn tiny" data-act="life-refresh">刷新</button>
+              </div>
+              <div class="list" id="roundList"></div>
+            </div>
+            <div class="pane-col" id="roundDetail"></div>
+          </section>
 
-      <section class="panel">
-        <h2>任务板（一口价 · 先到先得）</h2>
-        <div class="card">
-          <div class="row">
-            <input id="taskTitle" placeholder="标题" style="flex: 1 1 160px" />
-            <input id="taskPrice" placeholder="价格" type="number" min="0" style="width: 90px" />
-          </div>
-          <textarea id="taskDescription" placeholder="描述（Agent 会看到）" style="margin-top: 6px"></textarea>
-          <div class="row" style="margin-top: 6px">
-            <button class="primary" id="postTaskBtn">发布任务</button>
-          </div>
+          <section class="pane" id="pane-body">
+            <div class="pane-col" id="bodyPane"></div>
+          </section>
+
+          <section class="pane split" id="pane-memory">
+            <div class="pane-col">
+              <div class="small muted" id="memStats"></div>
+              <div class="mem-body" id="memoryText"></div>
+            </div>
+            <div class="pane-col">
+              <div class="small muted">最近几次记忆整合</div>
+              <div class="list" id="memRecords"></div>
+              <div id="memCompare"></div>
+            </div>
+          </section>
+
+          <section class="pane split" id="pane-notebook">
+            <div class="pane-col">
+              <div class="small muted">记事本文件</div>
+              <div class="list" id="nbFiles"></div>
+            </div>
+            <div class="pane-col">
+              <pre id="nbContent" class="mono"></pre>
+            </div>
+          </section>
+
+          <section class="pane" id="pane-messages">
+            <div class="chat">
+              <div class="small muted">留言是它世界里的事件，不是命令。</div>
+              <div class="chat-list" id="chatList"></div>
+              <div class="chat-input">
+                <input id="chatInput" data-enter="send-message" placeholder="给这个 Agent 留言…" />
+                <button class="btn primary" data-act="send-message">发送</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="pane" id="pane-tasks">
+            <div class="pane-col" id="agentTasks"></div>
+          </section>
+
+          <section class="pane" id="pane-interventions">
+            <div class="pane-col" id="agentInt"></div>
+          </section>
         </div>
-        <div id="tasks"></div>
-      </section>
-
-      <section class="panel">
-        <h2>收入申报</h2>
-        <div id="income"></div>
-      </section>
-
-      <section class="panel">
-        <h2>留言</h2>
-        <div class="card">
-          <div class="row">
-            <select id="messageAgent"></select>
-            <input id="messageBody" placeholder="给 Agent 的留言（是它世界里的事件，不是命令）" style="flex: 1 1 200px" />
-            <button class="primary" id="sendMessageBtn">发送</button>
-          </div>
-        </div>
-        <div id="messages"></div>
-      </section>
-
-      <section class="panel full">
-        <h2>查看：MEMORY / 记事本 / 黑匣子</h2>
-        <div class="row">
-          <select id="viewAgent"></select>
-          <button id="viewMemoryBtn">MEMORY</button>
-          <button id="viewNotebookBtn">记事本</button>
-          <button id="viewBlackboxBtn">黑匣子（最近 3 轮）</button>
-          <span class="small muted">操作者可以看一切。</span>
-        </div>
-        <div id="notebookFiles" style="margin-top: 8px"></div>
-        <pre id="viewer" style="margin-top: 8px">选择上面的按钮开始查看。</pre>
-      </section>
-
-      <section class="panel full">
-        <h2>操作员干预记录（永久）</h2>
-        <div class="small muted" style="margin-bottom: 6px">
-          给余额或给饱食度会弹窗确认，确认后永久写入 interventions 表；干预会改变这两个数字，但不会改变饱食度的自然下降规则。
-        </div>
-        <div id="interventions"></div>
-      </section>
-    </main>
+      </div>
+    </dialog>
 
     <script>
+      // ------------------------------------------------------------- helpers
       const $ = (id) => document.getElementById(id);
       const esc = (value) =>
         String(value === null || value === undefined ? "" : value)
@@ -191,13 +472,50 @@
           .replace(/</g, "&lt;")
           .replace(/>/g, "&gt;")
           .replace(/"/g, "&quot;");
-      const num = (value) => (typeof value === "number" ? value.toFixed(2) : "—");
-      const when = (value) => (value ? new Date(value).toLocaleString("zh-CN") : "—");
+      const num = (value, digits) =>
+        typeof value === "number" && Number.isFinite(value) ? value.toFixed(digits === undefined ? 2 : digits) : "—";
+      const fullTime = (at) => (at ? new Date(at).toLocaleString("zh-CN") : "—");
+      const relTime = (at) => {
+        if (!at) return "—";
+        const diff = Date.now() - at;
+        if (diff < 5000) return "刚刚";
+        const seconds = Math.floor(diff / 1000);
+        if (seconds < 60) return seconds + " 秒前";
+        const minutes = Math.floor(seconds / 60);
+        if (minutes < 60) return minutes + " 分钟前";
+        const hours = Math.floor(minutes / 60);
+        if (hours < 24) return hours + " 小时前";
+        return Math.floor(hours / 24) + " 天前";
+      };
+      const timeHtml = (at) => (at ? `<span title="${esc(fullTime(at))}">${esc(relTime(at))}</span>` : "—");
+      const durText = (ms) => {
+        if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return "—";
+        const seconds = Math.round(ms / 1000);
+        if (seconds < 60) return seconds + " 秒";
+        const minutes = Math.floor(seconds / 60);
+        if (minutes < 60) return minutes + " 分 " + (seconds % 60) + " 秒";
+        const hours = Math.floor(minutes / 60);
+        return hours + " 小时 " + (minutes % 60) + " 分";
+      };
+      const firstLines = (text, count) =>
+        String(text === null || text === undefined ? "" : text)
+          .split("\n")
+          .map((line) => line.trim())
+          .filter((line) => line !== "")
+          .slice(0, count)
+          .join("\n");
+      const ratioOf = (value, max) =>
+        typeof value === "number" && typeof max === "number" && max > 0 ? Math.max(0, Math.min(1, value / max)) : 0;
+      const satietyColor = (ratio) => (ratio >= 0.6 ? "var(--accent)" : ratio >= 0.3 ? "var(--warn)" : "var(--danger)");
+      function withScroll(node, paint) {
+        const top = node.scrollTop;
+        const left = node.scrollLeft;
+        paint();
+        node.scrollTop = top;
+        node.scrollLeft = left;
+      }
 
-      let state = null;
-      let viewerKind = null;
-      let viewerAgent = null;
-
+      // --------------------------------------------------------------- api
       async function api(path, options) {
         const response = await fetch(path, options);
         const body = await response.json().catch(() => ({ ok: false, error: "返回不是 JSON" }));
@@ -206,393 +524,1453 @@
         }
         return body;
       }
+      const post = (path, payload) =>
+        api(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+      const alertError = (error) => alert(error instanceof Error ? error.message : String(error));
 
-      async function post(path, payload) {
-        return api(path, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(payload),
+      // ------------------------------------------------------------- tables
+      const PAGES = ["agents", "tasks", "income", "interventions", "settings"];
+      const TABS = [
+        { id: "life", label: "生命动态" },
+        { id: "body", label: "身体" },
+        { id: "memory", label: "记忆" },
+        { id: "notebook", label: "记事本" },
+        { id: "messages", label: "留言" },
+        { id: "tasks", label: "任务" },
+        { id: "interventions", label: "干预记录" },
+      ];
+      const END_REASON = {
+        final: "正常结束",
+        context_cap: "上下文超限",
+        iteration_cap: "工具调用超限",
+        usage_missing: "用量缺失",
+        model_error: "模型出错",
+      };
+      const MEM_KIND = {
+        memory_new: "记忆已更新",
+        memory_rejected: "记忆被拒绝",
+        memory_error: "记忆模型出错",
+        usage_missing: "记忆用量缺失",
+      };
+      const EVENT_LABEL = {
+        meal: "进食",
+        meal_refused: "进食被拒（余额不足）",
+        task_claimed: "认领任务",
+        task_submitted: "提交任务",
+        income_reported: "申报收入",
+        message_to_operator: "给操作员留言",
+        worker_log: "子进程日志",
+        worker_note: "子进程消息",
+        claim_expired: "任务认领超时",
+        worker_problem: "子进程异常",
+        round_failed: "本轮执行失败",
+        agent_created: "Agent 被创建",
+        intervention: "操作员干预",
+      };
+      const TASK_STATUS = {
+        open: "开放",
+        claimed: "已认领",
+        submitted: "待审核",
+        accepted: "已接受",
+        rejected: "已拒绝",
+        rework: "返工中",
+      };
+      const INTERVENTION_KIND = { give_balance: "给予余额", give_satiety: "给予饱食度" };
+      const taskTagClass = (status) =>
+        status === "accepted" ? "tag ok" : status === "rejected" ? "tag bad" : status === "submitted" ? "tag warn" : "tag";
+
+      // -------------------------------------------------------------- state
+      let state = null;
+      let refreshError = null;
+      let refreshing = false;
+      let dlgAgent = null;
+      let dlgTab = "life";
+      let lifeRange = 5;
+      let roundSel = null;
+      let roundCache = { agent: null, range: null, rounds: [] };
+      let memSel = null;
+      let memCache = { agent: null, memory: "", records: [] };
+      let nbCache = { agent: null, files: [], path: null, content: "" };
+      let nbLoading = false;
+      let extras = {};
+      let taskFilter = "all";
+      let taskSel = null;
+      let incomeSel = null;
+      let incomeKey = null;
+      let intFilter = "";
+      let settingsKey = null;
+      let loadedRoundAt = {};
+      const slotDrafts = {};
+      const readMarks = new Set(loadReadMarks());
+      const dismissedNotices = new Set();
+      // A message id alone would collide with a ledger that was recreated, so the
+      // mark also carries the instant the message was written.
+      const markOf = (message) => `${message.id}:${message.at}`;
+
+      function loadReadMarks() {
+        try {
+          const raw = window.localStorage.getItem("conservatory.console.readMessages");
+          const parsed = raw === null ? [] : JSON.parse(raw);
+          return Array.isArray(parsed) ? parsed.filter((mark) => typeof mark === "string") : [];
+        } catch (error) {
+          return [];
+        }
+      }
+      function saveReadMarks() {
+        try {
+          const marks = Array.from(readMarks).slice(-800);
+          window.localStorage.setItem("conservatory.console.readMessages", JSON.stringify(marks));
+        } catch (error) {
+          /* a console without storage still works, it just forgets the read marks */
+        }
+      }
+
+      // ------------------------------------------------------------ derived
+      const agentByName = (name) =>
+        state === null || name === null ? null : state.agents.find((agent) => agent.name === name) || null;
+      const aliveAgents = () => (state === null ? [] : state.agents.filter((agent) => agent.status === "alive"));
+      const messagesFor = (name) => (state === null ? [] : state.messages.filter((m) => m.sender === name || m.recipient === name));
+      const unreadFor = (name) =>
+        messagesFor(name).filter((m) => m.sender === name && m.readAt === null && !readMarks.has(markOf(m))).length;
+      const unreadTotal = () =>
+        state === null ? 0 : state.agents.reduce((sum, agent) => sum + unreadFor(agent.name), 0);
+      const pendingSubmissions = () => (state === null ? 0 : state.tasks.filter((t) => t.status === "submitted").length);
+      const pendingIncome = () => (state === null ? 0 : state.income.filter((r) => r.status === "pending").length);
+      const noticeKey = (notice) => `${notice.agent}|${notice.at}|${notice.message}`;
+      const liveNotices = () => (state === null ? [] : state.notices.filter((n) => !dismissedNotices.has(noticeKey(n))));
+      const noticesFor = (name) => liveNotices().filter((n) => n.agent === name);
+      const freeSlots = () => (state === null ? 0 : Math.max(0, state.config.maxSlots - aliveAgents().length));
+
+      // ------------------------------------------------------------ routing
+      function parseHash() {
+        const raw = String(window.location.hash || "").replace(/^#\/?/, "");
+        const parts = raw.split("/").filter((part) => part !== "").map(decodeURIComponent);
+        const page = PAGES.indexOf(parts[0]) >= 0 ? parts[0] : "agents";
+        const agent = page === "agents" && parts.length >= 2 && parts[1] !== "" ? parts[1] : null;
+        const tab = TABS.some((t) => t.id === parts[2]) ? parts[2] : "life";
+        return { page, agent, tab };
+      }
+      function navigate(hash) {
+        if (window.location.hash === hash) {
+          applyRoute();
+        } else {
+          window.location.hash = hash;
+        }
+      }
+      function applyRoute() {
+        const route = parseHash();
+        for (const page of PAGES) {
+          $(`page-${page}`).classList.toggle("active", page === route.page);
+        }
+        document.querySelectorAll(".nav-item").forEach((item) => {
+          item.classList.toggle("active", item.dataset.page === route.page);
         });
-      }
-
-      function alertError(error) {
-        alert(error instanceof Error ? error.message : String(error));
-      }
-
-      function agentOptions() {
-        if (!state) return "";
-        return state.agents
-          .map((agent) => `<option value="${esc(agent.name)}">${esc(agent.name)}</option>`)
-          .join("");
-      }
-
-      function syncSelect(id) {
-        const select = $(id);
-        const previous = select.value;
-        select.innerHTML = agentOptions();
-        if (previous && state.agents.some((agent) => agent.name === previous)) {
-          select.value = previous;
+        const known = route.agent !== null && state !== null && agentByName(route.agent) !== null;
+        if (known) {
+          openAgentUi(route.agent, route.tab);
+        } else if ($("dlg").open) {
+          // Clear the owner before closing: the close handler must not fight the
+          // route that is being navigated to (for example #/tasks).
+          dlgAgent = null;
+          $("dlg").close();
         }
       }
-
-      function renderAgents() {
-        const host = $("agents");
-        if (!state || state.agents.length === 0) {
-          host.innerHTML = '<div class="empty">还没有活着的 Agent。请在下面的空槽位里创建一个。</div>';
-          return;
+      function openAgentUi(name, tab) {
+        const chosen = TABS.some((t) => t.id === tab) ? tab : "life";
+        if (dlgAgent !== name) {
+          dlgAgent = name;
+          roundSel = null;
+          memSel = null;
+          nbCache = { agent: null, files: [], path: null, content: "" };
+          roundCache = { agent: null, range: null, rounds: [] };
+          memCache = { agent: null, memory: "", records: [] };
+          resetAgentPanes();
+          // Remember where the agent stood when the dialog opened; only a fetch
+          // may move this marker forward, otherwise a poll would hide new rounds.
+          const opened = agentByName(name);
+          loadedRoundAt[name] = opened === null ? undefined : opened.lastRoundAt;
         }
-        host.innerHTML = state.agents
-          .map((agent) => {
-            const ratio = agent.satietyMax ? Math.max(0, Math.min(1, agent.satiety / agent.satietyMax)) : 0;
-            const low = ratio < 0.25;
-            return `
-              <div class="card ${agent.busy ? "busy" : ""}">
-                <div class="kv">
-                  <strong>${esc(agent.name)}</strong>
-                  <span>
-                    ${agent.busy ? '<span class="tag ok">一轮中</span>' : '<span class="tag">空闲</span>'}
-                    <span class="tag">${esc(agent.status)}</span>
-                  </span>
-                </div>
-                <div class="small muted">出生 ${when(agent.bornAt)} · 模型 ${esc(agent.model)}</div>
-                <div class="small">饱食度 ${num(agent.satiety)} / ${num(agent.satietyMax)} · 余额 ${num(agent.balance)}</div>
-                <div class="bar ${low ? "low" : ""}"><span style="width: ${(ratio * 100).toFixed(1)}%"></span></div>
-                <div class="small muted">
-                  上次唤醒 ${when(agent.lastWakeAt)} · 上次一轮 ${when(agent.lastRoundAt)}
-                  ${agent.lastRoundEndReason ? "（" + esc(agent.lastRoundEndReason) + "）" : ""}
-                </div>
-                <div class="small muted">
-                  token：agent 提示 ${agent.tokens.agent.promptTokens} / 完成 ${agent.tokens.agent.completionTokens}
-                  · memory 提示 ${agent.tokens.memory.promptTokens} / 完成 ${agent.tokens.memory.completionTokens}
-                </div>
-                ${agent.lastError ? `<div class="small" style="color: var(--danger)">最近错误：${esc(agent.lastError)}</div>` : ""}
-                <div class="row" style="margin-top: 8px">
-                  <button data-action="wake" data-agent="${esc(agent.name)}">立即唤醒</button>
-                  <button data-action="give-balance" data-agent="${esc(agent.name)}">给余额</button>
-                  <button data-action="give-satiety" data-agent="${esc(agent.name)}">给饱食度</button>
-                </div>
-              </div>`;
-          })
-          .join("");
+        const tabChanged = dlgTab !== chosen;
+        dlgTab = chosen;
+        if (!$("dlg").open) $("dlg").showModal();
+        paintDialogTabs();
+        paintDialogHeader();
+        paintPanes();
+        void loadTab(dlgTab, tabChanged);
       }
+      const openAgent = (name, tab) => navigate(`#/agents/${encodeURIComponent(name)}/${tab || "life"}`);
+      const closeAgent = () => navigate("#/agents");
+      const goPage = (page) => navigate(`#/${page}`);
 
-      function renderNotices() {
+      // ------------------------------------------------------------- paints
+      function paint() {
+        paintNav();
+        paintRailFoot();
+        paintNotices();
+        paintAgentsPage();
+        paintTasksPage();
+        paintIncomePage();
+        paintInterventionsPage();
+        paintSettingsPage();
+        paintDialogHeader();
+        paintPanes();
+      }
+      function paintNav() {
+        const counts = { agents: unreadTotal(), tasks: pendingSubmissions(), income: pendingIncome() };
+        for (const key of Object.keys(counts)) {
+          const badge = document.querySelector(`[data-badge="${key}"]`);
+          if (badge === null) continue;
+          const value = counts[key];
+          badge.hidden = value === 0;
+          badge.textContent = value > 99 ? "99+" : String(value);
+        }
+      }
+      function paintRailFoot() {
+        if (state === null) return;
+        const busy = state.agents.filter((agent) => agent.busy).length;
+        const host = $("railFoot");
+        host.innerHTML =
+          `<div>存活 Agent：<strong>${aliveAgents().length}</strong> / 槽位上限 <strong>${state.config.maxSlots}</strong></div>` +
+          `<div>正在一轮中：<strong>${busy}</strong></div>` +
+          `<div>每 3 秒刷新 · ${esc(new Date().toLocaleTimeString("zh-CN"))}</div>` +
+          (refreshError === null
+            ? ""
+            : `<div style="color: var(--danger)">刷新失败：${esc(refreshError)}</div>`);
+      }
+      function paintNotices() {
+        const list = liveNotices().slice(-8).reverse();
         const host = $("notices");
-        if (!state || state.notices.length === 0) {
+        if (list.length === 0) {
           host.innerHTML = "";
           return;
         }
-        host.innerHTML = state.notices
-          .slice(-6)
-          .reverse()
+        host.innerHTML = list
           .map(
             (notice) =>
-              `<div class="notice small"><strong>${esc(notice.agent)}</strong> · ${when(notice.at)}<br />${esc(notice.message)}</div>`,
+              `<div class="notice"><span><b>${esc(notice.agent)}</b> · ${timeHtml(notice.at)} · ${esc(notice.message)}</span>` +
+              `<button class="btn tiny close" data-act="notice-close" data-key="${esc(noticeKey(notice))}">知道了</button></div>`,
           )
           .join("");
       }
 
-      function renderTasks() {
-        const host = $("tasks");
-        if (!state || state.tasks.length === 0) {
-          host.innerHTML = '<div class="empty">任务板是空的。</div>';
-          return;
+      // ---------------------------------------------------- agents page
+      function agentCardHtml(agent) {
+        const ratio = ratioOf(agent.satiety, agent.satietyMax);
+        const extra = extras[agent.name] || null;
+        const noticeCount = noticesFor(agent.name).length;
+        const unread = unreadFor(agent.name);
+        const reply = extra !== null && extra.finalReply ? firstLines(extra.finalReply, 2) : "";
+        return `
+          <article class="card agent-card" data-act="open-agent" data-agent="${esc(agent.name)}">
+            <div class="card-head">
+              <span class="dot ${agent.busy ? "busy" : ""}"></span>
+              <span class="card-name">${esc(agent.name)}</span>
+              <span class="grow"></span>
+              ${noticeCount > 0 ? '<span class="tag warn">提示</span>' : ""}
+              ${unread > 0 ? `<span class="badge">${unread > 99 ? "99+" : unread}</span>` : ""}
+            </div>
+            <div class="bar"><span style="width: ${(ratio * 100).toFixed(1)}%; background: ${satietyColor(ratio)}"></span></div>
+            <div class="kv" style="margin-top: 7px"><span class="k">饱食度</span><span class="num">${esc(num(agent.satiety))} / ${esc(num(agent.satietyMax))}</span></div>
+            <div class="kv"><span class="k">余额</span><span class="num">${esc(num(agent.balance))}</span></div>
+            <div class="kv"><span class="k">上次唤醒</span><span>${timeHtml(agent.lastWakeAt)}</span></div>
+            <div class="kv"><span class="k">模型</span><span class="mono small">${esc(agent.model)}</span></div>
+            <div class="card-reply">${
+              reply === ""
+                ? agent.busy
+                  ? "正在一轮中…"
+                  : "最近一轮：还没有完成过一轮"
+                : "最近一轮：" + esc(reply)
+            }</div>
+          </article>`;
+      }
+      function paintAgentsPage() {
+        if (state === null) return;
+        const host = $("agentCards");
+        const cards =
+          state.agents.length === 0
+            ? '<div class="empty">还没有活着的 Agent。请在空槽位里创建一个。</div>'
+            : state.agents.map(agentCardHtml).join("");
+        withScroll(host, () => {
+          host.innerHTML = cards;
+        });
+        syncSlotCards();
+      }
+      function syncSlotCards() {
+        const host = $("slotCards");
+        const free = freeSlots();
+        while (host.children.length > free) {
+          const removed = host.lastElementChild;
+          const removedInput = removed === null ? null : removed.querySelector("input[data-slot]");
+          if (removedInput !== null) delete slotDrafts[removedInput.dataset.slot];
+          host.removeChild(removed);
         }
-        host.innerHTML = state.tasks
-          .map((task) => {
-            const tag =
-              task.status === "open"
-                ? "tag"
-                : task.status === "accepted"
-                  ? "tag ok"
-                  : task.status === "rejected"
-                    ? "tag bad"
-                    : "tag warn";
-            const review =
-              task.status === "submitted"
-                ? `<div class="row" style="margin-top: 8px">
-                     <button class="primary" data-action="review" data-task="${esc(task.id)}" data-decision="accept">接受并付款</button>
-                     <button data-action="review" data-task="${esc(task.id)}" data-decision="reject">拒绝（不付款）</button>
-                     <button data-action="review" data-task="${esc(task.id)}" data-decision="rework">返工</button>
-                     <button data-action="review" data-task="${esc(task.id)}" data-decision="return">退回任务板</button>
-                   </div>`
-                : "";
-            const deliverable =
-              task.deliverable && task.status !== "open"
-                ? `<pre class="mono" style="margin-top: 6px; max-height: 160px">${esc(task.deliverable)}</pre>`
-                : "";
-            return `
-              <div class="card">
-                <div class="kv">
-                  <strong>${esc(task.title)}</strong>
-                  <span><span class="${tag}">${esc(task.status)}</span> <span class="tag">${num(task.price)}</span></span>
-                </div>
-                <div class="small muted">${esc(task.id)} · 认领：${esc(task.claimedBy || "—")}</div>
-                <div class="small">${esc(task.description)}</div>
-                ${deliverable}
-                ${review}
-              </div>`;
-          })
-          .join("");
+        while (host.children.length < free) {
+          const index = host.children.length;
+          const card = document.createElement("article");
+          card.className = "card slot-card";
+          card.innerHTML =
+            `<div class="slot-title">空槽位</div>` +
+            `<input data-slot="${index}" data-enter="slot-create" value="${esc(slotDrafts[index] || "")}" placeholder="名字：小写字母/数字/下划线" />` +
+            `<div class="row"><button class="btn primary" data-act="slot-create" data-slot="${index}">创建</button>` +
+            `<span class="small muted">名字只允许小写字母、数字、下划线</span></div>`;
+          host.appendChild(card);
+        }
+        for (const input of host.querySelectorAll("input[data-slot]")) {
+          slotDrafts[input.dataset.slot] = input.value;
+        }
       }
 
-      function renderIncome() {
-        const host = $("income");
-        if (!state || state.income.length === 0) {
-          host.innerHTML = '<div class="empty">还没有收入申报。</div>';
+      // ------------------------------------------------- tasks page
+      function visibleTasks() {
+        if (state === null) return [];
+        if (taskFilter === "all") return state.tasks;
+        if (taskFilter === "claimed") return state.tasks.filter((t) => t.status === "claimed" || t.status === "rework");
+        if (taskFilter === "closed") return state.tasks.filter((t) => t.status === "accepted" || t.status === "rejected");
+        return state.tasks.filter((t) => t.status === taskFilter);
+      }
+      function paintTasksPage() {
+        if (state === null) return;
+        const filters = [
+          ["all", "全部"],
+          ["open", "开放"],
+          ["claimed", "已认领"],
+          ["submitted", "待审核"],
+          ["closed", "已结束"],
+        ];
+        const host = $("taskFilters");
+        if (host.dataset.built !== "1") {
+          host.dataset.built = "1";
+          host.innerHTML = filters
+            .map(([id, label]) => `<button class="btn tiny" data-act="task-filter" data-filter="${id}">${label}</button>`)
+            .join("");
+        }
+        for (const button of host.querySelectorAll("button[data-filter]")) {
+          button.classList.toggle("active", button.dataset.filter === taskFilter);
+        }
+        const tasks = visibleTasks();
+        if (taskSel === null || !tasks.some((task) => task.id === taskSel)) {
+          taskSel = tasks.length > 0 ? tasks[0].id : null;
+        }
+        const list = $("taskList");
+        withScroll(list, () => {
+          list.innerHTML =
+            tasks.length === 0
+              ? '<div class="empty small">没有符合条件的任务。</div>'
+              : tasks
+                  .map(
+                    (task) => `
+                      <div class="list-item ${task.id === taskSel ? "active" : ""}" data-act="task-select" data-task="${esc(task.id)}">
+                        <div class="row"><span class="title grow">${esc(task.title)}</span><span class="${taskTagClass(task.status)}">${esc(TASK_STATUS[task.status] || task.status)}</span><span class="tag">${esc(num(task.price))}</span></div>
+                        <div class="sub">${esc(task.id)} · 认领：${esc(task.claimedBy || "—")}</div>
+                      </div>`,
+                  )
+                  .join("");
+        });
+        paintTaskDetail();
+      }
+      function paintTaskDetail() {
+        const host = $("taskDetail");
+        const task = state === null || taskSel === null ? null : state.tasks.find((t) => t.id === taskSel) || null;
+        if (task === null) {
+          host.innerHTML = '<div class="empty small">左边选一个任务看详情。</div>';
           return;
         }
-        host.innerHTML = state.income
-          .map((report) => {
-            const actions =
-              report.status === "pending"
-                ? `<div class="row" style="margin-top: 8px">
-                     <button class="primary" data-action="verify" data-report="${report.id}">核验并入账</button>
-                     <button class="danger" data-action="reject-income" data-report="${report.id}">驳回</button>
-                   </div>`
-                : "";
-            return `
-              <div class="card">
-                <div class="kv">
-                  <strong>${esc(report.agent)}</strong>
-                  <span class="tag">${esc(report.status)}</span>
-                </div>
-                <div class="small">${esc(report.where)} · ${esc(report.work)}</div>
-                <div class="small muted">
-                  申报 ${num(report.amount)} ${esc(report.currency)}
-                  ${report.credited !== null ? " · 入账 " + num(report.credited) : ""}
-                  ${report.exchangeRate !== null ? " · 汇率 " + num(report.exchangeRate) : ""}
-                </div>
-                ${actions}
-              </div>`;
-          })
-          .join("");
+        const review =
+          task.status === "submitted"
+            ? `<div class="row">
+                 <button class="btn primary" data-act="task-review" data-task="${esc(task.id)}" data-decision="accept">接受并付款</button>
+                 <button class="btn danger" data-act="task-review" data-task="${esc(task.id)}" data-decision="reject">拒绝（不付款）</button>
+                 <button class="btn" data-act="task-review" data-task="${esc(task.id)}" data-decision="rework">返工</button>
+                 <button class="btn" data-act="task-review" data-task="${esc(task.id)}" data-decision="return">退回任务板</button>
+               </div>`
+            : `<div class="small muted">这个任务当前没有可用的审核操作。</div>`;
+        host.innerHTML = `
+          <div class="card col-stack">
+            <div class="row"><strong style="font-size: 15px">${esc(task.title)}</strong><span class="${taskTagClass(task.status)}">${esc(TASK_STATUS[task.status] || task.status)}</span><span class="tag">${esc(num(task.price))}</span></div>
+            <div class="small muted">${esc(task.id)} · 创建 ${timeHtml(task.createdAt)} · 认领者 ${esc(task.claimedBy || "—")}</div>
+            <div class="small muted">认领 ${timeHtml(task.claimedAt)} · 提交 ${timeHtml(task.submittedAt)} · 裁定 ${timeHtml(task.decidedAt)}${task.decision ? "（" + esc(task.decision) + "）" : ""}</div>
+            <div><div class="small muted">描述</div><div style="white-space: pre-wrap">${esc(task.description)}</div></div>
+            <div>
+              <div class="small muted">交付内容</div>
+              <pre class="mono">${esc(task.deliverable === null || task.deliverable === undefined ? "（还没有交付）" : task.deliverable)}</pre>
+            </div>
+            ${review}
+          </div>`;
       }
 
-      function renderMessages() {
-        const host = $("messages");
-        if (!state || state.messages.length === 0) {
-          host.innerHTML = '<div class="empty">还没有留言。</div>';
-          return;
+      function repaint(host, html) {
+        const parent = host.parentElement;
+        const top = host.scrollTop;
+        const parentTop = parent === null ? 0 : parent.scrollTop;
+        host.innerHTML = html;
+        host.scrollTop = top;
+        if (parent !== null) parent.scrollTop = parentTop;
+      }
+
+      // ------------------------------------------------- income page
+      function incomeSorted() {
+        if (state === null) return [];
+        return state.income
+          .slice()
+          .sort(
+            (a, b) =>
+              (a.status === "pending" ? 0 : 1) - (b.status === "pending" ? 0 : 1) || Number(b.id) - Number(a.id),
+          );
+      }
+      function paintIncomePage() {
+        if (state === null) return;
+        const rateWarn = $("rateWarn");
+        rateWarn.innerHTML =
+          state.exchangeRate === null
+            ? '<div class="banner danger">汇率未设定：收入申报无法核验入账。请在 conservatory.config.json 里设置 exchangeRate。</div>'
+            : "";
+        const reports = incomeSorted();
+        if (incomeSel === null || !reports.some((report) => report.id === incomeSel)) {
+          incomeSel = reports.length > 0 ? reports[0].id : null;
+          incomeKey = null;
         }
-        host.innerHTML = state.messages
-          .slice(0, 20)
+        const list = $("incomeList");
+        repaint(
+          list,
+          reports.length === 0
+            ? '<div class="empty small">还没有收入申报。</div>'
+            : reports
+                .map(
+                  (report) => `
+                    <div class="list-item ${report.id === incomeSel ? "active" : ""}" data-act="income-select" data-report="${report.id}">
+                      <div class="row"><span class="title grow">${esc(report.agent)}</span><span class="${report.status === "pending" ? "tag warn" : report.status === "credited" ? "tag ok" : "tag bad"}">${esc(report.status === "pending" ? "待核验" : report.status === "credited" ? "已入账" : "已驳回")}</span></div>
+                      <div class="sub">${esc(report.where)} · ${esc(report.work)} · ${esc(num(report.amount))} ${esc(report.currency)}</div>
+                    </div>`,
+                )
+                .join(""),
+        );
+        const report = reports.find((row) => row.id === incomeSel) || null;
+        const key =
+          report === null ? "none" : `${report.id}|${report.status}|${report.credited}|${report.exchangeRate}`;
+        if (key !== incomeKey) {
+          incomeKey = key;
+          $("incomeDetail").innerHTML = incomeDetailHtml(report);
+        } else if (report !== null) {
+          updateIncomeFields(report);
+        }
+      }
+      function incomeDetailHtml(report) {
+        if (report === null) {
+          return '<div class="empty small">左边选一条申报看详情。</div>';
+        }
+        const actions =
+          report.status === "pending"
+            ? `<div class="row">
+                 <input id="verifyAmount" type="number" min="0" step="0.01" value="${esc(report.amount)}" style="width: 140px" />
+                 <button class="btn primary" data-act="income-verify">核验并入账</button>
+                 <button class="btn danger" data-act="income-reject">驳回</button>
+               </div>
+               <div class="small muted">在上面填核实金额（核实金额 × 当前汇率 ${
+                 state === null || state.exchangeRate === null ? "未设定" : esc(num(state.exchangeRate))
+               } = 入账余额）。驳回不入账。</div>`
+            : '<div class="small muted">这条申报已经处理过了。</div>';
+        return `
+          <div class="card col-stack">
+            <div class="row"><strong style="font-size: 15px">${esc(report.agent)}</strong><span class="${report.status === "pending" ? "tag warn" : report.status === "credited" ? "tag ok" : "tag bad"}">${esc(report.status === "pending" ? "待核验" : report.status === "credited" ? "已入账" : "已驳回")}</span></div>
+            <div class="small muted">申报编号 ${report.id} · 提交 ${timeHtml(report.createdAt)} · 处理 ${timeHtml(report.decidedAt)}</div>
+            <div><div class="small muted">来源</div><div data-f="where">${esc(report.where)}</div></div>
+            <div><div class="small muted">做了什么</div><div data-f="work" style="white-space: pre-wrap">${esc(report.work)}</div></div>
+            <div class="kv"><span class="k">申报金额</span><span class="num" data-f="amount">${esc(num(report.amount))} ${esc(report.currency)}</span></div>
+            <div class="kv"><span class="k">核实金额</span><span class="num" data-f="verified">${esc(report.verifiedAmount === null ? "—" : num(report.verifiedAmount))}</span></div>
+            <div class="kv"><span class="k">汇率</span><span class="num" data-f="rate">${esc(report.exchangeRate === null ? "未设定" : num(report.exchangeRate))}</span></div>
+            <div class="kv"><span class="k">入账余额</span><span class="num" data-f="credited">${esc(report.credited === null ? "—" : num(report.credited))}</span></div>
+            ${actions}
+          </div>`;
+      }
+      function updateIncomeFields(report) {
+        const set = (field, text) => {
+          const node = document.querySelector(`[data-f="${field}"]`);
+          if (node !== null) node.textContent = text;
+        };
+        set("where", report.where);
+        set("work", report.work);
+        set("amount", `${num(report.amount)} ${report.currency}`);
+        set("verified", report.verifiedAmount === null ? "—" : num(report.verifiedAmount));
+        set("rate", report.exchangeRate === null ? "未设定" : num(report.exchangeRate));
+        set("credited", report.credited === null ? "—" : num(report.credited));
+      }
+
+      // ------------------------------------------- interventions page
+      function interventionRowsHtml(rows) {
+        if (rows.length === 0) return '<div class="empty small">还没有干预记录。</div>';
+        return `<table><thead><tr><th style="width: 150px">时间</th><th style="width: 120px">类型</th><th style="width: 140px">对象 Agent</th><th>详情</th></tr></thead><tbody>${rows
           .map(
-            (message) => `
-              <div class="card small">
-                <div class="muted">${esc(message.sender)} → ${esc(message.recipient)} · ${when(message.at)}</div>
-                <div>${esc(message.body)}</div>
-              </div>`,
+            (row) =>
+              `<tr><td>${timeHtml(row.at)}</td><td>${esc(INTERVENTION_KIND[row.kind] || row.kind)}</td><td>${esc(row.agent)}</td><td>${esc(row.detail)}</td></tr>`,
           )
-          .join("");
+          .join("")}</tbody></table>`;
+      }
+      function paintInterventionsPage() {
+        if (state === null) return;
+        const select = $("intFilter");
+        const names = state.agents.map((agent) => agent.name);
+        const signature = ["", ...names].join("|");
+        if (select.dataset.signature !== signature) {
+          select.dataset.signature = signature;
+          select.innerHTML =
+            '<option value="">全部 Agent</option>' +
+            names.map((name) => `<option value="${esc(name)}">${esc(name)}</option>`).join("");
+          select.value = intFilter !== "" && names.indexOf(intFilter) >= 0 ? intFilter : "";
+          intFilter = select.value;
+        }
+        const rows = state.interventions
+          .filter((row) => intFilter === "" || row.agent === intFilter)
+          .slice()
+          .reverse();
+        repaint($("intTable"), interventionRowsHtml(rows));
       }
 
-      function renderInterventions() {
-        const host = $("interventions");
-        if (!state || state.interventions.length === 0) {
-          host.innerHTML = '<div class="empty">还没有干预记录。</div>';
+      // ------------------------------------------------ settings page
+      function paintSettingsPage() {
+        if (state === null) return;
+        const config = state.config;
+        const key = JSON.stringify({ config, rate: state.exchangeRate, agents: state.agents.length });
+        if (key === settingsKey) return;
+        settingsKey = key;
+        const rows = [
+          ["汇率（USD → 余额）", state.exchangeRate === null ? '<span class="tag bad">未设定</span> 收入申报无法入账' : esc(num(state.exchangeRate))],
+          ["饱食度上限", esc(num(config.satietyMax))],
+          ["饱食度衰减", esc(num(config.satietyDecayPerSecond, 3)) + " / 秒（只随时间下降，不自动回满）"],
+          ["一餐价格", esc(num(config.mealPrice)) + " 余额"],
+          ["一餐恢复", esc(num(config.satietyPerMeal)) + " 饱食度"],
+          ["心跳间隔", esc(String(config.heartbeatSeconds)) + " 秒"],
+          ["MEMORY 上限", esc(String(config.memoryCapChars)) + " 字"],
+          ["一轮上下文上限", esc(String(config.roundContextCapTokens)) + " token"],
+          ["任务认领超时", esc(String(config.taskClaimTimeoutHours)) + " 小时"],
+          ["槽位上限", esc(String(config.maxSlots)) + "（现存 " + state.agents.length + " 个 Agent）"],
+        ];
+        $("settingsBox").innerHTML = `
+          <div class="card">
+            <table class="config-table"><tbody>
+              ${rows.map(([label, value]) => `<tr><td>${label}</td><td>${value}</td></tr>`).join("")}
+            </tbody></table>
+          </div>
+          <details style="margin-top: 12px">
+            <summary>原始配置 JSON（只读）</summary>
+            <pre class="mono">${esc(JSON.stringify(config, null, 2))}</pre>
+          </details>
+          <div class="small muted" style="margin-top: 10px">配置来自 conservatory.config.json，这里是只读展示；改动请直接改文件后重启。</div>`;
+      }
+
+      // ---------------------------------------------------- dialog chrome
+      function paintDialogTabs() {
+        const host = $("dlgTabs");
+        if (host.dataset.built !== "1") {
+          host.dataset.built = "1";
+          host.innerHTML = TABS.map(
+            (tab) => `<button class="tab" data-act="dlg-tab" data-tab="${tab.id}">${esc(tab.label)}</button>`,
+          ).join("");
+        }
+        for (const button of host.querySelectorAll("button[data-tab]")) {
+          button.classList.toggle("active", button.dataset.tab === dlgTab);
+        }
+        for (const tab of TABS) {
+          $(`pane-${tab.id}`).classList.toggle("active", tab.id === dlgTab);
+        }
+      }
+      function paintDialogHeader() {
+        const agent = agentByName(dlgAgent);
+        if (agent === null) {
+          $("dlgName").textContent = "—";
+          $("dlgState").textContent = "—";
+          $("dlgSat").textContent = "—";
+          $("dlgBal").textContent = "—";
+          $("dlgBar").style.width = "0";
           return;
         }
-        host.innerHTML = state.interventions
-          .map(
-            (row) => `
-              <div class="card small">
-                <div class="muted">${when(row.at)} · ${esc(row.agent)} · ${esc(row.kind)}</div>
-                <div>${esc(row.detail)}</div>
-              </div>`,
-          )
-          .join("");
+        const ratio = ratioOf(agent.satiety, agent.satietyMax);
+        $("dlgName").textContent = agent.name;
+        $("dlgDot").className = `dot ${agent.busy ? "busy" : ""}`;
+        $("dlgState").textContent = agent.busy ? "一轮中" : "空闲";
+        $("dlgBar").style.width = (ratio * 100).toFixed(1) + "%";
+        $("dlgBar").style.background = satietyColor(ratio);
+        $("dlgSat").textContent = num(agent.satiety);
+        $("dlgSat").title = `${num(agent.satiety)} / ${num(agent.satietyMax)}`;
+        $("dlgBal").textContent = num(agent.balance);
+        $("dlgWake").dataset.agent = agent.name;
+        $("chatInput").placeholder = `给 ${agent.name} 留言…`;
+      }
+      function resetAgentPanes() {
+        // Nothing of the previous agent may stay on screen while the new agent's
+        // data is still in flight.
+        for (const id of ["memoryText", "memRecords", "memCompare", "nbFiles", "roundList", "roundDetail", "bodyPane", "agentTasks", "agentInt", "chatList"]) {
+          const node = $(id);
+          node.innerHTML = "";
+          node.dataset.key = "";
+        }
+        $("memStats").textContent = "";
+        $("nbContent").textContent = "";
+      }
+      function paintPanes() {
+        if (dlgAgent === null) return;
+        if (dlgTab === "life") {
+          paintRoundList();
+          paintRoundDetail();
+        } else if (dlgTab === "body") {
+          paintBody();
+        } else if (dlgTab === "memory") {
+          paintMemory();
+        } else if (dlgTab === "notebook") {
+          paintNotebook();
+        } else if (dlgTab === "messages") {
+          paintChat();
+        } else if (dlgTab === "tasks") {
+          paintAgentTasks();
+        } else if (dlgTab === "interventions") {
+          paintAgentInterventions();
+        }
       }
 
-      function renderConfig() {
-        if (!state) return;
-        const c = state.config;
-        $("configLine").innerHTML =
-          `心跳 ${c.heartbeatSeconds}s · 每餐 ${c.mealPrice}（+${c.satietyPerMeal}）· 衰减 ${c.satietyDecayPerSecond}/s · ` +
-          `MEMORY 上限 ${c.memoryCapChars} 字 · 上下文上限 ${c.roundContextCapTokens} token · ` +
-          `汇率：${state.exchangeRate === null ? '<span class="tag bad">未设定</span>' : num(state.exchangeRate)}`;
-        const busiest = state.agents.filter((agent) => agent.busy).length;
-        $("pollLine").textContent = `每 3 秒刷新 · ${state.agents.length} 个 Agent · ${busiest} 个在一轮中`;
+      // ------------------------------------------------------- life tab
+      function roundStartAt(round) {
+        const start = round.entries.filter((entry) => entry.kind === "round_start").pop();
+        if (start !== undefined) return start.at;
+        return round.entries.length > 0 ? round.entries[0].at : null;
       }
-
-      async function refresh() {
+      function roundEndEntry(round) {
+        return round.entries.filter((entry) => entry.kind === "round_end").pop() || null;
+      }
+      function paintRoundList() {
+        const host = $("roundList");
+        for (const button of document.querySelectorAll('[data-act="life-range"]')) {
+          button.classList.toggle("active", Number(button.dataset.range) === lifeRange);
+        }
+        const rounds = roundCache.rounds;
+        const key = `${roundCache.agent}|${roundCache.range}|` + rounds.map((r) => `${r.round}:${r.entries.length}`).join(",");
+        if (host.dataset.key === key) return;
+        host.dataset.key = key;
+        repaint(
+          host,
+          rounds.length === 0
+            ? '<div class="empty small">还没有黑匣子记录。</div>'
+            : rounds
+                .slice()
+                .reverse()
+                .map((round) => {
+                  const start = roundStartAt(round);
+                  const end = roundEndEntry(round);
+                  const reason = end === null ? null : end.endReason;
+                  const label = end === null ? '<span class="tag ok">进行中</span>' : `<span class="${reason === "final" ? "tag ok" : reason === "model_error" ? "tag bad" : "tag warn"}">${esc(END_REASON[reason] || reason)}</span>`;
+                  const duration = end === null ? "进行中" : durText(end.at - (start === null ? end.at : start));
+                  return `
+                    <div class="round-item ${round.round === roundSel ? "active" : ""}" data-act="round-select" data-round="${round.round}">
+                      <div class="r1"><strong>第 ${round.round} 轮</strong><span class="grow"></span>${label}</div>
+                      <div class="sub small muted">${timeHtml(start)} · 时长 ${esc(duration)}</div>
+                    </div>`;
+                })
+                .join(""),
+        );
+      }
+      function summarizeTool(result) {
+        if (result === null) return "没有工具结果";
+        let parsed = null;
         try {
-          state = await api("/api/state");
-          renderAgents();
-          renderNotices();
-          renderTasks();
-          renderIncome();
-          renderMessages();
-          renderInterventions();
-          renderConfig();
-          syncSelect("messageAgent");
-          syncSelect("viewAgent");
+          parsed = JSON.parse(result.content);
         } catch (error) {
-          $("pollLine").textContent = "刷新失败：" + (error instanceof Error ? error.message : String(error));
+          parsed = null;
+        }
+        let text;
+        if (parsed !== null && typeof parsed === "object") {
+          if (parsed.ok === false) {
+            text = "失败：" + String(parsed.error === undefined ? "未知错误" : parsed.error);
+          } else {
+            const parts = [];
+            for (const key of Object.keys(parsed)) {
+              if (key === "ok") continue;
+              const value = parsed[key];
+              parts.push(key + "=" + (typeof value === "object" && value !== null ? JSON.stringify(value) : String(value)));
+            }
+            text = parts.length === 0 ? "成功" : parts.join("，");
+          }
+        } else {
+          text = String(result.content).replace(/\s+/g, " ");
+        }
+        return text.length > 110 ? text.slice(0, 110) + "…" : text;
+      }
+      function eventDetail(entry) {
+        switch (entry.kind) {
+          case "meal":
+            return `价格 ${entry.price} · 恢复 ${entry.gained} · 余额 ${entry.balance}`;
+          case "meal_refused":
+            return `余额 ${entry.balance} 买不起价格 ${entry.price}`;
+          case "task_claimed":
+          case "claim_expired":
+          case "task_submitted":
+            return String(entry.taskId);
+          case "income_reported":
+            return `${entry.where} · ${entry.amount} ${entry.currency}`;
+          case "message_to_operator":
+            return String(entry.text === undefined ? "" : entry.text);
+          case "worker_log":
+            return `[${entry.level}] ${entry.message}`;
+          case "worker_note":
+            return String(entry.type);
+          case "agent_created":
+            return `模型 ${entry.model}`;
+          case "intervention":
+            return `${entry.kind} ${entry.amount}`;
+          default:
+            return JSON.stringify(entry);
         }
       }
+      function roundDetailHtml(round) {
+        const entries = round.entries;
+        const start = roundStartAt(round);
+        const end = roundEndEntry(round);
+        const results = new Map();
+        for (const entry of entries) {
+          if (entry.kind === "tool_result") results.set(entry.callId, entry);
+        }
+        const parts = [];
+        parts.push(
+          `<div class="row"><strong style="font-size: 15px">第 ${round.round} 轮</strong>${
+            end === null
+              ? '<span class="tag ok">进行中</span>'
+              : `<span class="${end.endReason === "final" ? "tag ok" : end.endReason === "model_error" ? "tag bad" : "tag warn"}">${esc(END_REASON[end.endReason] || end.endReason)}</span>`
+          }<span class="small muted">开始 ${timeHtml(start)} · 结束 ${timeHtml(end === null ? null : end.at)} · 时长 ${esc(end === null ? "—" : durText(end.at - (start === null ? end.at : start)))}</span></div>`,
+        );
+        if (end !== null && end.error) {
+          parts.push(`<div class="banner danger">${esc(end.error)}</div>`);
+        }
+        for (const entry of entries) {
+          if (entry.kind === "assistant_message") {
+            const content = entry.message === undefined || entry.message === null ? null : entry.message.content;
+            if (typeof content === "string" && content.trim() !== "") {
+              parts.push(`<div><div class="say">${esc(content)}</div><div class="say meta">Agent · ${timeHtml(entry.at)}</div></div>`);
+            }
+            continue;
+          }
+          if (entry.kind === "tool_call") {
+            const result = results.get(entry.callId) || null;
+            let failed = result !== null && result.isError === true;
+            if (!failed && result !== null) {
+              try {
+                const parsed = JSON.parse(result.content);
+                failed = parsed !== null && typeof parsed === "object" && parsed.ok === false;
+              } catch (error) {
+                failed = false;
+              }
+            }
+            parts.push(`
+              <details class="tool-item ${failed ? "bad" : ""}">
+                <summary><strong>调用了 <code>${esc(entry.name)}</code></strong><span class="tool-sum">${esc(summarizeTool(result))}</span></summary>
+                <div class="small muted">参数</div>
+                <pre class="mono">${esc(entry.argumentsJson)}</pre>
+                <div class="small muted" style="margin-top: 6px">完整结果</div>
+                <pre class="mono">${esc(result === null ? "（没有结果）" : result.content)}</pre>
+              </details>`);
+            continue;
+          }
+          if (entry.kind === "round_end") {
+            const reply = entry.finalReply;
+            if (typeof reply === "string" && reply.trim() !== "") {
+              parts.push(`<div class="final"><div class="label">最终回复</div><pre>${esc(reply)}</pre></div>`);
+            }
+            continue;
+          }
+        }
+        const context = entries.filter((entry) => entry.kind === "context").pop();
+        if (context !== undefined) {
+          parts.push(`
+            <details>
+              <summary>本轮醒来时注入的上下文</summary>
+              <div class="small muted">system（身体手册）</div>
+              <pre class="mono">${esc(context.system)}</pre>
+              <div class="small muted" style="margin-top: 6px">user（MEMORY、身体状态、任务板、留言）</div>
+              <pre class="mono">${esc(context.user)}</pre>
+            </details>`);
+        }
+        const usageEntries = entries.filter((entry) => entry.kind === "usage");
+        const missing = entries.filter((entry) => entry.kind === "usage_missing");
+        const usageRow = (source) => {
+          const list = usageEntries.filter((entry) => entry.source === source);
+          if (list.length === 0) return `<div class="kv"><span class="k">${source === "agent" ? "agent 模型" : "memory 模型"}</span><span class="num">没有用量记录</span></div>`;
+          const prompt = list.reduce((sum, entry) => sum + (typeof entry.promptTokens === "number" ? entry.promptTokens : 0), 0);
+          const completion = list.reduce((sum, entry) => sum + (typeof entry.completionTokens === "number" ? entry.completionTokens : 0), 0);
+          return `<div class="kv"><span class="k">${source === "agent" ? "agent 模型" : "memory 模型"}</span><span class="num">提示 ${prompt} · 完成 ${completion}</span></div>`;
+        };
+        parts.push(`
+          <details>
+            <summary>token 用量</summary>
+            ${usageRow("agent")}
+            ${usageRow("memory")}
+            ${missing.length > 0 ? `<div class="small" style="color: var(--danger)">有 ${missing.length} 次用量缺失（记 0）</div>` : ""}
+          </details>`);
+        const memoryNew = entries.filter((entry) => entry.kind === "memory_new").pop();
+        const memoryRejected = entries.filter((entry) => entry.kind === "memory_rejected").pop();
+        const memoryError = entries.filter((entry) => entry.kind === "memory_error").pop();
+        const memoryMissing = entries.filter((entry) => entry.kind === "usage_missing" && entry.source === "memory").pop();
+        let memoryHtml;
+        if (memoryNew !== undefined) {
+          memoryHtml = `<div class="small" style="color: var(--accent)">本轮记忆已更新</div><pre class="mono">${esc(memoryNew.text)}</pre>`;
+        } else if (memoryRejected !== undefined) {
+          memoryHtml = `<div class="small" style="color: var(--danger)">记忆整合被拒绝：${esc(memoryRejected.reason)}（MEMORY 保持不变）</div>`;
+        } else if (memoryError !== undefined) {
+          memoryHtml = `<div class="small" style="color: var(--danger)">记忆模型出错：${esc(memoryError.message)}</div>`;
+        } else if (memoryMissing !== undefined) {
+          memoryHtml = '<div class="small" style="color: var(--danger)">记忆模型没有报告用量，这一轮没有折进 MEMORY。</div>';
+        } else {
+          memoryHtml = '<div class="small muted">这一轮没有记忆整合记录。</div>';
+        }
+        parts.push(`<details><summary>本轮记忆整合结果</summary>${memoryHtml}</details>`);
+        const events = entries.filter((entry) =>
+          [
+            "meal",
+            "meal_refused",
+            "task_claimed",
+            "task_submitted",
+            "income_reported",
+            "message_to_operator",
+            "worker_log",
+            "worker_note",
+            "claim_expired",
+            "worker_problem",
+          ].indexOf(entry.kind) >= 0,
+        );
+        if (events.length > 0) {
+          parts.push(
+            `<details><summary>本轮其它事件（${events.length}）</summary>${events
+              .map(
+                (entry) =>
+                  `<div class="event-line">${timeHtml(entry.at)} · ${esc(EVENT_LABEL[entry.kind] || entry.kind)}${eventDetail(entry) === "" ? "" : " · " + esc(eventDetail(entry))}</div>`,
+              )
+              .join("")}</details>`,
+          );
+        }
+        parts.push(
+          `<details><summary>原始黑匣子记录（${entries.length} 条）</summary><pre class="mono">${esc(
+            entries.map((entry) => JSON.stringify(entry)).join("\n"),
+          )}</pre></details>`,
+        );
+        return parts.join("");
+      }
+      function paintRoundDetail() {
+        const host = $("roundDetail");
+        const round = roundCache.rounds.find((item) => item.round === roundSel) || null;
+        if (round === null) {
+          if (host.dataset.key !== "none") {
+            host.dataset.key = "none";
+            repaint(host, '<div class="empty small">左边选一轮看过程。</div>');
+          }
+          return;
+        }
+        const last = round.entries.length > 0 ? round.entries[round.entries.length - 1] : null;
+        const key = `${round.round}|${round.entries.length}|${last === null ? 0 : last.at}`;
+        if (host.dataset.key === key) return;
+        host.dataset.key = key;
+        repaint(host, roundDetailHtml(round));
+      }
 
-      async function loadViewer(kind, agent) {
-        viewerKind = kind;
-        viewerAgent = agent;
-        const host = $("viewer");
-        host.textContent = "读取中…";
-        try {
-          if (kind === "memory") {
-            const body = await api(`/api/agents/${encodeURIComponent(agent)}/memory`);
-            host.textContent = body.memory || "(MEMORY 为空)";
-            $("notebookFiles").innerHTML = "";
-          } else if (kind === "notebook") {
-            const body = await api(`/api/agents/${encodeURIComponent(agent)}/notebook`);
-            if (body.files.length === 0) {
-              $("notebookFiles").innerHTML = '<div class="empty small">记事本还是空的。</div>';
-              host.textContent = "(空)";
-            } else {
-              $("notebookFiles").innerHTML = body.files
+      // ----------------------------------------------------- body tab
+      function paintBody() {
+        const agent = agentByName(dlgAgent);
+        if (agent === null || state === null) return;
+        const config = state.config;
+        const ratio = ratioOf(agent.satiety, agent.satietyMax);
+        const secondsToZero =
+          typeof agent.satiety === "number" && config.satietyDecayPerSecond > 0
+            ? agent.satiety / config.satietyDecayPerSecond
+            : null;
+        const meals = config.mealPrice > 0 ? Math.floor(agent.balance / config.mealPrice) : null;
+        const tokens = agent.tokens;
+        repaint(
+          $("bodyPane"),
+          `
+          <div class="card col-stack">
+            <div class="kv"><span class="k">饱食度</span><span class="num" style="font-size: 18px">${esc(num(agent.satiety))} / ${esc(num(agent.satietyMax))}</span></div>
+            <div class="bar" style="height: 14px"><span style="width: ${(ratio * 100).toFixed(1)}%; background: ${satietyColor(ratio)}"></span></div>
+            <div class="kv"><span class="k">以当前速度饿到 0</span><span>${esc(secondsToZero === null ? "—" : durText(secondsToZero * 1000))}</span></div>
+            <div class="kv"><span class="k">余额</span><span class="num">${esc(num(agent.balance))}</span></div>
+            <div class="kv"><span class="k">当前余额够吃</span><span>${meals === null ? "—" : meals + " 顿（每顿 " + num(config.mealPrice) + "，恢复 " + num(config.satietyPerMeal) + "）"}</span></div>
+            <div class="kv"><span class="k">出生时间</span><span>${timeHtml(agent.bornAt)}</span></div>
+            <div class="kv"><span class="k">模型</span><span class="mono small">${esc(agent.model)}</span></div>
+            <div class="kv"><span class="k">上次唤醒</span><span>${timeHtml(agent.lastWakeAt)}</span></div>
+            <div class="kv"><span class="k">上次一轮结束</span><span>${timeHtml(agent.lastRoundAt)}${agent.lastRoundEndReason ? "（" + esc(END_REASON[agent.lastRoundEndReason] || agent.lastRoundEndReason) + "）" : ""}</span></div>
+            <div class="kv"><span class="k">累计 token（agent）</span><span class="num">提示 ${tokens.agent.promptTokens} · 完成 ${tokens.agent.completionTokens}（${tokens.agent.records} 次）</span></div>
+            <div class="kv"><span class="k">累计 token（memory）</span><span class="num">提示 ${tokens.memory.promptTokens} · 完成 ${tokens.memory.completionTokens}（${tokens.memory.records} 次）</span></div>
+            ${agent.lastError ? `<div class="banner danger">最近错误：${esc(agent.lastError)}</div>` : ""}
+          </div>
+          <div class="card col-stack">
+            <div style="font-weight: 600">干预操作</div>
+            <div class="small muted">给余额或给饱食度会永久记录为操作员干预。它会改变这两个数字，但不会改变饱食度自然下降的规则。</div>
+            <div class="row">
+              <button class="btn" data-act="give-balance" data-agent="${esc(agent.name)}">给余额</button>
+              <button class="btn" data-act="give-satiety" data-agent="${esc(agent.name)}">给饱食度</button>
+            </div>
+          </div>`,
+        );
+      }
+
+      // --------------------------------------------------- memory tab
+      function paintMemory() {
+        const host = $("memoryText");
+        if (memCache.agent !== dlgAgent) return;
+        const cap = state === null ? 0 : state.config.memoryCapChars;
+        const text = memCache.memory;
+        $("memStats").textContent = `当前 ${text.length} 字 / 上限 ${cap} 字${text.length > cap ? "（已超出上限）" : ""}`;
+        const lines = text === "" ? ["（MEMORY 为空）"] : text.replace(/\r\n/g, "\n").split("\n");
+        repaint(
+          host,
+          lines
+            .map((line, index) =>
+              index < 2
+                ? `<div class="mem-line mem-born">${esc(line)}${index === 0 ? '<span class="hint">出生记录</span>' : ""}</div>`
+                : `<div class="mem-line">${esc(line)}</div>`,
+            )
+            .join(""),
+        );
+        paintMemRecords();
+        paintMemCompare();
+      }
+      function paintMemRecords() {
+        const host = $("memRecords");
+        const records = memCache.records;
+        repaint(
+          host,
+          records.length === 0
+            ? '<div class="empty small">还没有记忆整合记录。</div>'
+            : records
+                .map(
+                  (record) => `
+                    <div class="list-item ${memSel !== null && memSel.round === record.round && memSel.kind === record.entry.kind ? "active" : ""}"
+                         data-act="mem-record" data-round="${record.round}" data-kind="${esc(record.entry.kind)}">
+                      <div class="row"><span class="title grow">${esc(MEM_KIND[record.entry.kind] || record.entry.kind)}</span><span class="tag">第 ${record.round} 轮</span></div>
+                      <div class="sub">${timeHtml(record.entry.at)}${record.entry.reason ? " · " + esc(record.entry.reason) : ""}</div>
+                    </div>`,
+                )
+                .join(""),
+        );
+      }
+      function paintMemCompare() {
+        const host = $("memCompare");
+        if (memSel === null) {
+          host.innerHTML = '<div class="small muted">点左边的记录，看那一次的新旧版本。</div>';
+          return;
+        }
+        const record = memCache.records.find((item) => item.round === memSel.round && item.entry.kind === memSel.kind) || null;
+        if (record === null) {
+          host.innerHTML = '<div class="small muted">这条记录已经不在最近的记录里了。</div>';
+          return;
+        }
+        const oldEntry = record.entries.filter((entry) => entry.kind === "memory_old").pop();
+        const newEntry = record.entries.filter((entry) => entry.kind === "memory_new").pop();
+        const responseEntry = record.entries.filter((entry) => entry.kind === "memory_response").pop();
+        const before = oldEntry === undefined ? "（没有旧版本记录）" : oldEntry.text;
+        const after =
+          newEntry !== undefined
+            ? newEntry.text
+            : responseEntry !== undefined
+              ? responseEntry.enforced
+              : null;
+        host.innerHTML = `
+          <div class="card col-stack">
+            <div class="row"><strong>第 ${record.round} 轮 · ${esc(MEM_KIND[record.entry.kind] || record.entry.kind)}</strong><span class="small muted">${timeHtml(record.entry.at)}</span></div>
+            ${record.entry.reason ? `<div class="banner warn">拒绝原因：${esc(record.entry.reason)}</div>` : ""}
+            ${record.entry.message ? `<div class="banner danger">${esc(record.entry.message)}</div>` : ""}
+            ${record.entry.source === "memory" && record.entry.kind === "usage_missing" ? '<div class="banner danger">记忆模型没有报告用量，MEMORY 未改变。</div>' : ""}
+            <div class="small muted">旧版本（这一轮开始前）</div>
+            <pre class="mono">${esc(before)}</pre>
+            <div class="small muted">新版本${after === null ? "（没有写出新版本，MEMORY 保持不变）" : ""}</div>
+            <pre class="mono">${esc(after === null ? "—" : after)}</pre>
+          </div>`;
+      }
+
+      // ------------------------------------------------- notebook tab
+      function paintNotebook() {
+        if (nbCache.agent !== dlgAgent) return;
+        const host = $("nbFiles");
+        repaint(
+          host,
+          nbCache.files.length === 0
+            ? '<div class="empty small">记事本还是空的。</div>'
+            : nbCache.files
                 .map(
                   (file) =>
-                    `<button class="small" data-action="notebook-file" data-agent="${esc(agent)}" data-path="${esc(file.path)}">${esc(file.path)}（${file.size} 字节）</button>`,
+                    `<button class="btn tiny nb-file ${file.path === nbCache.path ? "active" : ""}" data-act="nb-file" data-path="${esc(file.path)}">${esc(file.path)}（${file.size} 字节）</button>`,
                 )
-                .join(" ");
-              host.textContent = "点上面的文件名查看内容。";
-            }
-          } else {
-            const body = await api(`/api/agents/${encodeURIComponent(agent)}/blackbox?rounds=3`);
-            $("notebookFiles").innerHTML = "";
-            if (body.rounds.length === 0) {
-              host.textContent = "(还没有黑匣子记录)";
-            } else {
-              host.textContent = body.rounds
-                .map((round) => {
-                  const head = `===== 第 ${round.round} 轮 =====`;
-                  const lines = round.entries.map(
-                    (entry) => `${when(entry.at)} [${entry.kind}] ${JSON.stringify(entry, null, 0)}`,
-                  );
-                  return [head, ...lines].join("\n");
-                })
-                .join("\n\n");
+                .join(""),
+        );
+        const content = $("nbContent");
+        if (nbCache.path === null) {
+          content.textContent = "还没有文件。";
+          return;
+        }
+        const top = content.scrollTop;
+        content.textContent = nbCache.content === "" ? "(空文件)" : nbCache.content;
+        content.scrollTop = top;
+      }
+
+      // --------------------------------------------------- messages tab
+      function paintChat() {
+        const host = $("chatList");
+        const agent = agentByName(dlgAgent);
+        if (agent === null) return;
+        const messages = messagesFor(agent.name)
+          .slice()
+          .sort((a, b) => a.at - b.at || a.id - b.id);
+        if (dlgTab === "messages") {
+          let changed = false;
+          for (const message of messages) {
+            if (message.sender === agent.name && message.readAt === null && !readMarks.has(markOf(message))) {
+              readMarks.add(markOf(message));
+              changed = true;
             }
           }
-        } catch (error) {
-          host.textContent = "读取失败：" + (error instanceof Error ? error.message : String(error));
+          if (changed) {
+            saveReadMarks();
+            paintNav();
+            paintAgentsPage();
+          }
+        }
+        const key = messages.map((message) => `${message.id}:${message.readAt}`).join("|");
+        if (host.dataset.key === key) return;
+        const nearBottom = host.scrollHeight - host.scrollTop - host.clientHeight < 80;
+        const previousTop = host.scrollTop;
+        const hadContent = host.dataset.key !== undefined;
+        host.dataset.key = key;
+        host.innerHTML =
+          messages.length === 0
+            ? '<div class="empty small">还没有留言。下面写第一句。</div>'
+            : messages
+                .map(
+                  (message) => `
+                    <div class="msg ${message.sender === "operator" ? "op" : ""}">
+                      <div class="who">${esc(message.sender === "operator" ? "操作员" : message.sender)} · ${timeHtml(message.at)}</div>
+                      <div class="body">${esc(message.body)}</div>
+                    </div>`,
+                )
+                .join("");
+        if (!hadContent || nearBottom) host.scrollTop = host.scrollHeight;
+        else host.scrollTop = previousTop;
+      }
+
+      // ------------------------------------------------- agent task tab
+      function paintAgentTasks() {
+        const agent = agentByName(dlgAgent);
+        if (agent === null || state === null) return;
+        const tasks = state.tasks.filter((task) => task.claimedBy === agent.name);
+        repaint(
+          $("agentTasks"),
+          tasks.length === 0
+            ? '<div class="empty small">这个 Agent 还没有认领过任务。</div>'
+            : tasks
+                .map(
+                  (task) => `
+                    <div class="card">
+                      <div class="row"><strong class="grow">${esc(task.title)}</strong><span class="${taskTagClass(task.status)}">${esc(TASK_STATUS[task.status] || task.status)}</span><span class="tag">${esc(num(task.price))}</span></div>
+                      <div class="small muted">${esc(task.id)} · 认领 ${timeHtml(task.claimedAt)} · 提交 ${timeHtml(task.submittedAt)}</div>
+                      ${task.deliverable ? `<pre class="mono" style="max-height: 140px">${esc(task.deliverable)}</pre>` : ""}
+                      <div class="row"><button class="btn tiny" data-act="agent-task" data-task="${esc(task.id)}">去全局任务板审核</button></div>
+                    </div>`,
+                )
+                .join(""),
+        );
+      }
+      function paintAgentInterventions() {
+        const agent = agentByName(dlgAgent);
+        if (agent === null || state === null) return;
+        const rows = state.interventions.filter((row) => row.agent === agent.name).slice().reverse();
+        repaint($("agentInt"), interventionRowsHtml(rows));
+      }
+
+      // ------------------------------------------------------------ actions
+      async function runAction(act, target) {
+        if (act === "nav") {
+          goPage(target.dataset.page);
+          // The cards need each agent's latest reply, which only this poll fetches.
+          if (target.dataset.page === "agents") void refresh();
+          return;
+        }
+        if (act === "open-agent") {
+          openAgent(target.dataset.agent, "life");
+          return;
+        }
+        if (act === "dlg-close") {
+          closeAgent();
+          return;
+        }
+        if (act === "dlg-tab") {
+          if (dlgAgent !== null) openAgent(dlgAgent, target.dataset.tab);
+          return;
+        }
+        if (act === "notice-close") {
+          dismissedNotices.add(target.dataset.key);
+          paintNotices();
+          paintAgentsPage();
+          return;
+        }
+        if (act === "wake") {
+          const agent = target.dataset.agent || dlgAgent;
+          if (agent === null) return;
+          const body = await post("/api/wake", { agent });
+          if (body.woken === false) alert(body.note || "该 agent 正在一轮中，已跳过");
+          await refresh();
+          return;
+        }
+        if (act === "slot-create") {
+          const input = document.querySelector(`input[data-slot="${target.dataset.slot}"]`);
+          const name = input === null ? "" : input.value.trim();
+          if (name === "") {
+            alert("请填写名字");
+            return;
+          }
+          await post("/api/agents", { name });
+          if (input !== null) input.value = "";
+          slotDrafts[target.dataset.slot] = "";
+          await refresh();
+          return;
+        }
+        if (act === "post-task") {
+          const title = $("taskTitle").value.trim();
+          const description = $("taskDesc").value;
+          const rawPrice = $("taskPrice").value.trim();
+          const price = Number(rawPrice);
+          if (title === "") {
+            alert("请填写标题");
+            return;
+          }
+          if (rawPrice === "" || !Number.isFinite(price) || price < 0) {
+            alert("请填写价格（不小于 0 的数字）");
+            return;
+          }
+          await post("/api/tasks", { title, description, price });
+          $("taskTitle").value = "";
+          $("taskDesc").value = "";
+          $("taskPrice").value = "";
+          await refresh();
+          return;
+        }
+        if (act === "task-filter") {
+          taskFilter = target.dataset.filter;
+          taskSel = null;
+          paintTasksPage();
+          return;
+        }
+        if (act === "task-select") {
+          taskSel = target.dataset.task;
+          paintTasksPage();
+          return;
+        }
+        if (act === "task-review") {
+          await post(`/api/tasks/${encodeURIComponent(target.dataset.task)}/review`, { decision: target.dataset.decision });
+          await refresh();
+          return;
+        }
+        if (act === "income-select") {
+          incomeSel = Number(target.dataset.report);
+          incomeKey = null;
+          paintIncomePage();
+          return;
+        }
+        if (act === "income-verify") {
+          if (state !== null && state.exchangeRate === null) {
+            alert("汇率未设定：请在 conservatory.config.json 里设置 exchangeRate 后再核验入账");
+            return;
+          }
+          if (incomeSel === null) return;
+          const input = $("verifyAmount");
+          const raw = input === null ? "" : input.value.trim();
+          const amount = Number(raw);
+          if (raw === "" || !Number.isFinite(amount) || amount < 0) {
+            alert("请填写核实金额（不小于 0 的数字）");
+            return;
+          }
+          await post(`/api/income/${incomeSel}/verify`, { verifiedAmount: amount });
+          incomeKey = null;
+          await refresh();
+          return;
+        }
+        if (act === "income-reject") {
+          if (!confirm("确认驳回这条收入申报？驳回后不入账。")) return;
+          await post(`/api/income/${incomeSel}/reject`, {});
+          incomeKey = null;
+          await refresh();
+          return;
+        }
+        if (act === "life-range") {
+          lifeRange = Number(target.dataset.range);
+          roundSel = null;
+          roundCache = { agent: null, range: null, rounds: [] };
+          await loadRounds(dlgAgent, true);
+          return;
+        }
+        if (act === "life-refresh") {
+          await loadRounds(dlgAgent, true);
+          return;
+        }
+        if (act === "round-select") {
+          roundSel = Number(target.dataset.round);
+          paintRoundList();
+          paintRoundDetail();
+          return;
+        }
+        if (act === "mem-record") {
+          memSel = { round: Number(target.dataset.round), kind: target.dataset.kind };
+          paintMemRecords();
+          paintMemCompare();
+          return;
+        }
+        if (act === "nb-file") {
+          await loadNotebookFile(target.dataset.path);
+          return;
+        }
+        if (act === "send-message") {
+          const input = $("chatInput");
+          const body = input.value.trim();
+          if (dlgAgent === null || body === "") {
+            alert("请填写留言");
+            return;
+          }
+          await post("/api/messages", { agent: dlgAgent, body });
+          input.value = "";
+          await refresh();
+          return;
+        }
+        if (act === "agent-task") {
+          taskSel = target.dataset.task;
+          taskFilter = "all";
+          navigate("#/tasks");
+          return;
+        }
+        if (act === "give-balance" || act === "give-satiety") {
+          const kind = act === "give-balance" ? "give_balance" : "give_satiety";
+          if (!confirm("这会被永久记录为操作员干预。确认继续？")) return;
+          const input = prompt(kind === "give_balance" ? "给多少余额？" : "给多少饱食度？", "10");
+          if (input === null) return;
+          const amount = Number(input);
+          if (!Number.isFinite(amount) || amount <= 0) {
+            alert("数量必须是大于 0 的数字");
+            return;
+          }
+          await post("/api/intervene", { agent: target.dataset.agent || dlgAgent, kind, amount });
+          await refresh();
+          return;
         }
       }
 
-      document.addEventListener("click", async (event) => {
-        const target = event.target.closest("button[data-action]");
-        if (!target) return;
-        const action = target.dataset.action;
-        try {
-          if (action === "wake") {
-            const body = await post("/api/wake", { agent: target.dataset.agent });
-            if (body.woken === false) alert(body.note || "该 agent 正在一轮中，已跳过");
-          } else if (action === "review") {
-            await post(`/api/tasks/${encodeURIComponent(target.dataset.task)}/review`, {
-              decision: target.dataset.decision,
-            });
-          } else if (action === "verify") {
-            const report = state.income.find((row) => String(row.id) === target.dataset.report);
-            const input = prompt(
-              `核实金额（申报 ${report ? report.amount + " " + report.currency : ""}）：`,
-              report ? String(report.amount) : "0",
-            );
-            if (input === null) return;
-            const amount = Number(input);
-            if (!Number.isFinite(amount)) {
-              alert("金额必须是数字");
-              return;
-            }
-            await post(`/api/income/${target.dataset.report}/verify`, { verifiedAmount: amount });
-          } else if (action === "reject-income") {
-            if (!confirm("确认驳回这条收入申报？驳回后不入账。")) return;
-            await post(`/api/income/${target.dataset.report}/reject`, {});
-          } else if (action === "notebook-file") {
-            const body = await api(
-              `/api/agents/${encodeURIComponent(target.dataset.agent)}/notebook/file?path=${encodeURIComponent(target.dataset.path)}`,
-            );
-            $("viewer").textContent = body.content === "" ? "(空文件)" : body.content;
-          } else if (action === "give-balance" || action === "give-satiety") {
-            const kind = action === "give-balance" ? "give_balance" : "give_satiety";
-            if (!confirm("这会被永久记录为操作员干预。确认继续？")) return;
-            const input = prompt(kind === "give_balance" ? "给多少余额？" : "给多少饱食度？", "10");
-            if (input === null) return;
-            const amount = Number(input);
-            if (!Number.isFinite(amount) || amount <= 0) {
-              alert("数量必须是大于 0 的数字");
-              return;
-            }
-            await post("/api/intervene", { agent: target.dataset.agent, kind, amount });
+      document.addEventListener("click", (event) => {
+        const target = event.target.closest("[data-act]");
+        if (target === null) return;
+        const act = target.dataset.act;
+        void (async () => {
+          try {
+            await runAction(act, target);
+          } catch (error) {
+            alertError(error);
           }
-          await refresh();
-        } catch (error) {
-          alertError(error);
-        }
+        })();
+      });
+      document.addEventListener("keydown", (event) => {
+        const target = event.target;
+        if (event.key !== "Enter" || !(target instanceof HTMLElement) || !target.dataset.enter) return;
+        if (target.tagName === "TEXTAREA") return;
+        event.preventDefault();
+        const act = target.dataset.enter;
+        const slot = target.dataset.slot;
+        void (async () => {
+          try {
+            await runAction(act, slot === undefined ? target : { dataset: { act, slot } });
+          } catch (error) {
+            alertError(error);
+          }
+        })();
+      });
+      $("intFilter").addEventListener("change", (event) => {
+        intFilter = event.target.value;
+        paintInterventionsPage();
       });
 
-      $("createAgentBtn").addEventListener("click", async () => {
-        const name = $("newAgentName").value.trim();
-        if (!name) {
-          alert("请填写名字");
+      // ------------------------------------------------------------ refresh
+      async function loadExtras() {
+        if (state === null || state.agents.length === 0) {
+          extras = {};
+          return;
+        }
+        const entries = await Promise.all(
+          state.agents.map(async (agent) => {
+            try {
+              const body = await api(`/api/agents/${encodeURIComponent(agent.name)}/blackbox?rounds=5`);
+              const rounds = body.rounds;
+              for (let index = rounds.length - 1; index >= 0; index -= 1) {
+                const end = rounds[index].entries.filter((entry) => entry.kind === "round_end").pop();
+                if (end !== undefined) {
+                  return [
+                    agent.name,
+                    {
+                      finalReply: typeof end.finalReply === "string" ? end.finalReply : "",
+                      endReason: typeof end.endReason === "string" ? end.endReason : "",
+                      round: rounds[index].round,
+                    },
+                  ];
+                }
+              }
+              return [agent.name, null];
+            } catch (error) {
+              return [agent.name, null];
+            }
+          }),
+        );
+        extras = {};
+        for (const [name, value] of entries) {
+          if (value !== null) extras[name] = value;
+        }
+      }
+      async function refresh() {
+        if (refreshing) return;
+        refreshing = true;
+        try {
+          state = await api("/api/state");
+          refreshError = null;
+          if (parseHash().page === "agents" || dlgAgent !== null) {
+            await loadExtras();
+          }
+          paint();
+          applyRoute();
+          await followNewRounds();
+        } catch (error) {
+          refreshError = error instanceof Error ? error.message : String(error);
+          paintRailFoot();
+        } finally {
+          refreshing = false;
+        }
+      }
+      async function followNewRounds() {
+        if (dlgAgent === null) return;
+        const agent = agentByName(dlgAgent);
+        if (agent === null) return;
+        const seen = loadedRoundAt[dlgAgent];
+        if (agent.lastRoundAt === null || seen === undefined || seen === agent.lastRoundAt) return;
+        loadedRoundAt[dlgAgent] = agent.lastRoundAt;
+        if (dlgTab === "life") await loadRounds(dlgAgent, true);
+        else if (dlgTab === "memory") await loadMemory(dlgAgent, true);
+        else if (dlgTab === "notebook") await loadNotebook(dlgAgent, true);
+      }
+
+      // ------------------------------------------------------------ loading
+      async function loadTab(tab, force) {
+        if (dlgAgent === null) return;
+        if (tab === "life") await loadRounds(dlgAgent, force);
+        else if (tab === "memory") await loadMemory(dlgAgent, force);
+        else if (tab === "notebook") await loadNotebook(dlgAgent, force);
+      }
+      async function loadRounds(name, force) {
+        if (name === null) return;
+        if (!force && roundCache.agent === name && roundCache.range === lifeRange) {
+          paintRoundList();
+          paintRoundDetail();
+          return;
+        }
+        const host = $("roundList");
+        host.dataset.key = "";
+        host.innerHTML = '<div class="empty small">读取中…</div>';
+        try {
+          const body = await api(`/api/agents/${encodeURIComponent(name)}/blackbox?rounds=${lifeRange}`);
+          const rounds = body.rounds.filter((round) => round.round !== null);
+          roundCache = { agent: name, range: lifeRange, rounds };
+          if (roundSel === null || !rounds.some((round) => round.round === roundSel)) {
+            roundSel = rounds.length > 0 ? rounds[rounds.length - 1].round : null;
+          }
+          const agent = agentByName(name);
+          if (agent !== null) loadedRoundAt[name] = agent.lastRoundAt;
+          paintRoundList();
+          paintRoundDetail();
+        } catch (error) {
+          host.innerHTML = `<div class="empty small">读取失败：${esc(error instanceof Error ? error.message : String(error))}</div>`;
+        }
+      }
+      async function loadMemory(name, force) {
+        if (name === null) return;
+        if (!force && memCache.agent === name) {
+          paintMemory();
           return;
         }
         try {
-          await post("/api/agents", { name });
-          $("newAgentName").value = "";
-          await refresh();
+          const [memory, records] = await Promise.all([
+            api(`/api/agents/${encodeURIComponent(name)}/memory`),
+            api(`/api/agents/${encodeURIComponent(name)}/blackbox?rounds=50`),
+          ]);
+          const memoryRecords = [];
+          for (const round of records.rounds) {
+            for (const entry of round.entries) {
+              if (entry.kind === "memory_new" || entry.kind === "memory_rejected" || entry.kind === "memory_error" || entry.kind === "usage_missing") {
+                if (entry.kind === "usage_missing" && entry.source !== "memory") continue;
+                memoryRecords.push({ round: round.round, entry, entries: round.entries });
+              }
+            }
+          }
+          memCache = { agent: name, memory: String(memory.memory || ""), records: memoryRecords.slice(-20).reverse() };
+          const current = agentByName(name);
+          if (current !== null) loadedRoundAt[name] = current.lastRoundAt;
+          if (memSel !== null && !memCache.records.some((r) => r.round === memSel.round && r.entry.kind === memSel.kind)) {
+            memSel = null;
+          }
+          paintMemory();
         } catch (error) {
-          alertError(error);
+          $("memoryText").innerHTML = `<div class="empty small">读取失败：${esc(error instanceof Error ? error.message : String(error))}</div>`;
         }
-      });
-
-      $("postTaskBtn").addEventListener("click", async () => {
-        const title = $("taskTitle").value.trim();
-        const description = $("taskDescription").value;
-        const price = Number($("taskPrice").value);
-        if (!title) {
-          alert("请填写标题");
-          return;
-        }
-        if (!Number.isFinite(price)) {
-          alert("请填写价格");
-          return;
-        }
-        try {
-          await post("/api/tasks", { title, description, price });
-          $("taskTitle").value = "";
-          $("taskDescription").value = "";
-          $("taskPrice").value = "";
-          await refresh();
-        } catch (error) {
-          alertError(error);
-        }
-      });
-
-      $("sendMessageBtn").addEventListener("click", async () => {
-        const agent = $("messageAgent").value;
-        const body = $("messageBody").value;
-        if (!agent || !body.trim()) {
-          alert("请选择 Agent 并填写留言");
+      }
+      async function loadNotebook(name, force) {
+        if (name === null) return;
+        if (!force && nbCache.agent === name) {
+          paintNotebook();
           return;
         }
         try {
-          await post("/api/messages", { agent, body });
-          $("messageBody").value = "";
-          await refresh();
+          const body = await api(`/api/agents/${encodeURIComponent(name)}/notebook`);
+          const current = agentByName(name);
+          if (current !== null) loadedRoundAt[name] = current.lastRoundAt;
+          nbCache = { agent: name, files: body.files, path: nbCache.agent === name ? nbCache.path : null, content: nbCache.agent === name ? nbCache.content : "" };
+          if (nbCache.path === null || !body.files.some((file) => file.path === nbCache.path)) {
+            nbCache.path = body.files.length > 0 ? body.files[0].path : null;
+            nbCache.content = "";
+            if (nbCache.path !== null) {
+              await loadNotebookFile(nbCache.path);
+              return;
+            }
+          }
+          paintNotebook();
         } catch (error) {
-          alertError(error);
+          $("nbFiles").innerHTML = `<div class="empty small">读取失败：${esc(error instanceof Error ? error.message : String(error))}</div>`;
+        }
+      }
+      async function loadNotebookFile(path) {
+        if (dlgAgent === null || nbLoading) return;
+        nbLoading = true;
+        try {
+          const body = await api(
+            `/api/agents/${encodeURIComponent(dlgAgent)}/notebook/file?path=${encodeURIComponent(path)}`,
+          );
+          nbCache.path = path;
+          nbCache.content = String(body.content || "");
+          paintNotebook();
+        } catch (error) {
+          $("nbContent").textContent = "读取失败：" + (error instanceof Error ? error.message : String(error));
+        } finally {
+          nbLoading = false;
+        }
+      }
+
+      // ----------------------------------------------------------- bootstrap
+      $("dlg").addEventListener("close", () => {
+        if (dlgAgent !== null) {
+          dlgAgent = null;
+          if (window.location.hash !== "#/agents") window.location.hash = "#/agents";
         }
       });
-
-      $("viewMemoryBtn").addEventListener("click", () => loadViewer("memory", $("viewAgent").value));
-      $("viewNotebookBtn").addEventListener("click", () => loadViewer("notebook", $("viewAgent").value));
-      $("viewBlackboxBtn").addEventListener("click", () => loadViewer("blackbox", $("viewAgent").value));
-
-      refresh();
+      $("dlg").addEventListener("click", (event) => {
+        if (event.target === $("dlg")) closeAgent();
+      });
+      window.addEventListener("hashchange", applyRoute);
+      if (!window.location.hash) window.location.hash = "#/agents";
+      applyRoute();
+      void refresh();
       setInterval(() => {
         void refresh();
-        if (viewerKind && viewerAgent) {
-          void loadViewer(viewerKind, viewerAgent);
-        }
       }, 3000);
     </script>
   </body>
