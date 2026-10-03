@@ -1,5 +1,8 @@
-node_modules/
-dist/
-.env
-AGENTS/
-SUPERVISOR/
+# Runtime directories. These are anchored to the repository root on purpose:
+# an unanchored "SUPERVISOR/" also matches src/supervisor/ on a case-insensitive
+# filesystem, which would silently keep the supervisor's source out of git.
+/node_modules/
+/dist/
+/.env
+/AGENTS/
+/SUPERVISOR/
