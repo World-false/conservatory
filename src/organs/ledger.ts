@@ -581,20 +581,24 @@ export class Ledger {
     return this.reviewTask(id, ['submitted'], 'open', 'returned', at, null, true);
   }
 
-  /** Claim timeout: a claim left undone goes back to the board. */
+  /**
+   * Claim timeout: a claim left undone goes back to the board. `rework` counts
+   * as claimed here, because being sent back for rework keeps the same hold on
+   * the task and the same clock.
+   */
   expireClaimedTasks(now: number, timeoutMs: number): { taskId: string; agent: string }[] {
     return this.transaction(() => {
       const cutoff = now - timeoutMs;
       const rows = this.db
         .prepare(
           `SELECT id, claimed_by FROM tasks
-           WHERE status = 'claimed' AND claimed_at IS NOT NULL AND claimed_at <= ?`,
+           WHERE status IN ('claimed', 'rework') AND claimed_at IS NOT NULL AND claimed_at <= ?`,
         )
         .all(cutoff);
       const expired: { taskId: string; agent: string }[] = [];
       const update = this.db.prepare(
         `UPDATE tasks SET status = 'open', claimed_by = NULL, claimed_at = NULL, updated_at = ?
-         WHERE id = ? AND status = 'claimed'`,
+         WHERE id = ? AND status IN ('claimed', 'rework')`,
       );
       for (const row of rows) {
         const taskId = readString(row, 'id');

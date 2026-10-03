@@ -529,6 +529,8 @@ function main(): void {
       ].join('\n'),
     );
     heartbeat.start();
+    // The first beat lands immediately so a freshly started supervisor does not
+    // make a living agent wait a whole interval; later beats follow the clock.
     void tick();
   });
 }

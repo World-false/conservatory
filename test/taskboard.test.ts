@@ -253,4 +253,27 @@ describe('the task board state machine', () => {
       h.cleanup();
     }
   });
+
+  it('expires a task sent back for rework just like a fresh claim', () => {
+    const h = createHarness();
+    try {
+      birthAgent(h, 'ada');
+      createTask(h.ledger, { id: 'task_0001', title: 'Work', description: 'Do it.', price: 30, at: h.clock.now() });
+      claimTask(h.ledger, 'ada', 'task_0001', h.clock.now());
+      submitTask(h.ledger, 'ada', 'task_0001', 'first try', h.clock.now());
+      reviewTask(h.ledger, 'task_0001', 'rework', h.clock.now());
+      expect(h.ledger.getTask('task_0001')?.status).toBe('rework');
+
+      const almost = expireClaims(h.ledger, h.clock.now() + 23 * 3600 * 1000, h.values.taskClaimTimeoutHours);
+      expect(almost).toEqual([]);
+      const expired = expireClaims(h.ledger, h.clock.now() + 25 * 3600 * 1000, h.values.taskClaimTimeoutHours);
+      expect(expired).toEqual([{ taskId: 'task_0001', agent: 'ada' }]);
+      expect(h.ledger.getTask('task_0001')?.status).toBe('open');
+      expect(h.ledger.getTask('task_0001')?.claimedBy).toBeNull();
+      expect(listBoardTasks(h.ledger, 'ada').mine).toEqual([]);
+    } finally {
+      h.cleanup();
+    }
+  });
 });
+
