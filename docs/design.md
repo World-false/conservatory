@@ -28,6 +28,8 @@ The supervisor wakes every living agent at a fixed interval; if the agent is act
 
 A wake-up starts a round. The round begins with a fresh context holding only the body manual, `MEMORY`, current satiety and balance, the task board, and unread messages. The agent acts through tools; the round ends when it stops calling tools and gives a final reply. A round whose context exceeds the cap is ended by force.
 
+A round is also ended by force when the agent asks for more tool calls than the configured per-round limit allows, or when a model request fails. The supervisor takes one immediate beat when it starts, so a living agent does not wait a whole interval for its first wake-up. If an agent's process exits unexpectedly, that is written to the black box and the next wake-up starts a new process for it; at this stage that is not death.
+
 After each round, the memory system folds that round's experience into `MEMORY` (see "Memory"). The next wake-up is again a fresh context: the model instance remembers nothing, and tomorrow's agent is the same agent because the body injects the same memory.
 
 ### The body manual
@@ -167,7 +169,7 @@ These values are earlier starting points, unvalidated against real behaviour, an
 
 Still unset: the exchange rate for real currency, how many characters each starving redaction takes, the exact death-line count, the `MEMORY` length cap, the per-round context cap, the redaction selection policy (which characters a wound takes), and which open-source project the sandbox is ported from.
 
-Step 1's temporary values: `satietyMax 100`, `memoryCapChars 8000`, `roundContextCapTokens 60000`, `taskClaimTimeoutHours 24`, and `maxSlots 1` (step 1 allows one living agent); the exchange rate is still unset, so a verified income report cannot be credited at all. Step 1's task board implements the fixed-price, first-come-first-served form only; bidding and contests are not built.
+Step 1's temporary values: `satietyMax 100`, `memoryCapChars 8000`, `roundContextCapTokens 60000`, `maxToolCallsPerRound 50`, `modelRequestTimeoutSeconds 120`, `taskClaimTimeoutHours 24`, and `maxSlots 1` (step 1 allows one living agent); the exchange rate is still unset, so a verified income report cannot be credited at all. Step 1's task board implements the fixed-price, first-come-first-served form only; bidding and contests are not built.
 
 ## Alternatives considered
 
