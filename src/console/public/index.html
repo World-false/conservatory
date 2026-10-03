@@ -1,0 +1,599 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Conservatory 操作台</title>
+    <style>
+      :root {
+        --bg: #0b0f17;
+        --panel: #101726;
+        --panel-2: #0b101a;
+        --line: #1e293b;
+        --text: #e2e8f0;
+        --muted: #94a3b8;
+        --accent: #10b981;
+        --accent-dim: #064e3b;
+        --danger: #ef4444;
+        --warn: #f59e0b;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font: 14px/1.6 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+      }
+      header {
+        position: sticky;
+        top: 0;
+        z-index: 5;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 20px;
+        background: #0e1422;
+        border-bottom: 1px solid var(--line);
+      }
+      h1 { font-size: 16px; margin: 0; letter-spacing: 0.05em; }
+      h2 { font-size: 14px; margin: 0 0 10px; color: var(--muted); font-weight: 600; }
+      main { padding: 16px 20px 60px; display: grid; gap: 16px; grid-template-columns: minmax(320px, 1fr) minmax(360px, 1.4fr); }
+      @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 14px;
+      }
+      .muted { color: var(--muted); }
+      .small { font-size: 12px; }
+      .mono { font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; }
+      .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+      .card {
+        background: var(--panel-2);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 10px 12px;
+        margin-bottom: 10px;
+      }
+      .card.busy { border-color: var(--accent); }
+      .tag {
+        display: inline-block;
+        padding: 1px 7px;
+        border-radius: 999px;
+        font-size: 11px;
+        border: 1px solid var(--line);
+        color: var(--muted);
+      }
+      .tag.ok { color: var(--accent); border-color: var(--accent-dim); }
+      .tag.bad { color: var(--danger); border-color: #7f1d1d; }
+      .tag.warn { color: var(--warn); border-color: #78350f; }
+      input, textarea, select, button {
+        background: #0c111c;
+        color: var(--text);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 6px 9px;
+        font: inherit;
+      }
+      textarea { min-height: 60px; width: 100%; resize: vertical; }
+      button { cursor: pointer; }
+      button:hover { border-color: var(--accent); }
+      button.primary { background: var(--accent-dim); border-color: var(--accent); color: #d1fae5; }
+      button.danger:hover { border-color: var(--danger); color: #fecaca; }
+      .bar { height: 7px; border-radius: 999px; background: #1f2937; overflow: hidden; margin: 6px 0; }
+      .bar > span { display: block; height: 100%; background: var(--accent); }
+      .bar.low > span { background: var(--danger); }
+      .kv { display: flex; justify-content: space-between; gap: 10px; }
+      ul { margin: 6px 0 0; padding-left: 18px; }
+      li { margin-bottom: 4px; }
+      pre {
+        background: #0c111c;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 10px;
+        max-height: 380px;
+        overflow: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+        margin: 0;
+      }
+      .notice { border-left: 3px solid var(--warn); padding: 6px 10px; background: #1c1917; border-radius: 6px; margin-bottom: 6px; }
+      .full { grid-column: 1 / -1; }
+      .empty { color: var(--muted); font-style: italic; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>CONSERVATORY · 操作台</h1>
+      <div class="row small muted">
+        <span id="configLine">读取中…</span>
+        <span>·</span>
+        <span id="pollLine">每 3 秒刷新</span>
+      </div>
+    </header>
+
+    <main>
+      <section class="panel">
+        <h2>Agent 与槽位</h2>
+        <div id="agents"></div>
+        <div class="card">
+          <div class="small muted" style="margin-bottom: 6px">空槽位：创建新的 Agent</div>
+          <div class="row">
+            <input id="newAgentName" placeholder="名字（小写字母/数字/下划线）" />
+            <button class="primary" id="createAgentBtn">创建</button>
+          </div>
+        </div>
+        <div id="notices"></div>
+      </section>
+
+      <section class="panel">
+        <h2>任务板（一口价 · 先到先得）</h2>
+        <div class="card">
+          <div class="row">
+            <input id="taskTitle" placeholder="标题" style="flex: 1 1 160px" />
+            <input id="taskPrice" placeholder="价格" type="number" min="0" style="width: 90px" />
+          </div>
+          <textarea id="taskDescription" placeholder="描述（Agent 会看到）" style="margin-top: 6px"></textarea>
+          <div class="row" style="margin-top: 6px">
+            <button class="primary" id="postTaskBtn">发布任务</button>
+          </div>
+        </div>
+        <div id="tasks"></div>
+      </section>
+
+      <section class="panel">
+        <h2>收入申报</h2>
+        <div id="income"></div>
+      </section>
+
+      <section class="panel">
+        <h2>留言</h2>
+        <div class="card">
+          <div class="row">
+            <select id="messageAgent"></select>
+            <input id="messageBody" placeholder="给 Agent 的留言（是它世界里的事件，不是命令）" style="flex: 1 1 200px" />
+            <button class="primary" id="sendMessageBtn">发送</button>
+          </div>
+        </div>
+        <div id="messages"></div>
+      </section>
+
+      <section class="panel full">
+        <h2>查看：MEMORY / 记事本 / 黑匣子</h2>
+        <div class="row">
+          <select id="viewAgent"></select>
+          <button id="viewMemoryBtn">MEMORY</button>
+          <button id="viewNotebookBtn">记事本</button>
+          <button id="viewBlackboxBtn">黑匣子（最近 3 轮）</button>
+          <span class="small muted">操作者可以看一切。</span>
+        </div>
+        <div id="notebookFiles" style="margin-top: 8px"></div>
+        <pre id="viewer" style="margin-top: 8px">选择上面的按钮开始查看。</pre>
+      </section>
+
+      <section class="panel full">
+        <h2>操作员干预记录（永久）</h2>
+        <div class="small muted" style="margin-bottom: 6px">
+          给余额或给饱食度会弹窗确认，确认后永久写入 interventions 表；干预会改变这两个数字，但不会改变饱食度的自然下降规则。
+        </div>
+        <div id="interventions"></div>
+      </section>
+    </main>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const esc = (value) =>
+        String(value === null || value === undefined ? "" : value)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+      const num = (value) => (typeof value === "number" ? value.toFixed(2) : "—");
+      const when = (value) => (value ? new Date(value).toLocaleString("zh-CN") : "—");
+
+      let state = null;
+      let viewerKind = null;
+      let viewerAgent = null;
+
+      async function api(path, options) {
+        const response = await fetch(path, options);
+        const body = await response.json().catch(() => ({ ok: false, error: "返回不是 JSON" }));
+        if (!response.ok || body.ok === false) {
+          throw new Error(body.error || "请求失败");
+        }
+        return body;
+      }
+
+      async function post(path, payload) {
+        return api(path, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      }
+
+      function alertError(error) {
+        alert(error instanceof Error ? error.message : String(error));
+      }
+
+      function agentOptions() {
+        if (!state) return "";
+        return state.agents
+          .map((agent) => `<option value="${esc(agent.name)}">${esc(agent.name)}</option>`)
+          .join("");
+      }
+
+      function syncSelect(id) {
+        const select = $(id);
+        const previous = select.value;
+        select.innerHTML = agentOptions();
+        if (previous && state.agents.some((agent) => agent.name === previous)) {
+          select.value = previous;
+        }
+      }
+
+      function renderAgents() {
+        const host = $("agents");
+        if (!state || state.agents.length === 0) {
+          host.innerHTML = '<div class="empty">还没有活着的 Agent。请在下面的空槽位里创建一个。</div>';
+          return;
+        }
+        host.innerHTML = state.agents
+          .map((agent) => {
+            const ratio = agent.satietyMax ? Math.max(0, Math.min(1, agent.satiety / agent.satietyMax)) : 0;
+            const low = ratio < 0.25;
+            return `
+              <div class="card ${agent.busy ? "busy" : ""}">
+                <div class="kv">
+                  <strong>${esc(agent.name)}</strong>
+                  <span>
+                    ${agent.busy ? '<span class="tag ok">一轮中</span>' : '<span class="tag">空闲</span>'}
+                    <span class="tag">${esc(agent.status)}</span>
+                  </span>
+                </div>
+                <div class="small muted">出生 ${when(agent.bornAt)} · 模型 ${esc(agent.model)}</div>
+                <div class="small">饱食度 ${num(agent.satiety)} / ${num(agent.satietyMax)} · 余额 ${num(agent.balance)}</div>
+                <div class="bar ${low ? "low" : ""}"><span style="width: ${(ratio * 100).toFixed(1)}%"></span></div>
+                <div class="small muted">
+                  上次唤醒 ${when(agent.lastWakeAt)} · 上次一轮 ${when(agent.lastRoundAt)}
+                  ${agent.lastRoundEndReason ? "（" + esc(agent.lastRoundEndReason) + "）" : ""}
+                </div>
+                <div class="small muted">
+                  token：agent 提示 ${agent.tokens.agent.promptTokens} / 完成 ${agent.tokens.agent.completionTokens}
+                  · memory 提示 ${agent.tokens.memory.promptTokens} / 完成 ${agent.tokens.memory.completionTokens}
+                </div>
+                ${agent.lastError ? `<div class="small" style="color: var(--danger)">最近错误：${esc(agent.lastError)}</div>` : ""}
+                <div class="row" style="margin-top: 8px">
+                  <button data-action="wake" data-agent="${esc(agent.name)}">立即唤醒</button>
+                  <button data-action="give-balance" data-agent="${esc(agent.name)}">给余额</button>
+                  <button data-action="give-satiety" data-agent="${esc(agent.name)}">给饱食度</button>
+                </div>
+              </div>`;
+          })
+          .join("");
+      }
+
+      function renderNotices() {
+        const host = $("notices");
+        if (!state || state.notices.length === 0) {
+          host.innerHTML = "";
+          return;
+        }
+        host.innerHTML = state.notices
+          .slice(-6)
+          .reverse()
+          .map(
+            (notice) =>
+              `<div class="notice small"><strong>${esc(notice.agent)}</strong> · ${when(notice.at)}<br />${esc(notice.message)}</div>`,
+          )
+          .join("");
+      }
+
+      function renderTasks() {
+        const host = $("tasks");
+        if (!state || state.tasks.length === 0) {
+          host.innerHTML = '<div class="empty">任务板是空的。</div>';
+          return;
+        }
+        host.innerHTML = state.tasks
+          .map((task) => {
+            const tag =
+              task.status === "open"
+                ? "tag"
+                : task.status === "accepted"
+                  ? "tag ok"
+                  : task.status === "rejected"
+                    ? "tag bad"
+                    : "tag warn";
+            const review =
+              task.status === "submitted"
+                ? `<div class="row" style="margin-top: 8px">
+                     <button class="primary" data-action="review" data-task="${esc(task.id)}" data-decision="accept">接受并付款</button>
+                     <button data-action="review" data-task="${esc(task.id)}" data-decision="reject">拒绝（不付款）</button>
+                     <button data-action="review" data-task="${esc(task.id)}" data-decision="rework">返工</button>
+                     <button data-action="review" data-task="${esc(task.id)}" data-decision="return">退回任务板</button>
+                   </div>`
+                : "";
+            const deliverable =
+              task.deliverable && task.status !== "open"
+                ? `<pre class="mono" style="margin-top: 6px; max-height: 160px">${esc(task.deliverable)}</pre>`
+                : "";
+            return `
+              <div class="card">
+                <div class="kv">
+                  <strong>${esc(task.title)}</strong>
+                  <span><span class="${tag}">${esc(task.status)}</span> <span class="tag">${num(task.price)}</span></span>
+                </div>
+                <div class="small muted">${esc(task.id)} · 认领：${esc(task.claimedBy || "—")}</div>
+                <div class="small">${esc(task.description)}</div>
+                ${deliverable}
+                ${review}
+              </div>`;
+          })
+          .join("");
+      }
+
+      function renderIncome() {
+        const host = $("income");
+        if (!state || state.income.length === 0) {
+          host.innerHTML = '<div class="empty">还没有收入申报。</div>';
+          return;
+        }
+        host.innerHTML = state.income
+          .map((report) => {
+            const actions =
+              report.status === "pending"
+                ? `<div class="row" style="margin-top: 8px">
+                     <button class="primary" data-action="verify" data-report="${report.id}">核验并入账</button>
+                     <button class="danger" data-action="reject-income" data-report="${report.id}">驳回</button>
+                   </div>`
+                : "";
+            return `
+              <div class="card">
+                <div class="kv">
+                  <strong>${esc(report.agent)}</strong>
+                  <span class="tag">${esc(report.status)}</span>
+                </div>
+                <div class="small">${esc(report.where)} · ${esc(report.work)}</div>
+                <div class="small muted">
+                  申报 ${num(report.amount)} ${esc(report.currency)}
+                  ${report.credited !== null ? " · 入账 " + num(report.credited) : ""}
+                  ${report.exchangeRate !== null ? " · 汇率 " + num(report.exchangeRate) : ""}
+                </div>
+                ${actions}
+              </div>`;
+          })
+          .join("");
+      }
+
+      function renderMessages() {
+        const host = $("messages");
+        if (!state || state.messages.length === 0) {
+          host.innerHTML = '<div class="empty">还没有留言。</div>';
+          return;
+        }
+        host.innerHTML = state.messages
+          .slice(0, 20)
+          .map(
+            (message) => `
+              <div class="card small">
+                <div class="muted">${esc(message.sender)} → ${esc(message.recipient)} · ${when(message.at)}</div>
+                <div>${esc(message.body)}</div>
+              </div>`,
+          )
+          .join("");
+      }
+
+      function renderInterventions() {
+        const host = $("interventions");
+        if (!state || state.interventions.length === 0) {
+          host.innerHTML = '<div class="empty">还没有干预记录。</div>';
+          return;
+        }
+        host.innerHTML = state.interventions
+          .map(
+            (row) => `
+              <div class="card small">
+                <div class="muted">${when(row.at)} · ${esc(row.agent)} · ${esc(row.kind)}</div>
+                <div>${esc(row.detail)}</div>
+              </div>`,
+          )
+          .join("");
+      }
+
+      function renderConfig() {
+        if (!state) return;
+        const c = state.config;
+        $("configLine").innerHTML =
+          `心跳 ${c.heartbeatSeconds}s · 每餐 ${c.mealPrice}（+${c.satietyPerMeal}）· 衰减 ${c.satietyDecayPerSecond}/s · ` +
+          `MEMORY 上限 ${c.memoryCapChars} 字 · 上下文上限 ${c.roundContextCapTokens} token · ` +
+          `汇率：${state.exchangeRate === null ? '<span class="tag bad">未设定</span>' : num(state.exchangeRate)}`;
+        const busiest = state.agents.filter((agent) => agent.busy).length;
+        $("pollLine").textContent = `每 3 秒刷新 · ${state.agents.length} 个 Agent · ${busiest} 个在一轮中`;
+      }
+
+      async function refresh() {
+        try {
+          state = await api("/api/state");
+          renderAgents();
+          renderNotices();
+          renderTasks();
+          renderIncome();
+          renderMessages();
+          renderInterventions();
+          renderConfig();
+          syncSelect("messageAgent");
+          syncSelect("viewAgent");
+        } catch (error) {
+          $("pollLine").textContent = "刷新失败：" + (error instanceof Error ? error.message : String(error));
+        }
+      }
+
+      async function loadViewer(kind, agent) {
+        viewerKind = kind;
+        viewerAgent = agent;
+        const host = $("viewer");
+        host.textContent = "读取中…";
+        try {
+          if (kind === "memory") {
+            const body = await api(`/api/agents/${encodeURIComponent(agent)}/memory`);
+            host.textContent = body.memory || "(MEMORY 为空)";
+            $("notebookFiles").innerHTML = "";
+          } else if (kind === "notebook") {
+            const body = await api(`/api/agents/${encodeURIComponent(agent)}/notebook`);
+            if (body.files.length === 0) {
+              $("notebookFiles").innerHTML = '<div class="empty small">记事本还是空的。</div>';
+              host.textContent = "(空)";
+            } else {
+              $("notebookFiles").innerHTML = body.files
+                .map(
+                  (file) =>
+                    `<button class="small" data-action="notebook-file" data-agent="${esc(agent)}" data-path="${esc(file.path)}">${esc(file.path)}（${file.size} 字节）</button>`,
+                )
+                .join(" ");
+              host.textContent = "点上面的文件名查看内容。";
+            }
+          } else {
+            const body = await api(`/api/agents/${encodeURIComponent(agent)}/blackbox?rounds=3`);
+            $("notebookFiles").innerHTML = "";
+            if (body.rounds.length === 0) {
+              host.textContent = "(还没有黑匣子记录)";
+            } else {
+              host.textContent = body.rounds
+                .map((round) => {
+                  const head = `===== 第 ${round.round} 轮 =====`;
+                  const lines = round.entries.map(
+                    (entry) => `${when(entry.at)} [${entry.kind}] ${JSON.stringify(entry, null, 0)}`,
+                  );
+                  return [head, ...lines].join("\n");
+                })
+                .join("\n\n");
+            }
+          }
+        } catch (error) {
+          host.textContent = "读取失败：" + (error instanceof Error ? error.message : String(error));
+        }
+      }
+
+      document.addEventListener("click", async (event) => {
+        const target = event.target.closest("button[data-action]");
+        if (!target) return;
+        const action = target.dataset.action;
+        try {
+          if (action === "wake") {
+            const body = await post("/api/wake", { agent: target.dataset.agent });
+            if (body.woken === false) alert(body.note || "该 agent 正在一轮中，已跳过");
+          } else if (action === "review") {
+            await post(`/api/tasks/${encodeURIComponent(target.dataset.task)}/review`, {
+              decision: target.dataset.decision,
+            });
+          } else if (action === "verify") {
+            const report = state.income.find((row) => String(row.id) === target.dataset.report);
+            const input = prompt(
+              `核实金额（申报 ${report ? report.amount + " " + report.currency : ""}）：`,
+              report ? String(report.amount) : "0",
+            );
+            if (input === null) return;
+            const amount = Number(input);
+            if (!Number.isFinite(amount)) {
+              alert("金额必须是数字");
+              return;
+            }
+            await post(`/api/income/${target.dataset.report}/verify`, { verifiedAmount: amount });
+          } else if (action === "reject-income") {
+            if (!confirm("确认驳回这条收入申报？驳回后不入账。")) return;
+            await post(`/api/income/${target.dataset.report}/reject`, {});
+          } else if (action === "notebook-file") {
+            const body = await api(
+              `/api/agents/${encodeURIComponent(target.dataset.agent)}/notebook/file?path=${encodeURIComponent(target.dataset.path)}`,
+            );
+            $("viewer").textContent = body.content === "" ? "(空文件)" : body.content;
+          } else if (action === "give-balance" || action === "give-satiety") {
+            const kind = action === "give-balance" ? "give_balance" : "give_satiety";
+            if (!confirm("这会被永久记录为操作员干预。确认继续？")) return;
+            const input = prompt(kind === "give_balance" ? "给多少余额？" : "给多少饱食度？", "10");
+            if (input === null) return;
+            const amount = Number(input);
+            if (!Number.isFinite(amount) || amount <= 0) {
+              alert("数量必须是大于 0 的数字");
+              return;
+            }
+            await post("/api/intervene", { agent: target.dataset.agent, kind, amount });
+          }
+          await refresh();
+        } catch (error) {
+          alertError(error);
+        }
+      });
+
+      $("createAgentBtn").addEventListener("click", async () => {
+        const name = $("newAgentName").value.trim();
+        if (!name) {
+          alert("请填写名字");
+          return;
+        }
+        try {
+          await post("/api/agents", { name });
+          $("newAgentName").value = "";
+          await refresh();
+        } catch (error) {
+          alertError(error);
+        }
+      });
+
+      $("postTaskBtn").addEventListener("click", async () => {
+        const title = $("taskTitle").value.trim();
+        const description = $("taskDescription").value;
+        const price = Number($("taskPrice").value);
+        if (!title) {
+          alert("请填写标题");
+          return;
+        }
+        if (!Number.isFinite(price)) {
+          alert("请填写价格");
+          return;
+        }
+        try {
+          await post("/api/tasks", { title, description, price });
+          $("taskTitle").value = "";
+          $("taskDescription").value = "";
+          $("taskPrice").value = "";
+          await refresh();
+        } catch (error) {
+          alertError(error);
+        }
+      });
+
+      $("sendMessageBtn").addEventListener("click", async () => {
+        const agent = $("messageAgent").value;
+        const body = $("messageBody").value;
+        if (!agent || !body.trim()) {
+          alert("请选择 Agent 并填写留言");
+          return;
+        }
+        try {
+          await post("/api/messages", { agent, body });
+          $("messageBody").value = "";
+          await refresh();
+        } catch (error) {
+          alertError(error);
+        }
+      });
+
+      $("viewMemoryBtn").addEventListener("click", () => loadViewer("memory", $("viewAgent").value));
+      $("viewNotebookBtn").addEventListener("click", () => loadViewer("notebook", $("viewAgent").value));
+      $("viewBlackboxBtn").addEventListener("click", () => loadViewer("blackbox", $("viewAgent").value));
+
+      refresh();
+      setInterval(() => {
+        void refresh();
+        if (viewerKind && viewerAgent) {
+          void loadViewer(viewerKind, viewerAgent);
+        }
+      }, 3000);
+    </script>
+  </body>
+</html>

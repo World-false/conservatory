@@ -582,21 +582,32 @@ export class Ledger {
   }
 
   /** Claim timeout: a claim left undone goes back to the board. */
-  expireClaimedTasks(now: number, timeoutMs: number): string[] {
+  expireClaimedTasks(now: number, timeoutMs: number): { taskId: string; agent: string }[] {
     return this.transaction(() => {
       const cutoff = now - timeoutMs;
       const rows = this.db
-        .prepare(`SELECT id FROM tasks WHERE status = 'claimed' AND claimed_at IS NOT NULL AND claimed_at <= ?`)
+        .prepare(
+          `SELECT id, claimed_by FROM tasks
+           WHERE status = 'claimed' AND claimed_at IS NOT NULL AND claimed_at <= ?`,
+        )
         .all(cutoff);
-      const ids = rows.map((row) => readString(row, 'id'));
+      const expired: { taskId: string; agent: string }[] = [];
       const update = this.db.prepare(
         `UPDATE tasks SET status = 'open', claimed_by = NULL, claimed_at = NULL, updated_at = ?
          WHERE id = ? AND status = 'claimed'`,
       );
-      for (const id of ids) {
-        update.run(now, id);
+      for (const row of rows) {
+        const taskId = readString(row, 'id');
+        const agent = readNullableString(row, 'claimed_by');
+        if (agent === null) {
+          continue;
+        }
+        const result = update.run(now, taskId);
+        if (changesOf(result) > 0) {
+          expired.push({ taskId, agent });
+        }
       }
-      return ids;
+      return expired;
     });
   }
 
@@ -699,6 +710,21 @@ export class Ledger {
       .prepare('SELECT * FROM messages WHERE sender = ? OR recipient = ? ORDER BY id ASC')
       .all(agent, agent)
       .map(mapMessage);
+  }
+
+  /** Everything the operator and the agents have said to each other. */
+  listMessagesForOperator(): MessageRecord[] {
+    return this.db
+      .prepare("SELECT * FROM messages WHERE sender = 'operator' OR recipient = 'operator' ORDER BY id ASC")
+      .all()
+      .map(mapMessage);
+  }
+
+  /** The operator has now seen the agents' messages to them. */
+  markOperatorMessagesRead(at: number): void {
+    this.db
+      .prepare("UPDATE messages SET read_at = ? WHERE recipient = 'operator' AND read_at IS NULL")
+      .run(at);
   }
 
   // ---------------------------------------------------------------- rounds

@@ -179,6 +179,10 @@ export function reviewTask(
 }
 
 /** Called from the heartbeat: claims past the timeout return to the board. */
-export function expireClaims(ledger: Ledger, now: number, timeoutHours: number): string[] {
+export function expireClaims(
+  ledger: Ledger,
+  now: number,
+  timeoutHours: number,
+): { taskId: string; agent: string }[] {
   return ledger.expireClaimedTasks(now, timeoutHours * 3600 * 1000);
 }
