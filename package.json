@@ -1,0 +1,21 @@
+{
+  "name": "conservatory",
+  "version": "0.1.0",
+  "private": true,
+  "description": "An agent harness that provides a virtual biological body for agents.",
+  "license": "MIT",
+  "scripts": {
+    "start": "tsx src/supervisor/main.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "openai": "^7.27.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3"
+  }
+}

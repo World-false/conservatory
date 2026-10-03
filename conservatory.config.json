@@ -1,0 +1,15 @@
+{
+  "satietyDecayPerSecond": 0.05,
+  "satietyMax": 100,
+  "initialSatiety": 100,
+  "initialBalance": 100,
+  "mealPrice": 15,
+  "satietyPerMeal": 25,
+  "heartbeatSeconds": 300,
+  "maxSlots": 1,
+  "memoryCapChars": 8000,
+  "roundContextCapTokens": 60000,
+  "taskClaimTimeoutHours": 24,
+  "exchangeRate": null,
+  "consolePort": 4317
+}
