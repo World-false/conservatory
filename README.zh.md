@@ -14,7 +14,7 @@ Conservatory 是一个维持 agent 存活、而不是响应请求的 agent harne
 
 ## 状态
 
-从零重写中，**尚无代码**。上一版直接改自另一个 agent harness，已整体放弃。
+第 1 步已实现：单个 agent 的生存闭环——心跳、饱食度、余额、买饭、一口价任务板、只有操作员核验后才入账的收入申报、记忆整理、token 计量、操作员干预，以及一个简单的网页操作台。agent 仍然不能执行命令，只能通过身体提供的固定工具行动。
 
 计划分四步建造：
 
@@ -24,6 +24,18 @@ Conservatory 是一个维持 agent 存活、而不是响应请求的 agent harne
 4. 多个 agent、互发消息与转账。
 
 技术栈：TypeScript + Node，不使用插件框架；模型通过 OpenAI 兼容接口接入。
+
+## 运行
+
+```
+cp .env.example .env      # 然后填好地址、密钥和模型名
+npm install
+npm start
+```
+
+Windows PowerShell 下用 `Copy-Item .env.example .env` 复制模板。
+
+然后打开 <http://127.0.0.1:4317>，在空槽位里创建一个 agent。操作台只监听 `127.0.0.1`，所有数值都在 `conservatory.config.json` 里。汇率初值是 `null`，未设定时已核验的收入申报会被拒绝，而不是按猜出来的汇率入账。
 
 ## 目录（计划）
 

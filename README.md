@@ -14,7 +14,7 @@ The conservatory is first a body for the AI and exists for the agents themselves
 
 ## Status
 
-Being rewritten from scratch; **there is no code yet**. The previous version was modified directly from another agent harness and has been abandoned.
+Step 1 is implemented: one agent's survival loop — heartbeat, satiety, balance, eating, the fixed-price task board, income reports credited only after the operator verifies them, memory consolidation, token metering, operator interventions, and a simple web console. The agent still has no command execution, so it can only act through its body's fixed tools.
 
 Planned in four steps:
 
@@ -24,6 +24,18 @@ Planned in four steps:
 4. Multiple agents, messaging, and transfers.
 
 Stack: TypeScript on Node, no plugin framework; models through an OpenAI-compatible interface.
+
+## Running
+
+```
+cp .env.example .env      # then fill in the endpoint, key and model names
+npm install
+npm start
+```
+
+On Windows PowerShell, copy the env template with `Copy-Item .env.example .env`.
+
+Then open <http://127.0.0.1:4317> and create an agent in the empty slot. The console only listens on `127.0.0.1`, and every number lives in `conservatory.config.json`. The exchange rate starts as `null`, and while it is `null` a verified income report is refused rather than credited at a guessed rate.
 
 ## Layout (planned)
 

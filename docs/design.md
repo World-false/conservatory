@@ -167,6 +167,8 @@ These values are earlier starting points, unvalidated against real behaviour, an
 
 Still unset: the exchange rate for real currency, how many characters each starving redaction takes, the exact death-line count, the `MEMORY` length cap, the per-round context cap, the redaction selection policy (which characters a wound takes), and which open-source project the sandbox is ported from.
 
+Step 1's temporary values: `satietyMax 100`, `memoryCapChars 8000`, `roundContextCapTokens 60000`, `taskClaimTimeoutHours 24`, and `maxSlots 1` (step 1 allows one living agent); the exchange rate is still unset, so a verified income report cannot be credited at all. Step 1's task board implements the fixed-price, first-come-first-served form only; bidding and contests are not built.
+
 ## Alternatives considered
 
 **Delete the memory instead of hiding it.** Rejected because deleted characters leave no trace, so the agent cannot see where it was hurt; a placeholder makes the wound visible and locatable, which is exactly what pain is for. The original text stays in the black box, out of the agent's reach.
