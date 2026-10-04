@@ -7,5 +7,8 @@
 # TASK BOARD
 {{task_board}}
 
-# MESSAGES FROM THE OPERATOR
+# SYSTEM REMINDERS
+{{system_reminders}}
+
+# MESSAGES
 {{messages}}

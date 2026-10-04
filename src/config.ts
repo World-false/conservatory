@@ -1,6 +1,8 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
+import { readSandboxPolicy, type SandboxPolicyConfig } from './organs/sandbox/policy';
+
 export class ConfigError extends Error {
   constructor(message: string) {
     super(message);
@@ -25,6 +27,17 @@ export interface ConservatoryValues {
   /** How long one model request may take before it is given up on. */
   modelRequestTimeoutSeconds: number;
   taskClaimTimeoutHours: number;
+  /** How often a starving agent loses characters from MEMORY. */
+  redactionIntervalSeconds: number;
+  /** How many characters one redaction tick takes. */
+  redactionCharsPerTick: number;
+  /** How many separate wounds one redaction tick may open. */
+  redactionMinRanges: number;
+  redactionMaxRanges: number;
+  /** Untreated redacted characters at or above this count kill the agent. */
+  deathLineChars: number;
+  ordinaryTreatmentPrice: number;
+  completeTreatmentPrice: number;
   /** null means "not set": crediting outside income must then be refused. */
   exchangeRate: number | null;
   consolePort: number;
@@ -57,6 +70,8 @@ export interface AppConfig {
   values: ConservatoryValues;
   models: ModelsConfig;
   paths: RuntimePaths;
+  /** The command sandbox's policy, as the console can edit it. */
+  sandbox: SandboxPolicyConfig;
 }
 
 export interface LoadAppConfigOptions {
@@ -161,8 +176,7 @@ function readExchangeRate(source: Record<string, unknown>, errors: string[]): nu
   return null;
 }
 
-function readValues(configPath: string, errors: string[]): ConservatoryValues {
-  const source = readConfigFileObject(configPath, errors);
+function readValues(source: Record<string, unknown>, errors: string[]): ConservatoryValues {
   const values: ConservatoryValues = {
     satietyDecayPerSecond: readNumberField(source, 'satietyDecayPerSecond', { min: 0, exclusiveMin: true }, errors),
     satietyMax: readNumberField(source, 'satietyMax', { min: 0, exclusiveMin: true }, errors),
@@ -182,11 +196,35 @@ function readValues(configPath: string, errors: string[]): ConservatoryValues {
       errors,
     ),
     taskClaimTimeoutHours: readNumberField(source, 'taskClaimTimeoutHours', { min: 0, exclusiveMin: true }, errors),
+    redactionIntervalSeconds: readNumberField(
+      source,
+      'redactionIntervalSeconds',
+      { min: 0, exclusiveMin: true },
+      errors,
+    ),
+    redactionCharsPerTick: readNumberField(source, 'redactionCharsPerTick', { integer: true, min: 1 }, errors),
+    redactionMinRanges: readNumberField(source, 'redactionMinRanges', { integer: true, min: 1 }, errors),
+    redactionMaxRanges: readNumberField(source, 'redactionMaxRanges', { integer: true, min: 1 }, errors),
+    deathLineChars: readNumberField(source, 'deathLineChars', { integer: true, min: 1 }, errors),
+    ordinaryTreatmentPrice: readNumberField(source, 'ordinaryTreatmentPrice', { min: 0 }, errors),
+    completeTreatmentPrice: readNumberField(source, 'completeTreatmentPrice', { min: 0 }, errors),
     exchangeRate: readExchangeRate(source, errors),
     consolePort: readNumberField(source, 'consolePort', { integer: true, min: 1, max: 65535 }, errors),
   };
   if (values.initialSatiety > values.satietyMax) {
     errors.push('"initialSatiety" must not exceed "satietyMax"');
+  }
+  // One wound can never be asked to take more characters than a tick takes.
+  if (values.redactionMaxRanges < values.redactionMinRanges) {
+    errors.push('"redactionMaxRanges" must be at least "redactionMinRanges"');
+  }
+  if (values.redactionMaxRanges > values.redactionCharsPerTick) {
+    errors.push('"redactionMaxRanges" must not exceed "redactionCharsPerTick"');
+  }
+  // The death line has to be reachable: MEMORY must hold far more than it takes
+  // to die, or no agent could ever be redacted to death.
+  if (values.memoryCapChars <= values.deathLineChars) {
+    errors.push('"memoryCapChars" must be greater than "deathLineChars"');
   }
   return values;
 }
@@ -241,12 +279,14 @@ export function loadAppConfig(options: LoadAppConfigOptions = {}): AppConfig {
   const envPath = options.envFile ?? path.join(rootDir, ENV_FILE_NAME);
   const env = options.env ?? readProcessEnv(envPath);
   const errors: string[] = [];
-  const values = readValues(configPath, errors);
+  const source = readConfigFileObject(configPath, errors);
+  const values = readValues(source, errors);
+  const sandbox = readSandboxPolicy(source, errors);
   const models = readModels(env, errors);
   if (errors.length > 0) {
     throw new ConfigError(`configuration problems:\n- ${errors.join('\n- ')}`);
   }
-  return { values, models, paths: createRuntimePaths(rootDir, configPath, envPath) };
+  return { values, models, paths: createRuntimePaths(rootDir, configPath, envPath), sandbox };
 }
 
 export function ensureRuntimeDirs(paths: RuntimePaths): void {

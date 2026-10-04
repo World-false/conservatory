@@ -1,0 +1,289 @@
+/* ==========================================================================
+   Conservatory · 控制台样稿 · 共享底座
+   --------------------------------------------------------------------------
+   两份样稿（巡视台 / 生命墙）共用这一套令牌、排版和原子控件。
+
+   设计立场：这是一个生物仪器的面板，不是一个 SaaS 后台。
+     1. 界面上出现的每一块彩色都必须是数据（活 / 饿 / 危 / 死），
+        界面本身没有装饰色。按钮用近黑，不用品牌蓝。
+     2. 数字必须是等宽 + tabular figures，而且必须比它的标签大。
+        现在控制台把所有东西都压成 12.5px，这是它读起来最累的原因。
+     3. 圆角克制在 2–6px。仪器的边缘是直的。没有毛玻璃、没有弥散投影。
+        深度只来自细线、内凹和留白。
+     4. 中文没有 web 字体，直接用系统字；数字用本机等宽。
+        离线也完整，不依赖任何 CDN。
+   ========================================================================== */
+
+/* ============================================================ 浅色（样稿 A） */
+:root {
+  color-scheme: light;
+
+  --bg:        #F0F1F3;
+  --surface:   #FFFFFF;
+  --surface-2: #FAFAFB;
+  --surface-3: #F4F5F7;
+  --line:      #DCDFE4;
+  --line-soft: #EBEDF0;
+
+  --ink:   #0B0D12;
+  --ink-2: #454B57;
+  --ink-3: #7C8492;
+  --ink-4: #A8AFBA;
+
+  /* 生命语义：界面上唯一的彩色来源 */
+  --alive:    #0C8A5E;
+  --alive-bg: #E8F5EF;
+  --hungry:    #A2680A;
+  --hungry-bg: #FBF1DF;
+  --critical:    #C0262C;
+  --critical-bg: #FBEAEA;
+  --frozen:    #566072;
+  --frozen-bg: #EDEFF2;
+
+  /* 操作者自己的动作：近黑，不是彩色 */
+  --operator:      #14161B;
+  --operator-ink:  #FFFFFF;
+  --focus:         #1B4DFF;
+
+  --shadow-panel: 0 1px 0 rgba(11, 13, 18, 0.04), 0 12px 32px -12px rgba(11, 13, 18, 0.18);
+
+  --r-1: 2px;
+  --r-2: 4px;
+  --r-3: 6px;
+
+  --sans: ui-sans-serif, system-ui, "Segoe UI Variable Text", "Segoe UI",
+    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --mono: "JetBrains Mono", "Cascadia Mono", "Cascadia Code", ui-monospace,
+    Consolas, "Courier New", monospace;
+}
+
+/* ============================================================ 深色（样稿 B） */
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg:        #08090C;
+  --surface:   #0E1015;
+  --surface-2: #141720;
+  --surface-3: #1A1E28;
+  --line:      #232733;
+  --line-soft: #1A1E27;
+
+  --ink:   #ECEEF3;
+  --ink-2: #A2A9B8;
+  --ink-3: #6B7385;
+  --ink-4: #4A5162;
+
+  --alive:    #34D399;
+  --alive-bg: rgba(52, 211, 153, 0.10);
+  --hungry:    #E4A33C;
+  --hungry-bg: rgba(228, 163, 60, 0.12);
+  --critical:    #FF5A5F;
+  --critical-bg: rgba(255, 90, 95, 0.12);
+  --frozen:    #7C8798;
+  --frozen-bg: rgba(124, 135, 152, 0.12);
+
+  --operator:     #E8EAEF;
+  --operator-ink: #0B0D12;
+  --focus:        #6E8CFF;
+
+  --shadow-panel: 0 1px 0 rgba(0, 0, 0, 0.5), 0 16px 40px -16px rgba(0, 0, 0, 0.8);
+}
+
+/* ================================================================== 基础 */
+*,
+*::before,
+*::after { box-sizing: border-box; }
+
+[hidden] { display: none !important; }
+
+html, body { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 13px/1.5 var(--sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
+}
+
+h1, h2, h3, p, figure { margin: 0; }
+button, input, textarea, select { font: inherit; color: inherit; }
+
+::selection { background: color-mix(in srgb, var(--focus) 22%, transparent); }
+
+:where(button, input, textarea, select, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+* { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 99px;
+}
+
+/* ================================================================== 排版 */
+/* 数字：永远是等宽的，永远比标签大。 */
+.num {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "zero" 1;
+  letter-spacing: -0.01em;
+}
+
+/* 微标签：中文不加字距，小写不转大写。 */
+.label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-3);
+  letter-spacing: 0.01em;
+}
+
+.muted { color: var(--ink-3); }
+.dim   { color: var(--ink-4); }
+.small { font-size: 11.5px; }
+.tiny  { font-size: 10.5px; }
+
+/* 数据值：视觉主角。 */
+.value {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+/* ================================================================== 控件 */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s ease, border-color 0.12s ease, transform 0.06s ease;
+}
+.btn:hover { background: var(--surface-3); border-color: var(--ink-4); }
+.btn:active { transform: translateY(1px); }
+.btn[disabled] { opacity: 0.4; cursor: not-allowed; }
+
+.btn.primary {
+  background: var(--operator);
+  border-color: var(--operator);
+  color: var(--operator-ink);
+}
+.btn.primary:hover { background: color-mix(in srgb, var(--operator) 86%, var(--bg)); }
+
+.btn.danger {
+  background: transparent;
+  border-color: color-mix(in srgb, var(--critical) 42%, var(--line));
+  color: var(--critical);
+}
+.btn.danger:hover {
+  background: var(--critical-bg);
+  border-color: var(--critical);
+}
+
+.btn.tiny { height: 24px; padding: 0 8px; font-size: 11.5px; }
+.btn.ghost { background: transparent; border-color: transparent; color: var(--ink-2); }
+.btn.ghost:hover { background: var(--surface-3); border-color: transparent; }
+
+/* 状态点：唯一允许的动画。心跳，不是装饰。 */
+.pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: 99px;
+  background: currentColor;
+  flex: none;
+}
+.pulse.live { animation: beat 3.6s ease-in-out infinite; }
+@keyframes beat {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.35; transform: scale(0.72); }
+}
+
+/* 状态标签 */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 19px;
+  padding: 0 6px;
+  border-radius: var(--r-1);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border: 1px solid currentColor;
+  background: transparent;
+  white-space: nowrap;
+}
+.tag.alive    { color: var(--alive);    background: var(--alive-bg);    border-color: color-mix(in srgb, var(--alive) 28%, transparent); }
+.tag.hungry   { color: var(--hungry);   background: var(--hungry-bg);   border-color: color-mix(in srgb, var(--hungry) 28%, transparent); }
+.tag.critical { color: var(--critical); background: var(--critical-bg); border-color: color-mix(in srgb, var(--critical) 32%, transparent); }
+.tag.frozen   { color: var(--frozen);   background: var(--frozen-bg);   border-color: color-mix(in srgb, var(--frozen) 28%, transparent); }
+
+/* ============================================================== 仪表条 */
+/* 细槽。左满右空，右端是"归零"。 */
+.meter {
+  position: relative;
+  height: 6px;
+  border-radius: var(--r-1);
+  background: var(--surface-3);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+  overflow: hidden;
+}
+.meter > i {
+  display: block;
+  height: 100%;
+  background: currentColor;
+  transition: width 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.meter.thick { height: 9px; }
+
+/* 内凹的读数槽（不是卡片）。 */
+.well {
+  background: var(--surface-2);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-2);
+}
+
+/* 分节标题：细线 + 小字，不用卡片包裹。 */
+.section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 0 0 8px;
+  border-bottom: 1px solid var(--line);
+}
+.section-head h2 {
+  font-size: 12.5px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+.section-head .count {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+/* ============================================================== 无障碍 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

@@ -11,6 +11,7 @@ import {
   writeMemoryAtomic,
   type MemoryDeps,
 } from '../src/organs/memory';
+import { PLACEHOLDER } from '../src/organs/redaction';
 import { birthAgent, createHarness, memoryResponse, ScriptedModelClient, textResponse, type Harness } from './helpers';
 
 function transcriptFor(agent: string, at: number): RoundTranscript {
@@ -215,6 +216,132 @@ describe('folding a round into MEMORY', () => {
       const system = request.messages.find((message) => message.role === 'system');
       expect(system?.content).toContain('first person');
       expect(system?.content).toContain('Do not invent a persona');
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  it('puts a frozen sentence back when the model filled the gap in', async () => {
+    const h = createHarness();
+    try {
+      birthAgent(h, 'ada');
+      const original = 'The vault code is 4471 and it matters.';
+      const sentenceId = h.ledger.insertFrozenSentence('ada', original, h.clock.now());
+      h.ledger.insertWound({
+        agent: 'ada',
+        sentenceId,
+        offset: 18,
+        length: 4,
+        originalText: '4471',
+        starvationSince: 1,
+        tickIndex: 1,
+        createdAt: h.clock.now(),
+      });
+      const frozen = `The vault code is ${PLACEHOLDER}${PLACEHOLDER}${PLACEHOLDER}${PLACEHOLDER} and it matters.`;
+      writeMemoryFileHelper(h, `I remember this.\n${frozen}`);
+
+      // The model smooths the gap over instead of leaving it empty.
+      const smoothed = `I remember this.\nThe vault code is 9999 and it matters.`;
+      const { deps } = depsFor(h, [smoothed], 4000);
+      const outcome = await consolidateMemory(deps, transcriptFor('ada', h.clock.now()));
+      expect(outcome.status).toBe('updated');
+
+      const written = readFileSync(agentMemoryPath(h.paths, 'ada'), 'utf8');
+      expect(written).toContain(frozen);
+      expect(written).not.toContain('9999');
+
+      const entries = h.blackbox.readRecentRounds('ada', 5).flatMap((round) => round.entries);
+      const repair = entries.find((entry) => entry.kind === 'frozen_restored');
+      expect(repair).toBeDefined();
+      expect(repair?.['replaced']).toEqual([sentenceId]);
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  it('deletes a placeholder the model invented where no wound exists', async () => {
+    const h = createHarness();
+    try {
+      birthAgent(h, 'ada');
+      writeMemoryFileHelper(h, 'I have been here before.');
+      const { deps } = depsFor(h, [`I have been here before.\nI invented a scar: ${PLACEHOLDER}${PLACEHOLDER}.`], 4000);
+      const outcome = await consolidateMemory(deps, transcriptFor('ada', h.clock.now()));
+      expect(outcome.status).toBe('updated');
+      expect(readMemoryFile(h.paths, 'ada')).not.toContain(PLACEHOLDER);
+      expect(readMemoryFile(h.paths, 'ada')).toContain('I invented a scar: .');
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  it('never asks the model to preserve a placeholder', async () => {
+    const h = createHarness();
+    try {
+      birthAgent(h, 'ada');
+      const sentenceId = h.ledger.insertFrozenSentence('ada', 'A lost sentence here.', h.clock.now());
+      h.ledger.insertWound({
+        agent: 'ada',
+        sentenceId,
+        offset: 2,
+        length: 4,
+        originalText: 'lost',
+        starvationSince: 1,
+        tickIndex: 1,
+        createdAt: h.clock.now(),
+      });
+      writeMemoryFileHelper(h, `A ${PLACEHOLDER.repeat(4)} sentence here.`);
+      const { deps } = depsFor(h, ['Something new happened.'], 4000);
+      await consolidateMemory(deps, transcriptFor('ada', h.clock.now()));
+
+      const model = deps.model as ScriptedModelClient;
+      const system = model.requests[0].messages.find((message) => message.role === 'system')?.content ?? '';
+      // The harness restores frozen sentences from the ledger, so the system
+      // prompt says nothing about placeholders, scars, or keeping any sentence
+      // intact. The current MEMORY is shown as it is, gaps included, because
+      // that is what the agent's own record looks like.
+      expect(system).not.toContain(PLACEHOLDER);
+      expect(system.toLowerCase()).not.toContain('scar');
+      expect(system.toLowerCase()).not.toContain('redact');
+      expect(system.toLowerCase()).not.toContain('placeholder');
+      expect(system.toLowerCase()).not.toContain('frozen');
+      expect(system.toLowerCase()).not.toContain('keep it exactly');
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  it('measures the restored text against the cap, not the model answer', async () => {
+    const h = createHarness();
+    try {
+      birthAgent(h, 'ada');
+      const original = 'x'.repeat(30);
+      const sentenceId = h.ledger.insertFrozenSentence('ada', original, h.clock.now());
+      h.ledger.insertWound({
+        agent: 'ada',
+        sentenceId,
+        offset: 0,
+        length: 30,
+        originalText: original,
+        starvationSince: 1,
+        tickIndex: 1,
+        createdAt: h.clock.now(),
+      });
+      const frozen = PLACEHOLDER.repeat(30);
+      writeMemoryFileHelper(h, frozen);
+      // A short answer that would fit, but the restored sentence pushes it over.
+      const cap = 60;
+      const { deps } = depsFor(h, ['Short answer.', 'Fits now.'], cap);
+      const outcome = await consolidateMemory(deps, transcriptFor('ada', h.clock.now()));
+      // Either the retry is accepted or the old MEMORY is kept; what must not
+      // happen is a written MEMORY over the cap.
+      const written = readMemoryFile(h.paths, 'ada');
+      if (outcome.status === 'updated') {
+        expect(written.length).toBeLessThanOrEqual(cap);
+        expect(written).toContain(frozen);
+      } else {
+        expect(outcome.status).toBe('rejected');
+        expect(written).toContain(frozen);
+      }
     } finally {
       h.cleanup();
     }

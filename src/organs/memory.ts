@@ -4,6 +4,7 @@ import { agentHomeDir, agentMemoryPath, type RuntimePaths } from '../config';
 import type { ModelClient } from '../model/client';
 import type { Blackbox } from './blackbox';
 import type { Ledger } from './ledger';
+import { frozenRefsFor, restoreFrozenSentences } from './redaction';
 
 export type MemoryOutcome =
   | { status: 'updated'; memory: string }
@@ -202,7 +203,27 @@ export async function consolidateMemory(
     });
 
     const raw = response.message.content ?? '';
-    const candidate = enforceHeader(raw, agent, record.bornAt);
+    let candidate = enforceHeader(raw, agent, record.bornAt);
+    // The model is never told about placeholders. Whatever it did to a frozen
+    // sentence, the ledger says what that sentence really is, so the harness
+    // puts it back before the text is measured or written. This runs even with
+    // no frozen sentence at all, because the model may also invent a wound.
+    const restored = restoreFrozenSentences(candidate, frozenRefsFor(deps.ledger, agent, oldMemory));
+    if (
+      restored.replaced.length > 0 ||
+      restored.inserted.length > 0 ||
+      restored.strayRemoved > 0 ||
+      restored.duplicatesRemoved > 0
+    ) {
+      candidate = restored.text;
+      deps.blackbox.append(agent, 'frozen_restored', deps.now(), transcript.roundId, {
+        attempt,
+        replaced: restored.replaced,
+        inserted: restored.inserted,
+        strayRemoved: restored.strayRemoved,
+        duplicatesRemoved: restored.duplicatesRemoved,
+      });
+    }
     deps.blackbox.append(agent, 'memory_response', deps.now(), transcript.roundId, {
       attempt,
       text: raw,

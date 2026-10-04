@@ -10,12 +10,6 @@ import { newbornMemory, writeMemoryAtomic } from './memory';
 
 export const AGENT_NAME_PATTERN = /^[a-z0-9_]+$/;
 
-/**
- * Step 1 is a single living agent. The config still carries the real slot
- * count for later steps, and this constant is the step-1 ceiling.
- */
-export const STEP_ONE_MAX_LIVING_AGENTS = 1;
-
 export type PopulationErrorCode = 'invalid_name' | 'name_taken' | 'no_free_slot' | 'home_exists';
 
 export type CreateAgentResult =
@@ -31,8 +25,19 @@ export interface CreateAgentInput {
   paths: RuntimePaths;
 }
 
+/** The living-agent ceiling is the configured slot count; step 4 raises it. */
 export function effectiveMaxSlots(values: ConservatoryValues): number {
-  return Math.min(values.maxSlots, STEP_ONE_MAX_LIVING_AGENTS);
+  return values.maxSlots;
+}
+
+/**
+ * Lists every living agent other than the one asking, so an agent can see who
+ * else is in the conservatory without seeing anyone's files.
+ */
+export function listLivingOtherAgents(ledger: Ledger, currentAgent?: string): AgentRecord[] {
+  return ledger
+    .listAgents()
+    .filter((agent) => agent.status === 'alive' && agent.name !== currentAgent);
 }
 
 export interface Slot {

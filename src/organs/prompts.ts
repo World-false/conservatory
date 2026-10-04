@@ -23,6 +23,7 @@ export const MEMORY_SYSTEM_FILE = 'memory_system.md';
 export const MEMORY_PLACEHOLDER = '{{memory}}';
 export const BODY_STATE_PLACEHOLDER = '{{body_state}}';
 export const TASK_BOARD_PLACEHOLDER = '{{task_board}}';
+export const SYSTEM_REMINDERS_PLACEHOLDER = '{{system_reminders}}';
 export const MESSAGES_PLACEHOLDER = '{{messages}}';
 
 /**
@@ -40,7 +41,10 @@ export const DEFAULT_USER_CONTEXT_TEMPLATE = [
   '# TASK BOARD',
   TASK_BOARD_PLACEHOLDER,
   '',
-  '# MESSAGES FROM THE OPERATOR',
+  '# SYSTEM REMINDERS',
+  SYSTEM_REMINDERS_PLACEHOLDER,
+  '',
+  '# MESSAGES',
   MESSAGES_PLACEHOLDER,
 ].join('\n');
 
@@ -83,6 +87,12 @@ export interface UserContextBlocks {
   memory: string;
   bodyState: string;
   taskBoard: string;
+  /**
+   * What the harness did to the agent's body on its own: transfers received,
+   * and later other events. Separate from `messages`, which is addressed to the
+   * agent by someone.
+   */
+  systemReminders: string;
   messages: string;
 }
 
@@ -168,7 +178,7 @@ function readPromptFile(dir: string, spec: PromptSpec, fallback: string): Loaded
 }
 
 /**
- * Fills the four blocks in one pass, so a value that happens to contain a
+ * Fills the five blocks in one pass, so a value that happens to contain a
  * placeholder is never substituted again. Blocks the template does not mention
  * are simply not injected, and unknown placeholders stay as written.
  */
@@ -177,9 +187,10 @@ export function renderUserContext(template: string, blocks: UserContextBlocks): 
     memory: blocks.memory,
     body_state: blocks.bodyState,
     task_board: blocks.taskBoard,
+    system_reminders: blocks.systemReminders,
     messages: blocks.messages,
   };
-  const pattern = /\{\{(memory|body_state|task_board|messages)\}\}/g;
+  const pattern = /\{\{(memory|body_state|task_board|system_reminders|messages)\}\}/g;
   return template.replace(pattern, (match: string, key: string): string => values[key] ?? match);
 }
 

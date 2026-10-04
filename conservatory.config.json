@@ -6,12 +6,27 @@
   "mealPrice": 15,
   "satietyPerMeal": 25,
   "heartbeatSeconds": 300,
-  "maxSlots": 1,
+  "maxSlots": 4,
   "memoryCapChars": 8000,
   "roundContextCapTokens": 60000,
   "maxToolCallsPerRound": 50,
   "modelRequestTimeoutSeconds": 120,
   "taskClaimTimeoutHours": 24,
+  "redactionIntervalSeconds": 60,
+  "redactionCharsPerTick": 20,
+  "redactionMinRanges": 1,
+  "redactionMaxRanges": 3,
+  "deathLineChars": 2000,
+  "ordinaryTreatmentPrice": 25,
+  "completeTreatmentPrice": 80,
   "exchangeRate": null,
-  "consolePort": 4317
+  "consolePort": 4317,
+  "sandbox": {
+    "readMode": "blacklist",
+    "readBlacklist": [],
+    "readWhitelist": [],
+    "writableDirs": [],
+    "commandTimeoutSeconds": 60,
+    "maxOutputChars": 20000
+  }
 }

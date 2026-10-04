@@ -1,15 +1,27 @@
 import { readFileSync } from 'node:fs';
 import http from 'node:http';
 import type { ConservatoryValues, RuntimePaths } from '../config';
+import { parseDeathCertificate } from '../organs/death';
 import { verifyIncome, rejectIncome, type IncomeResult } from '../organs/income';
-import type { IncomeReportRecord, InterventionKind, Ledger, PauseState, TaskRecord } from '../organs/ledger';
+import type {
+  IncomeReportRecord,
+  InterventionKind,
+  Ledger,
+  PauseState,
+  TaskRecord,
+  TreatmentRecord,
+  TreatmentTier,
+  WoundRecord,
+} from '../organs/ledger';
 import { readSatiety } from '../organs/metabolism';
 import { readMemoryFile } from '../organs/memory';
 import { NotebookError, listNotebook, readNotebookFile } from '../organs/notebook';
 import type { PromptLibrary } from '../organs/prompts';
+import { renderSentence } from '../organs/redaction';
 import { createTask, reviewTask, type ReviewDecision } from '../organs/taskboard';
 import type { Blackbox } from '../organs/blackbox';
 import type { RoundRegistry } from '../organs/population';
+import type { SandboxPolicyStore, SandboxPolicyView } from '../organs/sandbox/policy';
 
 export interface RuntimeInfo {
   busy: boolean;
@@ -33,6 +45,11 @@ export interface ConsoleDeps {
   registry: RoundRegistry;
   /** The live prompt templates: the console reports them and switches their mode. */
   prompts: PromptLibrary;
+  /**
+   * The OS command sandbox's read/write policy. The store owns validation and
+   * persistence; the console only carries the operator's edits to it and back.
+   */
+  sandboxPolicy: SandboxPolicyStore;
   indexHtmlPath: string;
   now(): number;
   getRuntime(name: string): RuntimeInfo;
@@ -52,6 +69,10 @@ export interface ConsoleDeps {
     kind: InterventionKind,
     amount: number,
   ): Promise<{ ok: true; balance: number; satiety: number } | { ok: false; error: string }>;
+  /** The operator treats a wound for the agent; the price is not charged to it. */
+  treatWound(agent: string, woundId: number, tier: TreatmentTier): { ok: true } | { ok: false; error: string };
+  /** The operator's forced termination. There is no way back from it. */
+  terminateAgent(agent: string, confirmName: string): { ok: true } | { ok: false; error: string };
   getNotices(): ConsoleNotice[];
 }
 
@@ -62,7 +83,7 @@ const MESSAGES: Record<string, string> = {
   agent_not_found: '没有这个 agent',
   invalid_name: '名字只能包含小写字母、数字和下划线',
   name_taken: '这个名字已经被占用',
-  no_free_slot: '没有空槽位（第 1 步只允许 1 个活着的 agent）',
+  no_free_slot: '没有空槽位',
   home_exists: 'AGENTS 下已存在同名目录',
   invalid_title: '标题不能为空',
   invalid_price: '价格必须是不小于 0 的数字',
@@ -85,9 +106,23 @@ const MESSAGES: Record<string, string> = {
   not_a_file: '不是记事本文件',
   not_found: '记事本里没有这个文件',
   agent_busy: '该 agent 正在一轮中，本次唤醒已跳过',
+  agent_busy_try_later: '该 agent 正在一轮中，请稍后再试',
+  agent_dead: '这个 agent 已经死亡，任何操作都无法撤销这件事',
+  wound_not_found: '没有这个伤口',
+  wound_not_treatable: '这个伤口不能用这一档治疗（普通治疗只能治未治疗伤口，完全治疗可以治疤痕）',
+  insufficient_balance: '该 agent 的余额不足以支付这档治疗',
+  confirm_name_mismatch: '确认名字与 agent 名不一致，已取消',
+  invalid_tier: 'tier 必须是 ordinary 或 complete',
+  invalid_wound_id: '伤口编号不合法',
   invalid_amount_intervention: '干预数量必须是不小于 0 的数字',
   invalid_paused: 'paused 必须是 true 或 false',
   invalid_prompt_mode: '提示词加载模式必须是 hot 或 cached',
+  invalid_read_mode: '沙箱读取模式必须是 blacklist 或 whitelist',
+  invalid_path_list: '路径列表必须是不为空字符串的数组',
+  invalid_command_timeout: '命令超时必须是大于 0 的数字（秒）',
+  invalid_max_output: '输出上限必须是大于 0 的整数（字符）',
+  empty_sandbox_patch: '没有需要更新的沙箱字段',
+  sandbox_config_write_failed: '沙箱策略未能写回配置文件',
 };
 
 function messageFor(code: string): string {
@@ -130,6 +165,30 @@ function incomeView(report: IncomeReportRecord): Record<string, unknown> {
 
 function incomeError(result: IncomeResult): string {
   return result.ok ? '' : messageFor(result.code);
+}
+
+/**
+ * The sandbox policy as the console hands it to the page. The built-in entries
+ * travel as `locked`, because the page must show them and refuse to delete
+ * them; the store's own field names for them are never sent on.
+ */
+function sandboxConfigView(view: SandboxPolicyView): Record<string, unknown> {
+  return {
+    ok: true,
+    config: {
+      readMode: view.readMode,
+      readBlacklist: view.readBlacklist,
+      readWhitelist: view.readWhitelist,
+      writableDirs: view.writableDirs,
+      commandTimeoutSeconds: view.commandTimeoutSeconds,
+      maxOutputChars: view.maxOutputChars,
+    },
+    locked: {
+      readBlacklist: view.lockedReadBlacklist,
+      writableDirs: view.lockedWritableDirs,
+    },
+    configPath: view.configPath,
+  };
 }
 
 export function createConsoleServer(deps: ConsoleDeps): http.Server {
@@ -211,6 +270,32 @@ function readNumber(body: Record<string, unknown>, key: string): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+function woundView(ledger: Ledger, agent: string, wound: WoundRecord): Record<string, unknown> {
+  const sentence = ledger.getFrozenSentence(wound.sentenceId);
+  const siblings = ledger.listWounds(agent).filter((row) => row.sentenceId === wound.sentenceId);
+  return {
+    id: wound.id,
+    status: wound.status,
+    length: wound.length,
+    createdAt: wound.createdAt,
+    treatedAt: wound.treatedAt,
+    // The operator may read the original text; the agent never can.
+    originalText: wound.originalText,
+    sentence: sentence === null ? '' : renderSentence(sentence.original, siblings),
+  };
+}
+
+function treatmentView(record: TreatmentRecord): Record<string, unknown> {
+  return {
+    id: record.id,
+    woundId: record.woundId,
+    tier: record.tier,
+    price: record.price,
+    paidBy: record.paidBy,
+    at: record.at,
+  };
+}
+
 function buildState(deps: ConsoleDeps): Record<string, unknown> {
   const { ledger, values } = deps;
   const now = deps.now();
@@ -218,6 +303,8 @@ function buildState(deps: ConsoleDeps): Record<string, unknown> {
   const agents = ledger.listAgents().map((agent) => {
     const runtime = deps.getRuntime(agent.name);
     const anchor = ledger.getSatietyAnchor(agent.name);
+    const injuries = ledger.listWounds(agent.name);
+    const certificate = ledger.getDeathCertificate(agent.name);
     return {
       name: agent.name,
       bornAt: agent.bornAt,
@@ -231,6 +318,19 @@ function buildState(deps: ConsoleDeps): Record<string, unknown> {
       lastRoundAt: runtime.lastRoundAt,
       lastRoundEndReason: runtime.lastRoundEndReason,
       lastError: runtime.lastError,
+      untreatedRedactedChars: ledger.untreatedRedactedChars(agent.name),
+      lifetimeRedactedChars: ledger.lifetimeRedactedChars(agent.name),
+      deathLineChars: values.deathLineChars,
+      wounds: injuries.map((wound) => woundView(ledger, agent.name, wound)),
+      treatments: ledger.listTreatments(agent.name).map(treatmentView),
+      death: certificate === null
+        ? null
+        : {
+            diedAt: certificate.diedAt,
+            cause: certificate.cause,
+            body: certificate.body,
+            facts: parseDeathCertificate(certificate.body),
+          },
       tokens: {
         agent: ledger.sumUsage(agent.name, 'agent'),
         memory: ledger.sumUsage(agent.name, 'memory'),
@@ -253,6 +353,11 @@ function buildState(deps: ConsoleDeps): Record<string, unknown> {
       roundContextCapTokens: values.roundContextCapTokens,
       taskClaimTimeoutHours: values.taskClaimTimeoutHours,
       maxSlots: values.maxSlots,
+      redactionIntervalSeconds: values.redactionIntervalSeconds,
+      redactionCharsPerTick: values.redactionCharsPerTick,
+      deathLineChars: values.deathLineChars,
+      ordinaryTreatmentPrice: values.ordinaryTreatmentPrice,
+      completeTreatmentPrice: values.completeTreatmentPrice,
     },
     agents,
     busy: deps.registry.busyAgents(),
@@ -331,12 +436,91 @@ async function route(
   if (segments.length >= 4 && segments[1] === 'agents') {
     const agentName = decodeURIComponent(segments[2]);
     const resource = segments[3];
-    if (deps.ledger.getAgent(agentName) === null) {
+    const record = deps.ledger.getAgent(agentName);
+    if (record === null) {
       sendJson(response, 404, { ok: false, error: messageFor('agent_not_found') });
       return;
     }
+    const dead = record.status !== 'alive';
+
+    // POST /api/agents/:name/wounds/:id/treat
+    if (resource === 'wounds' && segments.length === 6 && segments[5] === 'treat' && method === 'POST') {
+      if (dead) {
+        sendJson(response, 400, { ok: false, error: messageFor('agent_dead') });
+        return;
+      }
+      // A round may end and rewrite MEMORY; a treatment must not race it.
+      if (deps.registry.isBusy(agentName)) {
+        sendJson(response, 400, { ok: false, error: messageFor('agent_busy_try_later') });
+        return;
+      }
+      const woundId = Number.parseInt(decodeURIComponent(segments[4]), 10);
+      const body = await readJsonBody(request);
+      const tier = readString(body, 'tier');
+      if (!Number.isInteger(woundId)) {
+        sendJson(response, 400, { ok: false, error: messageFor('invalid_wound_id') });
+        return;
+      }
+      if (tier !== 'ordinary' && tier !== 'complete') {
+        sendJson(response, 400, { ok: false, error: messageFor('invalid_tier') });
+        return;
+      }
+      const result = deps.treatWound(agentName, woundId, tier);
+      if (!result.ok) {
+        sendJson(response, 400, { ok: false, error: messageFor(result.error) });
+        return;
+      }
+      sendJson(response, 200, { ok: true });
+      return;
+    }
+
+    // POST /api/agents/:name/terminate
+    if (resource === 'terminate' && segments.length === 4 && method === 'POST') {
+      if (dead) {
+        sendJson(response, 400, { ok: false, error: messageFor('agent_dead') });
+        return;
+      }
+      const body = await readJsonBody(request);
+      const confirmName = readString(body, 'confirmName');
+      if (confirmName === null || confirmName.trim() === '') {
+        sendJson(response, 400, { ok: false, error: messageFor('confirm_name_mismatch') });
+        return;
+      }
+      const result = deps.terminateAgent(agentName, confirmName.trim());
+      if (!result.ok) {
+        sendJson(response, 400, { ok: false, error: messageFor(result.error) });
+        return;
+      }
+      sendJson(response, 200, { ok: true });
+      return;
+    }
+
+    if (resource === 'death-certificate' && method === 'GET') {
+      const certificate = deps.ledger.getDeathCertificate(agentName);
+      if (certificate === null) {
+        sendJson(response, 404, { ok: false, error: '这个 agent 还没有死亡证明' });
+        return;
+      }
+      sendJson(response, 200, {
+        ok: true,
+        certificate: {
+          agent: certificate.agent,
+          diedAt: certificate.diedAt,
+          cause: certificate.cause,
+          body: certificate.body,
+          facts: parseDeathCertificate(certificate.body),
+        },
+      });
+      return;
+    }
+
     if (resource === 'memory' && method === 'GET') {
       sendJson(response, 200, { ok: true, memory: readMemoryFile(deps.paths, agentName) });
+      return;
+    }
+    if (resource === 'wounds' && segments.length === 4 && method === 'GET') {
+      const wounds = deps.ledger.listWounds(agentName).map((wound) => woundView(deps.ledger, agentName, wound));
+      sendJson(response, 200, { ok: true, wounds });
       return;
     }
     if (resource === 'notebook' && segments.length === 4 && method === 'GET') {
@@ -513,6 +697,26 @@ async function route(
     return;
   }
 
+  // GET /api/sandbox/config, POST /api/sandbox/config
+  if (segments.length === 3 && segments[1] === 'sandbox' && segments[2] === 'config') {
+    if (method === 'GET') {
+      sendJson(response, 200, sandboxConfigView(deps.sandboxPolicy.view()));
+      return;
+    }
+    if (method === 'POST') {
+      // The store owns validation and persistence; the console reads the JSON
+      // body and hands it over whole, then reports what came back.
+      const body = await readJsonBody(request);
+      const result = deps.sandboxPolicy.update(body);
+      if (!result.ok) {
+        sendJson(response, 400, { ok: false, error: messageFor(result.error) });
+        return;
+      }
+      sendJson(response, 200, sandboxConfigView(result.view));
+      return;
+    }
+  }
+
   // POST /api/settings/pause
   if (segments.length === 3 && segments[1] === 'settings' && segments[2] === 'pause' && method === 'POST') {
     const body = await readJsonBody(request);
@@ -539,6 +743,11 @@ async function route(
       sendJson(response, 400, { ok: false, error: '请选择 agent' });
       return;
     }
+    const target = deps.ledger.getAgent(agent);
+    if (target !== null && target.status !== 'alive') {
+      sendJson(response, 400, { ok: false, error: messageFor('agent_dead') });
+      return;
+    }
     const result = await deps.wakeAgent(agent);
     if (!result.ok) {
       sendJson(response, 404, { ok: false, error: messageFor(result.error) });
@@ -560,6 +769,11 @@ async function route(
     const amount = readNumber(body, 'amount');
     if (agent === null || (kind !== 'give_balance' && kind !== 'give_satiety')) {
       sendJson(response, 400, { ok: false, error: '请选择 agent 与干预类型' });
+      return;
+    }
+    const target = deps.ledger.getAgent(agent);
+    if (target !== null && target.status !== 'alive') {
+      sendJson(response, 400, { ok: false, error: messageFor('agent_dead') });
       return;
     }
     if (amount === null || amount <= 0) {

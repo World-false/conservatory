@@ -28,6 +28,8 @@ export type JsonSchemaPropertyType = 'string' | 'number' | 'integer' | 'boolean'
 export interface JsonSchemaProperty {
   type: JsonSchemaPropertyType;
   description: string;
+  /** The closed set of values the model may choose from, when there is one. */
+  enum?: readonly string[];
 }
 
 export interface JsonSchemaObject {

@@ -20,6 +20,7 @@ import {
   memoryResponse,
   ScriptedModelClient,
   testPrompts,
+  testSandboxPolicy,
   textResponse,
   writePrompts,
   type Harness,
@@ -40,6 +41,7 @@ function coordinatorFor(
     now: h.clock.now,
     memory: new ScriptedModelClient(memoryResponses),
     prompts: testPrompts(h),
+    sandbox: testSandboxPolicy(h),
     onPromptWarnings,
     onMemoryError: () => undefined,
   });
@@ -166,7 +168,7 @@ describe('assembling the user context', () => {
       const agent = birthAgent(h, 'ada');
       writePrompts(h, {
         'user_context.md':
-          'MEM>>{{memory}}<<\nBODY>>{{body_state}}<<\nBOARD>>{{task_board}}<<\nMSG>>{{messages}}<<\n',
+          'MEM>>{{memory}}<<\nBODY>>{{body_state}}<<\nBOARD>>{{task_board}}<<\nSYS>>{{system_reminders}}<<\nMSG>>{{messages}}<<\n',
       });
       createTask(h.ledger, {
         id: 'task_0001',
@@ -181,7 +183,10 @@ describe('assembling the user context', () => {
 
       expect(context.user).toContain(`MEM>>Name: ada\nBorn: ${new Date(agent.bornAt).toISOString()}<<`);
       expect(context.user).toContain(
-        'BODY>>satiety: 100 / 100\nbalance: 100\nmeal price: 15 (restores 25 satiety)<<',
+        'BODY>>satiety: 100 / 100\nbalance: 100\nmeal price: 15 (restores 25 satiety)\n' +
+          'untreated redacted characters: 0 / death line 2000\n' +
+          'wounds not fully healed: 0\n' +
+          'treatment prices: ordinary 25, complete 80<<',
       );
       expect(context.user).toContain(
         'BOARD>>Open tasks (fixed price, first come first served):\n' +
@@ -190,7 +195,10 @@ describe('assembling the user context', () => {
           'Held by you:\n' +
           '- (none)<<',
       );
-      expect(context.user).toMatch(/MSG>>- \d{4}-\d{2}-\d{2}T[\d:.]+Z: Please eat something soon\.<</);
+      expect(context.user).toMatch(/SYS>>\(none\)<</);
+      expect(context.user).toMatch(
+        /MSG>>- \d{4}-\d{2}-\d{2}T[\d:.]+Z \[from operator\]: Please eat something soon\.<</,
+      );
       expect(context.system).toBe(BODY_MANUAL);
       // The message was consumed by the same pass that injected it.
       expect(h.ledger.listUnreadMessages('ada')).toEqual([]);
@@ -220,6 +228,7 @@ describe('assembling the user context', () => {
       memory: 'MEM',
       bodyState: 'BODY',
       taskBoard: 'BOARD',
+      systemReminders: 'SYS',
       messages: 'MSG',
     })).toBe('a MEM b {{nobody}} c');
   });
@@ -246,7 +255,7 @@ describe('assembling the user context', () => {
       expect(context.user).toContain('# BODY STATE');
       expect(context.user).toContain('satiety: 100 / 100');
       expect(context.user).toContain('# TASK BOARD');
-      expect(context.user).toContain('# MESSAGES FROM THE OPERATOR');
+      expect(context.user).toContain('# MESSAGES');
       expect(context.user).not.toContain('BODY ONLY');
     } finally {
       h.cleanup();
@@ -280,6 +289,7 @@ describe('assembling the user context', () => {
         now: h.clock.now,
         memory: memoryModel,
         prompts: testPrompts(h),
+        sandbox: testSandboxPolicy(h),
         onMemoryError: () => undefined,
       });
       const worker = initWorker(h, new ScriptedModelClient([textResponse('I am fine.')]));

@@ -16,6 +16,11 @@ import type { AgentRecord } from '../src/organs/ledger';
 import { Ledger } from '../src/organs/ledger';
 import { createAgent } from '../src/organs/population';
 import { createPromptLibrary, type PromptLibrary, type PromptLoadMode } from '../src/organs/prompts';
+import {
+  createSandboxPolicyStore,
+  DEFAULT_SANDBOX_POLICY,
+  type SandboxPolicyStore,
+} from '../src/organs/sandbox/policy';
 import type { WorkerTransport } from '../src/supervisor/round';
 
 /** Every test runs on a fake clock, so nothing depends on real time. */
@@ -41,8 +46,7 @@ export class FakeClock {
   }
 }
 
-export function testValues(overrides: Partial<ConservatoryValues> = {}): ConservatoryValues {
-  return {
+export function testValues(overrides: Partial<ConservatoryValues> = {}): ConservatoryValues {  return {
     satietyDecayPerSecond: 0.05,
     satietyMax: 100,
     initialSatiety: 100,
@@ -56,6 +60,13 @@ export function testValues(overrides: Partial<ConservatoryValues> = {}): Conserv
     maxToolCallsPerRound: 50,
     modelRequestTimeoutSeconds: 120,
     taskClaimTimeoutHours: 24,
+    redactionIntervalSeconds: 60,
+    redactionCharsPerTick: 20,
+    redactionMinRanges: 1,
+    redactionMaxRanges: 3,
+    deathLineChars: 2000,
+    ordinaryTreatmentPrice: 25,
+    completeTreatmentPrice: 80,
     exchangeRate: null,
     consolePort: 4317,
     ...overrides,
@@ -126,11 +137,26 @@ export function createHarness(options: { values?: Partial<ConservatoryValues>; c
   };
 }
 
+/**
+ * The real sandbox policy store with persistence captured in memory, so a test
+ * never rewrites a config file. Validation, resolution and the locked built-in
+ * entries all run exactly as they do in the supervisor.
+ */
+export function testSandboxPolicy(h: Harness, initial = DEFAULT_SANDBOX_POLICY): SandboxPolicyStore {
+  return createSandboxPolicyStore({
+    configPath: h.paths.configPath,
+    agentsDir: h.paths.agentsDir,
+    supervisorDir: h.paths.supervisorDir,
+    listAgentHomes: () => h.ledger.listAgents().map((agent) => path.join(h.paths.agentsDir, agent.name)),
+    initial: { ...initial },
+    persist: () => undefined,
+  });
+}
+
 export function textResponse(
   content: string,
   usage: TokenUsage | null = { promptTokens: 100, completionTokens: 20 },
-): ChatResponse {
-  return { message: { role: 'assistant', content }, usage };
+): ChatResponse {  return { message: { role: 'assistant', content }, usage };
 }
 
 export function toolCallResponse(
@@ -281,7 +307,8 @@ export function birthAgent(h: Harness, name = 'ada', model = 'test-model'): Agen
 
 /**
  * A ledger-only agent, for state machine tests that need a second party. It
- * bypasses the step-1 slot ceiling on purpose; nothing here touches files.
+ * bypasses the slot ceiling and writes no files; use `birthAgent` when the slot
+ * count itself is what the test is about.
  */
 export function insertAgentRow(h: Harness, name: string): AgentRecord {
   const record: AgentRecord = { name, bornAt: h.clock.now(), model: 'test-model', status: 'alive' };

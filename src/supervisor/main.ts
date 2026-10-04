@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url';
 import type { ChildToParentMessage, ParentToChildMessage } from '../agent/ipc';
 import {
   ConfigError,
+  agentHomeDir,
   ensureRuntimeDirs,
   loadAppConfig,
   type AppConfig,
@@ -12,8 +13,17 @@ import {
 import { createConsoleServer, type ConsoleNotice, type RuntimeInfo } from '../console/server';
 import { OpenAICompatibleClient, type ModelClient } from '../model/client';
 import { Blackbox } from '../organs/blackbox';
+import { treat } from '../organs/clinic';
+import { checkDeathLine, die, terminateByOperator, type DeathOutcome } from '../organs/death';
 import { Heartbeat } from '../organs/heartbeat';
-import { Ledger, PAUSED_SETTING_AGENT, type InterventionKind } from '../organs/ledger';
+import {
+  Ledger,
+  PAUSED_SETTING_AGENT,
+  type DeathCause,
+  type InterventionKind,
+  type TreatmentTier,
+} from '../organs/ledger';
+import { readMemoryFile, writeMemoryAtomic } from '../organs/memory';
 import { grantSatiety, readSatiety } from '../organs/metabolism';
 import {
   createPauseOrgan,
@@ -28,6 +38,8 @@ import {
   wakeLivingAgents,
 } from '../organs/population';
 import { createPromptLibrary, PromptWarningNotices } from '../organs/prompts';
+import { redactAgent } from '../organs/redaction';
+import { createSandboxPolicyStore } from '../organs/sandbox/policy';
 import { expireClaims } from '../organs/taskboard';
 import { RoundCoordinator, type WorkerTransport } from './round';
 
@@ -329,6 +341,15 @@ function main(): void {
   // text, the built-in fallbacks, and the status the console reports.
   const prompts = createPromptLibrary(paths);
   const promptNotices = new PromptWarningNotices();
+  // The command sandbox's policy: one live object the console edits and every
+  // command reads, so an operator change takes effect on the next command.
+  const sandbox = createSandboxPolicyStore({
+    configPath: paths.configPath,
+    agentsDir: paths.agentsDir,
+    supervisorDir: paths.supervisorDir,
+    listAgentHomes: () => ledger.listAgents().map((agent) => agentHomeDir(paths, agent.name)),
+    initial: config.sandbox,
+  });
 
   const state: Supervisor = {
     ledger,
@@ -344,6 +365,7 @@ function main(): void {
       now,
       memory: memoryModel,
       prompts,
+      sandbox,
       onPromptWarnings: (warnings) => {
         reportPromptWarnings(warnings);
       },
@@ -453,6 +475,164 @@ function main(): void {
   }
 
   /**
+   * Death, once. The ledger transaction marks the agent dead, releases its
+   * held work and files the certificate; the process is then stopped and goes
+   * out of `state.processes`, the black box keeps its own record, and nothing
+   * in this file offers a way back.
+   */
+  function runDeath(agent: string, cause: DeathCause): DeathOutcome {
+    return die(
+      {
+        ledger,
+        values,
+        paths,
+        blackbox,
+        now,
+        stopProcess: stopAgentProcess,
+        onNotice: (name, message) => {
+          addNotice(state, name, message, now());
+        },
+      },
+      agent,
+      cause,
+      now(),
+    );
+  }
+
+  /** Stops one agent's process and drops it, without touching the ledger. */
+  function stopAgentProcess(name: string): void {
+    const running = state.processes.get(name);
+    if (running === undefined) {
+      return;
+    }
+    state.processes.delete(name);
+    registry.markEnded(name);
+    running.stop();
+  }
+
+  /** The operator treats a wound on the agent's behalf: a recorded intervention. */
+  function treatAsOperator(
+    agent: string,
+    woundId: number,
+    tier: TreatmentTier,
+  ): { ok: true } | { ok: false; error: string } {
+    const record = ledger.getAgent(agent);
+    if (record === null) {
+      return { ok: false, error: 'agent_not_found' };
+    }
+    if (record.status !== 'alive') {
+      return { ok: false, error: 'agent_dead' };
+    }
+    if (registry.isBusy(agent)) {
+      return { ok: false, error: 'agent_busy' };
+    }
+    const at = now();
+    const outcome = treat(
+      { ledger, values, paths, blackbox, now },
+      agent,
+      woundId,
+      tier,
+      'operator',
+    );
+    if (!outcome.ok) {
+      return { ok: false, error: outcome.code };
+    }
+    ledger.appendIntervention(
+      'operator_treat',
+      agent,
+      `操作员替 ${agent} 治疗伤口 ${woundId}（${tier === 'ordinary' ? '普通' : '完全'}治疗，未扣该 agent 余额）`,
+      at,
+    );
+    blackbox.append(agent, 'intervention', at, null, { kind: 'operator_treat', woundId, tier });
+    addNotice(state, agent, `操作员替 ${agent} 治疗了伤口 ${woundId}（${tier}）。`, at);
+    return { ok: true };
+  }
+
+  /** The operator's forced termination: a warning, a record, and then death. */
+  function terminateAgent(agent: string, confirmName: string): { ok: true } | { ok: false; error: string } {
+    const result = terminateByOperator(
+      {
+        ledger,
+        values,
+        paths,
+        blackbox,
+        now,
+        stopProcess: stopAgentProcess,
+        onNotice: (name, message) => {
+          addNotice(state, name, message, now());
+        },
+      },
+      agent,
+      confirmName,
+    );
+    return result.ok ? { ok: true } : { ok: false, error: result.error };
+  }
+
+  /**
+   * One beat of the redaction clock: every living agent that is not mid-round
+   * loses the characters it owes, and one that has reached the death line dies.
+   * A busy agent is skipped and its debt is paid on a later beat, so a round
+   * ending and a memory rewrite can never write MEMORY at the same time.
+   */
+  function redactionTick(): void {
+    if (state.paused) {
+      return;
+    }
+    for (const agent of ledger.listAgents()) {
+      if (agent.status !== 'alive' || registry.isBusy(agent.name)) {
+        continue;
+      }
+      const result = redactAgent(
+        {
+          ledger,
+          values,
+          blackbox,
+          now,
+          readMemory: (name) => readMemoryFile(paths, name),
+          writeMemory: (name, text) => {
+            writeMemoryAtomic(paths, name, text);
+          },
+          random: Math.random,
+        },
+        agent.name,
+      );
+      if (result.skipped > 0) {
+        addNotice(
+          state,
+          agent.name,
+          `${agent.name} 在挨饿，但 MEMORY 里已经没有可遮盖的字符了（发育期：可涂的字还不够）。`,
+          now(),
+        );
+      } else if (result.applied > 1) {
+        addNotice(
+          state,
+          agent.name,
+          `${agent.name} 在挨饿：本次补上 ${result.applied} 次遮盖（欠账已全部补清）。`,
+          now(),
+        );
+      }
+      // The mechanism decides: nothing here compares the count itself.
+      const outcome = checkDeathLine(
+        {
+          ledger,
+          values,
+          paths,
+          blackbox,
+          now,
+          stopProcess: stopAgentProcess,
+          onNotice: (name, message) => {
+            addNotice(state, name, message, now());
+          },
+        },
+        agent.name,
+      );
+      if (outcome !== null && !outcome.ok) {
+        blackbox.append(agent.name, 'death_refused', now(), null, { error: outcome.error });
+      }
+    }
+  }
+
+  /**
    * One beat of the conservatory's clock: claimed tasks past their timeout go
    * back to the board, then every living agent is woken.
    *
@@ -491,9 +671,29 @@ function main(): void {
     },
   });
 
+  /**
+   * The redaction clock is its own beat: it runs on the redaction interval
+   * rather than the heartbeat's, and like the heartbeat it does nothing while
+   * the conservatory is paused, because time is stopped.
+   */
+  const redactionHeartbeat = new Heartbeat({
+    intervalSeconds: values.redactionIntervalSeconds,
+    now,
+    tick: () => {
+      redactionTick();
+    },
+    isPaused: () => state.paused,
+    onError: (error) => {
+      const message = messageOf(error);
+      process.stderr.write(`遮盖出错：${message}\n`);
+      state.notices.push({ at: now(), agent: 'supervisor', message: `遮盖出错：${message}` });
+    },
+  });
+
   const consoleServer = createConsoleServer({
     values,
     paths,
+    sandboxPolicy: sandbox,
     ledger,
     blackbox,
     registry,
@@ -546,6 +746,9 @@ function main(): void {
       if (ledger.getAgent(agent) === null) {
         return { ok: false, error: 'agent_not_found' };
       }
+      if (ledger.getAgent(agent)?.status !== 'alive') {
+        return { ok: false, error: 'agent_dead' };
+      }
       if (!Number.isFinite(amount) || amount <= 0) {
         return { ok: false, error: 'invalid_amount_intervention' };
       }
@@ -565,6 +768,8 @@ function main(): void {
         satiety: readSatiety(ledger, values, agent, at),
       };
     },
+    treatWound: treatAsOperator,
+    terminateAgent,
     getNotices: () => state.notices.slice(-20),
   });
 
@@ -576,6 +781,7 @@ function main(): void {
     shuttingDown = true;
     process.stdout.write(`\n收到 ${signal}，正在关闭……\n`);
     heartbeat.stop();
+    redactionHeartbeat.stop();
     consoleServer.close();
     for (const agentProcess of state.processes.values()) {
       agentProcess.stop();
@@ -602,7 +808,7 @@ function main(): void {
         'Conservatory 已启动。',
         `控制台：http://127.0.0.1:${values.consolePort}`,
         `心跳：每 ${values.heartbeatSeconds} 秒`,
-        `槽位：${listSlots(values, ledger).length}（第 1 步只允许 1 个活着的 Agent）`,
+        `槽位：${listSlots(values, ledger).length}`,
         `活着的 Agent：${living.length === 0 ? '（还没有，请在控制台的空槽位里创建一个）' : living.map((a) => a.name).join(', ')}`,
         `汇率：${values.exchangeRate === null ? '未设定（收入申报无法入账）' : String(values.exchangeRate)}`,
         `提示词：${
@@ -615,10 +821,14 @@ function main(): void {
       ].join('\n'),
     );
     heartbeat.start();
+    redactionHeartbeat.start();
     // The first beat lands immediately so a freshly started supervisor does not
     // make a living agent wait a whole interval; later beats follow the clock.
     // While the conservatory is paused it wakes nobody, this beat included.
     void tick();
+    // The redaction clock takes the same immediate first beat, so an agent that
+    // was already starving while the supervisor was off pays what it owes.
+    void redactionHeartbeat.runTick();
   });
 }
 

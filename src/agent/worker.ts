@@ -264,7 +264,19 @@ function parseToolSchema(value: unknown): ToolSchema | null {
     if (matched === undefined) {
       return null;
     }
-    properties[key] = { type: matched, description: propertyDescription };
+    const rawEnum = rawProperty['enum'];
+    let choices: string[] | undefined;
+    if (rawEnum !== undefined) {
+      if (!Array.isArray(rawEnum) || !rawEnum.every((entry) => typeof entry === 'string')) {
+        return null;
+      }
+      choices = rawEnum as string[];
+    }
+    properties[key] = {
+      type: matched,
+      description: propertyDescription,
+      ...(choices === undefined ? {} : { enum: choices }),
+    };
   }
   const rawRequired = parameters['required'];
   if (!Array.isArray(rawRequired)) {

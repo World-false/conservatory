@@ -3,115 +3,573 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>CONSERVATORY · 操作台</title>
+    <meta name="color-scheme" content="light" />
+    <meta name="theme-color" content="#FAFAFA" />
+    <!-- The greenhouse mark as the tab icon. It is inlined because the console
+         server answers the page and the JSON API only — there is no static route
+         that could serve an .svg file — and it carries its own
+         `prefers-color-scheme` rule, so a dark browser chrome gets the white cut
+         of the logo and a light one the black cut.
+
+         Both this and the .brand-logo below are copies of the brand sources
+         `logo-black.svg` / `logo-white.svg` at the repo root, with the viewBox
+         cropped to the artwork (228 245 568 533) and the colour swapped for
+         `currentColor`. Edit those two files first, then re-derive these. -->
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjIyOCAyNDUgNTY4IDUzMyI+PHN0eWxlPmd7ZmlsbDojMEYxNzJBO3N0cm9rZTojMEYxNzJBfUBtZWRpYShwcmVmZXJzLWNvbG9yLXNjaGVtZTpkYXJrKXtne2ZpbGw6I0ZGRkZGRjtzdHJva2U6I0ZGRkZGRn19PC9zdHlsZT48Zz48cGF0aCBkPSJNMjQxIDcwNSBMMzU4IDc2NSBMNjY2IDc2NSBMNzgzIDcwNSBMNzgzIDUyOSBBMjcxIDI3MSAwIDAgMCAyNDEgNTI5IFoiIGZpbGw9Im5vbmUiIHN0cm9rZS13aWR0aD0iMjYiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPjxwYXRoIGQ9Ik0zNTggNzY1IEwzNTggNTI5IEExNTQgMTU0IDAgMCAxIDY2NiA1MjkgTDY2NiA3NjUiIGZpbGw9Im5vbmUiIHN0cm9rZS13aWR0aD0iMjYiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPjxsaW5lIHgxPSI1MTIiIHkxPSIyNTgiIHgyPSI1MTIiIHkyPSIzNzUiIHN0cm9rZS13aWR0aD0iMjYiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPjxsaW5lIHgxPSIzNzYiIHkxPSI0NTYiIHgyPSIyNzMiIHkyPSI0MDEiIHN0cm9rZS13aWR0aD0iMjYiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPjxsaW5lIHgxPSI2NDgiIHkxPSI0NTYiIHgyPSI3NTEiIHkyPSI0MDEiIHN0cm9rZS13aWR0aD0iMjYiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPjxwYXRoIGQ9Ik00NjUgMjc1IEM0NDQgMzIwIDQxNSAzNjIgMzkwIDQwNSIgZmlsbD0ibm9uZSIgc3Ryb2tlLXdpZHRoPSIyNiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+PHBhdGggZD0iTTU1OSAyNzUgQzU4MCAzMjAgNjA5IDM2MiA2MzQgNDA1IiBmaWxsPSJub25lIiBzdHJva2Utd2lkdGg9IjI2IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz48cGF0aCBkPSJNNTk4IDQ3NSBDNjI0IDUwMCA1ODIgNTcxIDUzOCA1NjUgQzU0MyA1NDQgNTU2IDUyOCA1NzEgNTExIEM1NTUgNTEzIDUzMCA1NDEgNTI1IDU2NSBMNTI1IDc2NSBMNDk5IDc2NSBMNDk5IDYyMCBDNDk1IDU5OSA0NzUgNTc5IDQ1NSA1NjcgQzQ1MSA1NzQgNDk3IDYxMyA0NzkgNjIxIEM0MzggNjE4IDQxNCA1NzYgNDE2IDUzNyBDNDU1IDUxNiA1MTMgNTc2IDUxMiA2MDQgQzUwMSA1NDIgNTMwIDQ3NSA1OTggNDc1IFoiIHN0cm9rZT0ibm9uZSIvPjwvZz48L3N2Zz4="
+    />
+    <title>CONSERVATORY · 生物遥测操作台</title>
+    <!-- Webfonts are an enhancement, never a dependency: the stylesheet loads
+         without blocking first paint, and every stack falls back to the local
+         Cascadia / Segoe UI faces when this machine is offline. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      media="print"
+      onload="this.media='all'"
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap"
+    />
+    <noscript>
+      <link
+        rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap"
+      />
+    </noscript>
     <style>
+      /* ==========================================================================
+         CONSERVATORY · QUIET MICA & PHYSICAL SPECULAR GLASS
+         --------------------------------------------------------------------------
+         Design metaphor : a precision instrument pod. A near-white paper
+                           substrate, translucent Mica panels the light passes
+                           through, and one cool accent reserved for whatever the
+                           operator has selected. Nothing here shouts; the numbers
+                           carry the console.
+         Colour budget   : ink, slate and white paint the whole deck. A single
+                           deep blue marks activation and selection. Crimson is
+                           allowed only at a genuine danger threshold. There is no
+                           amber anywhere: a frozen life clock is a calm standby
+                           state, never an alarm, and a physical constant is not a
+                           warning just because it is worth reading.
+         Shape lock      : pill for every button, badge and chip; 14px cards,
+                           18px panels.
+         Depth           : white is the material, not the absence of it. Depth
+                           comes from translucency, a hairline slate border and a
+                           single inset white highlight on each top edge.
+         Motion          : restrained tactile physics only — a 1px lift, a 2% press
+                           and a specular cut-face that catches the light on hover.
+                           No sweeps, no glows, no dispersion rainbows.
+         Type            : Plus Jakarta Sans / Inter for prose, JetBrains Mono with
+                           tabular figures for every number, path and token count.
+         ========================================================================== */
       :root {
-        --bg: #ffffff;
-        --rail: #f7f7f8;
-        --line: #e5e7eb;
-        --text: #1f2328;
-        --muted: #6b7280;
-        --accent: #1f7a4d;
-        --accent-soft: #eef6f1;
-        --danger: #b42318;
-        --danger-soft: #fdf3f2;
-        --warn: #b54708;
-        --warn-soft: #fffaeb;
+        /* ----------------------------------------------------------- 画布与云母底板 */
+        --bg: #FAFAFA;                            /* 极简通透画卷白 */
+        --surface: rgba(255, 255, 255, 0.85);     /* 高透微透云母底板 */
+        --surface-blur: blur(20px) saturate(160%);
+        --card: #FFFFFF;                          /* 纯白模块卡片 */
+        --card-hover: #FFFFFF;
+        --line: #E2E8F0;                          /* 纯净石板细分界线 */
+        --line-soft: #F1F5F9;
+        --line-strong: #CBD5E1;
+
+        /* ----------------------------------------------------------- 文本对比度阶梯 */
+        --text: #0F172A;                          /* 深度碳素黑 */
+        --text-muted: #64748B;                    /* 沉稳副文本灰 */
+        --text-sub: #94A3B8;                      /* 辅助说明灰 */
+
+        /* ----------------------------------------------------------- 唯一主强调色 */
+        --accent: #0F172A;                        /* 默认主视觉回归深色极简，不喧宾夺主 */
+        --accent-cool: #2563EB;                   /* 仅用于激活状态 / 选中的纯净深蓝 */
+        --accent-cool-soft: #EFF6FF;
+        --accent-dim: #EFF6FF;                    /* 设置导航激活态的深蓝浅底 */
+
+        /* --------------------------------- 状态静音化：暂停 = Calm Standby，绝非火警 */
+        --standby: #475569;                       /* 平静休眠的静谧冰川灰蓝 */
+        --standby-soft: #F1F5F9;
+        --standby-border: #CBD5E1;
+
+        /* ---------------------------------------- 仅在真正危险时保留的极克制深红 */
+        --danger: #DC2626;
+        --danger-soft: #FEF2F2;
+        --danger-edge: #FECACA;
+
+        /* ---------------------------------------- 正常生命状态保留的极细微翠绿点缀 */
+        --alive: #059669;
+        --alive-soft: #ECFDF5;
+
+        /* ----------------------------------------------------------- 圆角与物理阴影 */
+        --r-pill: 9999px;                         /* 按钮与徽章全弧形全胶囊 */
+        --r-card: 14px;
+        --r-panel: 18px;
+        --shadow-card: 0 1px 3px rgba(15, 23, 42, 0.04), 0 6px 16px -2px rgba(15, 23, 42, 0.02);
+        --shadow-hover: 0 4px 20px -2px rgba(15, 23, 42, 0.08), 0 2px 6px -1px rgba(15, 23, 42, 0.04);
+
+        /* --------------------------------------------------------------------
+           兼容层：样式表与页面脚本里仍有多处引用旧词汇，因此这些旧名字保留为
+           新调色板之上的一层薄翻译，而不是逐条重写规则。
+
+           唯一重要的语义挪动是 `--warn-*`：它不再代表橙黄。休眠状态、逼近阈值
+           的读数与普通提示一律留在墨黑 / 石板灰家族里；只有 `--danger-*` 允许
+           变红，且只在真正的危险阈值上。
+
+           `--vital-amber` 是刻意留下的墓碑：任何一条残留规则引用它，拿到的是
+           平静的冰川灰蓝，橙黄警报因此不可能复活。 -------------------------- */
+        --muted: var(--text-muted);
+        --secondary: var(--text-muted);
+        --accent-hi: var(--accent-cool);
+        --accent-edge: rgba(37, 99, 235, 0.34);
+        --warn: var(--standby);
+        --warn-hi: var(--standby);
+        --vital-amber: var(--standby);             /* 墓碑：橙黄警报彻底退场 */
+        --vital-green: var(--alive);
+        --vital-crimson: var(--danger);
+        --danger-hi: var(--danger);
+        --danger-dim: var(--danger-soft);
+        --shadow-soft: var(--shadow-card);
+        --shadow-lift: var(--shadow-hover);
+        --glass-inset: inset 0 1px 0 #FFFFFF;     /* 顶边棱光 */
+        --glass-border: 1px solid var(--line);
+        --sunk: #F8FAFC;                          /* 内凹浅槽 */
+
+        --ease: cubic-bezier(0.16, 1, 0.3, 1);
+        --sans: "Plus Jakarta Sans", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
+          "Microsoft YaHei", system-ui, sans-serif;
+        --mono: "JetBrains Mono", "Cascadia Code", "Cascadia Mono", Consolas, monospace;
       }
+
+      /* ------------------------------------------------------------------ base */
       * { box-sizing: border-box; }
+      /* `hidden` must always mean hidden. Several rules below set an explicit
+         `display` (`.btn`, `.tag`, `.badge`), and an author `display` beats the
+         UA stylesheet's `[hidden] { display: none }` — which silently made
+         `node.hidden = true` a no-op and left the dead-agent wake button and
+         the "已冻结" tag on screen. This one rule makes the attribute win. */
+      [hidden] { display: none !important; }
       html, body { height: 100%; }
       body {
         margin: 0;
+        /* One flat, quiet paper white. Depth comes from the Mica panels sitting
+           on it, never from a coloured light pool drifting behind them. */
         background: var(--bg);
         color: var(--text);
-        font: 14px/1.55 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+        font: 14px/1.55 var(--sans);
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
         overflow: hidden;
       }
-      .mono, pre, code, .num { font-family: Consolas, "Cascadia Mono", monospace; }
+      ::selection { background: rgba(37, 99, 235, 0.18); color: var(--text); }
+      * { scrollbar-width: thin; scrollbar-color: rgba(148, 163, 184, 0.5) transparent; }
+      ::-webkit-scrollbar { width: 10px; height: 10px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb {
+        background: rgba(148, 163, 184, 0.42);
+        border: 3px solid transparent;
+        background-clip: content-box;
+        border-radius: var(--r-pill);
+      }
+      ::-webkit-scrollbar-thumb:hover { background: rgba(100, 116, 139, 0.65); background-clip: content-box; }
+      ::-webkit-scrollbar-corner { background: transparent; }
+
+      :where(button, input, textarea, select, summary, [data-act]):focus-visible {
+        outline: none;
+        box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.32);
+        border-radius: var(--r-pill);
+      }
+
+      .mono, pre, code, .num {
+        font-family: var(--mono);
+        font-variant-numeric: tabular-nums;
+        font-feature-settings: "tnum" 1, "zero" 1;
+      }
       .small { font-size: 12px; }
       .muted { color: var(--muted); }
-      .empty { color: var(--muted); font-style: italic; }
+      .empty { color: var(--secondary); font-style: normal; letter-spacing: 0.01em; }
+      .empty::before { content: "◇ "; color: var(--text-sub); }
       .grow { flex: 1 1 auto; }
       .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
       .col-stack { display: grid; gap: 10px; }
       .contents { display: contents; }
 
-      /* ---------------------------------------------------------------- shell */
+      /* ----------------------------------------------------------------- shell */
       .app { display: flex; height: 100vh; }
       .rail {
-        flex: 0 0 220px;
-        width: 220px;
-        background: var(--rail);
+        flex: 0 0 232px;
+        width: 232px;
+        /* Frosted white Mica: the near-white paper behind it stays faintly visible. */
+        background: var(--surface);
+        backdrop-filter: var(--surface-blur);
+        -webkit-backdrop-filter: var(--surface-blur);
         border-right: 1px solid var(--line);
         display: flex;
         flex-direction: column;
         overflow: hidden;
+        position: relative;
       }
-      .brand { padding: 16px 16px 12px; font-size: 16px; font-weight: 700; }
-      .brand small { display: block; font-weight: 400; font-size: 10px; color: var(--muted); letter-spacing: 0.16em; }
-      .nav { flex: 1; overflow: auto; padding: 2px 8px 8px; }
-      .nav-item {
+      /* The glass cut-face down the console's spine: one hairline highlight, no
+         tinted light of any kind. */
+      .rail::after {
+        content: "";
+        position: absolute;
+        top: 0;
+        right: -1px;
+        width: 1px;
+        height: 100%;
+        background: linear-gradient(
+          180deg,
+          transparent,
+          rgba(255, 255, 255, 0.9) 30%,
+          rgba(255, 255, 255, 0.2) 70%,
+          transparent
+        );
+        pointer-events: none;
+      }
+      .brand {
+        padding: 17px 16px 14px;
+        font-size: 16px;
+        font-weight: 700;
+        letter-spacing: -0.015em;
         display: flex;
         align-items: center;
         gap: 9px;
-        height: 36px;
-        padding: 0 10px;
-        border-radius: 8px;
-        cursor: pointer;
+        border-bottom: 1px solid var(--line-soft);
+      }
+      .brand-name { display: block; line-height: 1.15; }
+      /* The lockup's mark. It is drawn in `currentColor`, so this light rail gets
+         the black cut of the logo and any dark panel that hosts it would get the
+         white one. The viewBox is cropped to the artwork itself (plus half the
+         26-unit stroke), so a 26px box is filled by the glyph instead of by the
+         source file's 1024x1024 of padding. */
+      .brand-mark {
+        position: relative;
+        flex: 0 0 26px;
+        width: 26px;
+        height: 26px;
+        display: grid;
+        place-items: center;
         color: var(--text);
+      }
+      .brand-logo { display: block; width: 26px; height: 26px; }
+      /* The vital LED clips onto the mark's corner, so the greenhouse's state
+         keeps a home even though the dot's old slot now holds the logo. The ring
+         is a border rather than a shadow because the pulse keyframes own the
+         element's box-shadow. */
+      .brand .vital {
+        position: absolute;
+        right: -2px;
+        bottom: -2px;
+        width: 11px;
+        height: 11px;
+        flex: none;
+        border: 2px solid var(--card);
+      }
+      .brand small {
+        display: block;
+        font-weight: 500;
+        font-size: 9.5px;
+        color: var(--secondary);
+        letter-spacing: 0.19em;
+        text-transform: uppercase;
+        margin-top: 2px;
+      }
+      /* Pulsing vital indicator: the greenhouse is breathing. It now rides the
+         corner of the lockup's mark, so it keeps a tight ring in its own colour
+         instead of a 10px bloom that would wash across the logo. */
+      .vital {
+        flex: 0 0 9px;
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: var(--vital-green);
+        box-shadow: 0 0 0 2px rgba(5, 150, 105, 0.16);
+        animation: vital-pulse 2.4s var(--ease) infinite;
+      }
+      /* Standby: the greenhouse is held, not in danger. The lamp simply stops
+         breathing and settles into a slate chip — no amber, no alarm halo. */
+      .vital.warn { background: var(--standby); box-shadow: none; animation: none; }
+      .vital.bad { background: var(--danger); box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.18); animation-duration: 1s; }
+
+      .nav { flex: 1; overflow: auto; padding: 10px 9px 8px; }
+      .nav-item {
+        position: relative;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        height: 38px;
+        padding: 0 13px;
+        border-radius: var(--r-pill);
+        cursor: pointer;
+        color: var(--muted);
         user-select: none;
+        font-size: 13.5px;
+        border: 1px solid transparent;
+        transition: background 0.22s var(--ease), color 0.22s var(--ease), border-color 0.22s var(--ease),
+          box-shadow 0.22s var(--ease), transform 0.22s var(--ease);
       }
-      .nav-item + .nav-item { margin-top: 2px; }
-      .nav-item:hover { background: #ececee; }
-      .nav-item.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
-      .nav-item svg { width: 16px; height: 16px; flex: 0 0 16px; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+      .nav-item + .nav-item { margin-top: 3px; }
+      /* The active marker is a lit pill rail, not a bar: it reads on white. */
+      .nav-item::before {
+        content: "";
+        position: absolute;
+        left: 4px;
+        top: 50%;
+        width: 3px;
+        height: 0;
+        border-radius: var(--r-pill);
+        background: var(--accent-cool);
+        box-shadow: none;
+        transform: translateY(-50%);
+        transition: height 0.24s var(--ease);
+      }
+      .nav-item:hover {
+        background: #FFFFFF;
+        border-color: var(--line);
+        color: var(--text);
+        box-shadow: var(--shadow-card), var(--glass-inset);
+      }
+      .nav-item:hover::before { height: 15px; background: var(--line-strong); box-shadow: none; }
+      .nav-item.active {
+        background: linear-gradient(90deg, rgba(37, 99, 235, 0.09), rgba(37, 99, 235, 0.025) 62%, transparent);
+        border-color: rgba(37, 99, 235, 0.18);
+        color: var(--accent-cool);
+        font-weight: 600;
+        box-shadow: var(--glass-inset);
+      }
+      .nav-item.active::before { height: 20px; background: var(--accent-cool); box-shadow: none; }
+      .nav-item svg {
+        width: 16px;
+        height: 16px;
+        flex: 0 0 16px;
+        stroke: currentColor;
+        fill: none;
+        stroke-width: 1.6;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        opacity: 0.9;
+      }
+      .nav-item.active svg { opacity: 1; }
       .nav-label { flex: 1; }
-      .badge {
-        min-width: 18px;
-        height: 18px;
-        padding: 0 5px;
-        border-radius: 999px;
-        background: var(--accent);
-        color: #fff;
-        font-size: 11px;
-        line-height: 18px;
-        text-align: center;
+
+      /* --------------------------------------------------- rail bottom deck */
+      /* Settings lives here — pinned under the telemetry at the very base of the
+         rail — so it reads as an operator-wide tool rather than one more page in
+         the specimen list. The divider belongs to `.rail-foot` above it. */
+      .rail-bottom {
+        padding: 8px 9px 10px;
+        display: grid;
+        gap: 6px;
       }
-      .badge.warn { background: var(--warn); }
+      /* The operator's one tool, pinned to the base of the rail: a translucent
+         Mica pill card rather than one more page in the specimen list. */
+      .nav-settings {
+        height: 40px;
+        padding: 0 13px;
+        background: var(--surface);
+        backdrop-filter: var(--surface-blur);
+        -webkit-backdrop-filter: var(--surface-blur);
+        border: 1px solid var(--line);
+        box-shadow: var(--shadow-card), var(--glass-inset);
+      }
+      .nav-settings:hover { border-color: var(--line-strong); background: #FFFFFF; }
+      .nav-settings.active {
+        background: var(--accent-cool-soft);
+        border-color: var(--accent-edge);
+        color: var(--accent-cool);
+        box-shadow: var(--glass-inset);
+      }
+      .nav-settings::before { left: 6px; }
+
+      .badge {
+        min-width: 19px;
+        height: 19px;
+        padding: 0 6px;
+        border-radius: var(--r-pill);
+        background: var(--text);
+        border: 1px solid var(--text);
+        color: #FFFFFF;
+        font-family: var(--mono);
+        font-variant-numeric: tabular-nums;
+        font-size: 11px;
+        line-height: 17px;
+        text-align: center;
+        font-weight: 600;
+      }
+      /* A pending-count chip stays quiet slate. Work waiting for review is work
+         to do, not a hazard, so it never earns a warning colour. */
+      .badge.warn {
+        background: var(--standby-soft);
+        border-color: var(--standby-border);
+        color: var(--standby);
+        box-shadow: none;
+      }
+
+      /* Micro chip telemetry cluster at the base of the rail. */
       .rail-foot {
         border-top: 1px solid var(--line);
-        padding: 10px 14px 12px;
-        font-size: 12px;
-        color: var(--muted);
+        padding: 11px 13px 13px;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.5), rgba(248, 250, 252, 0.28));
         display: grid;
-        gap: 3px;
+        gap: 6px;
       }
-      .rail-foot strong { color: var(--text); font-weight: 600; }
+      .rail-chip {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 26px;
+        padding: 0 9px;
+        border: 1px solid var(--line);
+        border-radius: var(--r-pill);
+        background: rgba(255, 255, 255, 0.75);
+        box-shadow: var(--glass-inset);
+        font-size: 11px;
+        letter-spacing: 0.02em;
+      }
+      .rail-chip .chip-k {
+        color: var(--secondary);
+        text-transform: uppercase;
+        font-size: 9.5px;
+        letter-spacing: 0.12em;
+        white-space: nowrap;
+      }
+      .rail-chip .chip-v {
+        margin-left: auto;
+        font-family: var(--mono);
+        font-variant-numeric: tabular-nums;
+        font-weight: 600;
+        font-size: 11.5px;
+        color: var(--text);
+      }
+      .rail-chip .chip-v.accent { color: var(--vital-green); }
+      .rail-chip .chip-v.warn { color: var(--warn-hi); }
+      .rail-chip .chip-v.bad { color: var(--danger-hi); }
+      .rail-chip .chip-v.muted { color: var(--muted); font-weight: 500; }
+      .rail-chip .chip-u { color: var(--secondary); font-weight: 500; }
+      .rail-chip .led {
+        width: 6px;
+        height: 6px;
+        flex: 0 0 6px;
+        border-radius: 50%;
+        background: var(--vital-green);
+        box-shadow: 0 0 8px rgba(5, 150, 105, 0.7);
+      }
+      .rail-chip .led.standby { background: var(--standby); box-shadow: 0 0 0 2px var(--standby-soft); }
+      .rail-chip .led.red { background: var(--vital-crimson); box-shadow: 0 0 8px rgba(220, 38, 38, 0.7); }
+      .rail-error {
+        border: 1px solid var(--danger-edge);
+        background: var(--danger-dim);
+        color: var(--danger-hi);
+        border-radius: var(--r-card);
+        padding: 6px 9px;
+        font-size: 11px;
+        line-height: 1.45;
+        word-break: break-word;
+      }
+
       .main { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
 
-      /* -------------------------------------------------------------- notices */
-      .notices { padding: 10px 18px 0; display: grid; gap: 6px; }
-      .notices:empty { padding: 0; }
+      /* --------------------------------------------------------------- notices */
+      /* Floating frosted toasts, pinned clear of the workspace so a stack of
+         alerts never pushes the console around. */
+      .notices {
+        position: fixed;
+        top: 14px;
+        right: 14px;
+        z-index: 60;
+        width: min(400px, calc(100vw - 28px));
+        display: grid;
+        gap: 8px;
+        justify-items: stretch;
+        pointer-events: none;
+      }
+      .notices:empty { display: none; }
+      /* While the freeze banner is up, drop the toast lane below it so a notice
+         can never cover the "restore" affordance. */
+      body.is-paused .notices { top: 66px; }
       .notice {
+        pointer-events: auto;
+        position: relative;
         display: flex;
         gap: 10px;
         align-items: flex-start;
-        border: 1px solid #f2d9a8;
-        border-left: 3px solid var(--warn);
-        background: var(--warn-soft);
-        color: #6b3d05;
-        border-radius: 8px;
-        padding: 7px 10px;
+        padding: 10px 11px 10px 14px;
+        border: var(--glass-border);
+        border-radius: var(--r-card);
+        background: rgba(255, 255, 255, 0.88);
+        backdrop-filter: blur(20px) saturate(180%);
+        -webkit-backdrop-filter: blur(20px) saturate(180%);
+        box-shadow: var(--shadow-lift), inset 0 1px 0 rgba(255, 255, 255, 0.95);
         font-size: 12.5px;
+        line-height: 1.5;
+        color: var(--text);
+        overflow: hidden;
+        animation: toast-in 0.36s var(--ease) both;
+        transition: box-shadow 0.25s var(--ease), border-color 0.25s var(--ease);
       }
-      .notice b { color: var(--warn); }
-      .notice .close { margin-left: auto; }
+      /* Reaching for a toast simply lifts it off the deck — the edge stays slate. */
+      .notice:hover {
+        border-color: var(--line-strong);
+        box-shadow: var(--shadow-hover), inset 0 1px 0 #FFFFFF;
+      }
+      /* Information arrives as an ink-edged telemetry card... */
+      .notice::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: 10px;
+        bottom: 10px;
+        width: 2px;
+        border-radius: var(--r-pill);
+        background: var(--standby);
+        box-shadow: none;
+      }
+      /* ...a failure arrives as crimson glass. */
+      .notice.err {
+        border-color: var(--danger-edge);
+        background: linear-gradient(180deg, var(--danger-soft), #FFFFFF 86%);
+      }
+      .notice.err::before { background: var(--danger); box-shadow: none; }
+      .notice.err:hover { border-color: var(--danger-edge); }
+      .notice-body { display: grid; gap: 3px; min-width: 0; }
+      .notice-who {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        font-size: 11px;
+        letter-spacing: 0.04em;
+      }
+      .notice-who b { color: var(--text); font-weight: 650; }
+      .notice.err .notice-who b { color: var(--danger-hi); }
+      .notice-who .at { color: var(--secondary); font-family: var(--mono); font-size: 10.5px; }
+      .notice-msg { color: var(--text); word-break: break-word; }
+      .notice .close {
+        margin-left: auto;
+        flex: 0 0 auto;
+        align-self: flex-start;
+      }
 
-      /* ---------------------------------------------------------------- pages */
-      .pages { flex: 1; overflow: auto; padding: 16px 18px 40px; }
+      /* ----------------------------------------------------------- page + grid */
+      .pages { flex: 1; overflow: auto; padding: 16px 18px 44px; }
       .page { display: none; }
-      .page.active { display: block; }
-      h2.page-title { font-size: 17px; margin: 0 0 14px; font-weight: 600; }
+      .page.active { display: block; animation: page-in 0.34s var(--ease) both; }
+      h2.page-title {
+        font-size: 15px;
+        margin: 0 0 15px;
+        font-weight: 650;
+        letter-spacing: 0.01em;
+        color: var(--text);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      h2.page-title::before {
+        content: "";
+        width: 3px;
+        height: 15px;
+        border-radius: var(--r-pill);
+        background: var(--accent);
+      }
       .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; align-content: start; }
       @media (min-width: 1500px) { .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
       @media (max-width: 1080px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
@@ -119,219 +577,1248 @@
       .list { display: grid; gap: 8px; }
       .scroll-list { max-height: 46vh; overflow: auto; padding-right: 2px; }
 
-      /* ---------------------------------------------------------------- cards */
+      /* ----------------------------------------------------------------- cards */
       .card {
-        background: #fff;
+        position: relative;
+        background: var(--card);
+        backdrop-filter: var(--surface-blur);
+        -webkit-backdrop-filter: var(--surface-blur);
         border: 1px solid var(--line);
-        border-radius: 10px;
-        padding: 12px;
+        border-radius: var(--r-card);
+        padding: 13px;
+        box-shadow: var(--shadow-soft), inset 0 1px 0 rgba(255, 255, 255, 0.9);
       }
-      .agent-card { cursor: pointer; }
-      .agent-card:hover { border-color: var(--accent); }
-      .card-head { display: flex; align-items: center; gap: 7px; margin-bottom: 8px; }
-      .card-name { font-weight: 600; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .dot { width: 8px; height: 8px; border-radius: 50%; background: #9ca3af; flex: 0 0 8px; }
-      .dot.busy { background: var(--accent); }
-      .tag {
-        display: inline-block;
-        padding: 0 7px;
-        border-radius: 999px;
-        font-size: 11px;
-        line-height: 18px;
-        border: 1px solid var(--line);
-        color: var(--muted);
-        background: #fff;
+      .agent-card {
+        cursor: pointer;
+        transition: transform 0.24s var(--ease), border-color 0.24s var(--ease), background 0.24s var(--ease),
+          box-shadow 0.24s var(--ease);
+      }
+      .agent-card:hover {
+        transform: translateY(-2px);
+        background: var(--card-hover);
+        border-color: var(--line-strong);
+        box-shadow: var(--shadow-hover), inset 0 1px 0 #FFFFFF;
+      }
+      .card-head { display: flex; align-items: center; gap: 7px; margin-bottom: 9px; }
+      .card-name {
+        font-weight: 650;
+        font-size: 15px;
+        letter-spacing: -0.01em;
+        overflow: hidden;
+        text-overflow: ellipsis;
         white-space: nowrap;
       }
-      .tag.ok { color: var(--accent); border-color: #cbe3d6; background: var(--accent-soft); }
-      .tag.bad { color: var(--danger); border-color: #f1c9c4; background: var(--danger-soft); }
-      .tag.warn { color: var(--warn); border-color: #f2d9a8; background: var(--warn-soft); }
-      .bar { height: 8px; border-radius: 999px; background: #eef0f2; overflow: hidden; }
-      .bar > span { display: block; height: 100%; background: var(--accent); }
-      .kv { display: flex; justify-content: space-between; gap: 10px; font-size: 12.5px; }
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #CBD5E1;
+        box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.9);
+        flex: 0 0 8px;
+      }
+      .dot.busy {
+        background: var(--vital-green);
+        box-shadow: 0 0 9px rgba(5, 150, 105, 0.7), inset 0 1px 1px rgba(255, 255, 255, 0.9);
+        animation: vital-pulse 1.7s var(--ease) infinite;
+      }
+
+      .tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 0 8px;
+        height: 19px;
+        border-radius: var(--r-pill);
+        font-size: 11px;
+        line-height: 1;
+        border: 1px solid var(--line);
+        color: var(--muted);
+        background: rgba(255, 255, 255, 0.7);
+        white-space: nowrap;
+        font-weight: 500;
+      }
+      .tag.ok { color: var(--alive); border-color: rgba(5, 150, 105, 0.24); background: var(--alive-soft); }
+      .tag.bad { color: var(--danger); border-color: var(--danger-edge); background: var(--danger-soft); }
+      .tag.warn { color: var(--standby); border-color: var(--standby-border); background: var(--standby-soft); }
+
+      /* Capsule energy slot: carbon while healthy, quiet slate as it thins,
+         necrosis crimson once the death line is close. */
+      .bar {
+        position: relative;
+        height: 8px;
+        border-radius: var(--r-pill);
+        background: rgba(15, 23, 42, 0.07);
+        box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.12), inset 0 0 0 1px rgba(15, 23, 42, 0.04);
+        overflow: hidden;
+      }
+      .bar > span {
+        position: relative;
+        display: block;
+        height: 100%;
+        border-radius: var(--r-pill);
+        background: var(--accent);
+        transition: width 0.5s var(--ease), background-color 0.5s var(--ease);
+      }
+      .bar > span::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        border-radius: inherit;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0) 62%);
+        pointer-events: none;
+      }
+      /* While the life clock is frozen the energy slots read as held ice: the
+         colour drains out and a still slate hatch settles over the fill. The
+         fill colour arrives as an inline `style="background: …"`, and an inline
+         shorthand resets `background-image` to `none`, so the frost is drawn on
+         the `::after` overlay (which is never inlined) rather than on the span. */
+      body.is-paused .bar > span { filter: saturate(0.12) brightness(1.04); }
+      body.is-paused .bar > span::after {
+        background:
+          repeating-linear-gradient(115deg, rgba(255, 255, 255, 0.55) 0 2px, rgba(255, 255, 255, 0) 2px 7px),
+          linear-gradient(180deg, rgba(226, 232, 240, 0.9), rgba(203, 213, 225, 0.7));
+      }
+      body.is-paused .bar { box-shadow: inset 0 0 0 1px var(--standby-border), inset 0 1px 2px rgba(15, 23, 42, 0.08); }
+
+      .kv { display: flex; justify-content: space-between; gap: 10px; font-size: 12.5px; align-items: baseline; }
       .kv .k { color: var(--muted); }
-      .card-reply { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); font-size: 12px; color: var(--muted); white-space: pre-wrap; word-break: break-word; max-height: 46px; overflow: hidden; }
-      .slot-card { border-style: dashed; background: #fcfcfd; display: grid; gap: 8px; align-content: start; }
-      .slot-card .slot-title { color: var(--muted); font-size: 12.5px; }
+      .kv .num, .kv > span:last-child:not(.k) { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+      .kv > span:last-child:not(.k):not(.num) { color: var(--text); font-size: 12px; }
+      /* Scoped to telemetry values only, so a `.danger` or `.warn` utility on a
+         tag or banner is never painted by this rule. */
+      .kv .num.danger { color: var(--danger-hi); }
+      .kv .num.warn { color: var(--warn-hi); }
+      .card-reply {
+        margin-top: 9px;
+        padding-top: 9px;
+        border-top: 1px dashed var(--line);
+        font-size: 12px;
+        color: var(--muted);
+        white-space: pre-wrap;
+        word-break: break-word;
+        max-height: 46px;
+        overflow: hidden;
+        line-height: 1.5;
+      }
+      .slot-card {
+        border-style: dashed;
+        border-color: var(--line-strong);
+        background: var(--sunk);
+        box-shadow: none;
+        display: grid;
+        gap: 9px;
+        align-content: start;
+      }
+      .slot-card .slot-title {
+        color: var(--secondary);
+        font-size: 10.5px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
       .slot-card input { width: 100%; }
 
-      /* --------------------------------------------------------------- inputs */
+      /* --------------------------------------------------------- form controls */
       input, textarea, select, button { font: inherit; color: var(--text); }
       input, textarea, select {
-        background: #fff;
-        border: 1px solid var(--line);
-        border-radius: 8px;
-        padding: 6px 9px;
+        background: rgba(255, 255, 255, 0.85);
+        border: 1px solid var(--line-strong);
+        border-radius: var(--r-card);
+        padding: 7px 10px;
         min-width: 0;
+        box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.04);
+        transition: border-color 0.18s var(--ease), box-shadow 0.18s var(--ease), background 0.18s var(--ease);
       }
-      input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(31, 122, 77, 0.12); }
+      input::placeholder, textarea::placeholder { color: var(--text-muted); }
+      input:hover, textarea:hover, select:hover { border-color: rgba(148, 163, 184, 0.8); }
+      input:focus, textarea:focus, select:focus {
+        outline: none;
+        background: #FFFFFF;
+        border-color: rgba(37, 99, 235, 0.65);
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12), inset 0 1px 1px #FFFFFF;
+      }
       textarea { min-height: 62px; width: 100%; resize: vertical; }
-      .btn {
-        background: #fff;
-        border: 1px solid var(--line);
-        border-radius: 8px;
-        padding: 6px 12px;
-        cursor: pointer;
+      select {
+        appearance: none;
+        background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+          linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+        background-position: calc(100% - 16px) calc(50% + 1px), calc(100% - 11px) calc(50% + 1px);
+        background-size: 5px 5px, 5px 5px;
+        background-repeat: no-repeat;
+        padding-right: 30px;
       }
-      .btn:hover { border-color: var(--accent); color: var(--accent); }
-      .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-      .btn.primary:hover { color: #fff; opacity: 0.92; }
-      .btn.danger { color: var(--danger); border-color: #f1c9c4; }
-      .btn.danger:hover { background: var(--danger-soft); border-color: var(--danger); color: var(--danger); }
-      .btn.tiny { padding: 2px 9px; font-size: 12px; }
-      .btn.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
-      .btn.icon { padding: 4px 8px; line-height: 0; }
+      select option { background: #FFFFFF; color: var(--text); }
+      input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
+
+      /* ---------------------------------------------------------------- buttons
+         Every control is a pill cut from the same glass. Two layers carry it: an
+         outer hairline slate border, and a 1px specular cut face masked down to
+         the border box alone, which catches the light as the cursor arrives. The
+         interior stays clean white pearl — no prism, no rainbow, no glow. ----- */
+      .btn {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        border-radius: var(--r-pill);
+        border: 1px solid var(--line);
+        background: linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%);
+        padding: 7px 14px;
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--text);
+        white-space: nowrap;
+        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), inset 0 1px 0 #FFFFFF;
+        transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      }
+      /* The optical cut face: one white-to-slate gradient clipped to the 1px
+         border box, so only the pill's own edge is lit and the interior stays
+         untouched glass. */
+      .btn::after {
+        content: "";
+        position: absolute;
+        inset: -1px;
+        border-radius: inherit;
+        padding: 1px;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 1) 0%, rgba(203, 213, 225, 0.5) 100%);
+        -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+        -webkit-mask-composite: xor;
+        mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+        mask-composite: exclude;
+        opacity: 0.8;
+        pointer-events: none;
+        transition: all 0.2s ease;
+      }
+      .btn:hover {
+        transform: translateY(-1px);
+        background: #FFFFFF;
+        border-color: var(--line-strong);
+        box-shadow: var(--shadow-hover), inset 0 1px 0 #FFFFFF;
+      }
+      .btn:hover::after {
+        background: linear-gradient(180deg, #FFFFFF 0%, rgba(37, 99, 235, 0.35) 100%);
+        opacity: 1;
+      }
+      .btn:active {
+        transform: translateY(1px) scale(0.98);
+        box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.08);
+      }
+      .btn:disabled { opacity: 0.42; cursor: not-allowed; transform: none; box-shadow: var(--glass-inset); }
+      .btn:disabled::after { opacity: 0; }
+      .btn:focus-visible { box-shadow: inset 0 1px 0 #FFFFFF, 0 0 0 3px rgba(37, 99, 235, 0.22); }
+      .btn.primary {
+        background: var(--text);
+        border-color: var(--text);
+        color: #FFFFFF;
+        font-weight: 600;
+        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+      }
+      /* On the dark key the same cut face reads as a soft white edge. */
+      .btn.primary::after {
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.5) 0%, rgba(255, 255, 255, 0.06) 100%);
+      }
+      .btn.primary:hover {
+        background: #1E293B;
+        border-color: #1E293B;
+        color: #FFFFFF;
+        box-shadow: var(--shadow-hover), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+      }
+      .btn.danger {
+        color: var(--danger);
+        border-color: var(--danger-edge);
+        background: linear-gradient(180deg, #FFFFFF 0%, var(--danger-soft) 100%);
+      }
+      .btn.danger:hover {
+        background: #FFFFFF;
+        border-color: rgba(220, 38, 38, 0.45);
+        box-shadow: var(--shadow-hover), inset 0 1px 0 #FFFFFF;
+      }
+      .btn.tiny { padding: 3px 10px; font-size: 12px; }
+      .btn.active {
+        background: var(--accent-cool-soft);
+        border-color: var(--accent-edge);
+        color: var(--accent-cool);
+        font-weight: 600;
+        box-shadow: inset 0 1px 0 #FFFFFF;
+      }
+      .btn.icon { padding: 6px 8px; line-height: 0; }
       .btn.icon svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; }
+
       .chips { display: flex; gap: 6px; flex-wrap: wrap; margin: 10px 0; }
-      .list-item { border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; cursor: pointer; background: #fff; }
-      .list-item:hover { border-color: var(--accent); }
-      .list-item.active { border-color: var(--accent); background: var(--accent-soft); }
+
+      /* Labelled fields: the label sits above its control, never inside it. */
+      .field { display: grid; gap: 6px; }
+      .field.inline { grid-auto-flow: column; align-items: center; gap: 9px; }
+      .field-k {
+        font-size: 11px;
+        color: var(--secondary);
+        letter-spacing: 0.11em;
+        text-transform: uppercase;
+        font-weight: 600;
+      }
+      .field.inline .field-k { text-transform: none; letter-spacing: 0.02em; font-size: 12px; color: var(--muted); }
+
+      .list-item {
+        border: 1px solid var(--line);
+        border-left: 2px solid rgba(148, 163, 184, 0.35);
+        border-radius: var(--r-card);
+        padding: 9px 11px;
+        cursor: pointer;
+        background: var(--card);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+        transition: border-color 0.18s var(--ease), background 0.18s var(--ease), transform 0.18s var(--ease),
+          box-shadow 0.18s var(--ease);
+      }
+      .list-item:hover {
+        border-color: rgba(148, 163, 184, 0.7);
+        background: var(--card-hover);
+        transform: translateX(1px);
+        box-shadow: var(--shadow-soft), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+      }
+      .list-item.active {
+        border-color: var(--accent-edge);
+        border-left-color: var(--accent-cool);
+        background: linear-gradient(90deg, rgba(37, 99, 235, 0.08), rgba(37, 99, 235, 0.02) 55%, transparent), var(--card-hover);
+        box-shadow: inset 0 1px 0 #FFFFFF;
+      }
       .list-item .title { font-weight: 600; }
       .list-item .sub { font-size: 12px; color: var(--muted); }
 
+      /* --------------------------------------------------- code / disclosure */
       pre {
-        background: #fafafa;
+        background: rgba(248, 250, 252, 0.9);
         border: 1px solid var(--line);
-        border-radius: 8px;
-        padding: 10px;
+        border-radius: var(--r-card);
+        padding: 11px;
         margin: 0;
         overflow: auto;
         white-space: pre-wrap;
         word-break: break-word;
         max-height: 420px;
         font-size: 12.5px;
-        line-height: 1.5;
+        line-height: 1.6;
+        color: #1E293B;
+        box-shadow: inset 0 1px 3px rgba(15, 23, 42, 0.06);
       }
-      details { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; background: #fff; }
-      details + details { margin-top: 8px; }
-      details > summary { cursor: pointer; font-size: 12.5px; color: var(--muted); }
-      details[open] > summary { margin-bottom: 8px; }
-      table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
-      th, td { text-align: left; padding: 7px 9px; border-bottom: 1px solid var(--line); vertical-align: top; }
-      th { color: var(--muted); font-weight: 600; background: #fafafa; }
-      a { color: var(--accent); }
+      /* Inline code is a slab of the same paper, not a second colour. */
+      code {
+        background: var(--line-soft);
+        border-radius: 6px;
+        padding: 1px 5px;
+        font-size: 0.92em;
+        color: var(--text);
+      }
+      pre code { background: none; padding: 0; color: inherit; }
 
-      /* --------------------------------------------------------------- dialog */
-      dialog#dlg {
-        width: 92vw;
-        max-width: 92vw;
-        height: 88vh;
-        max-height: 88vh;
-        padding: 0;
+      details {
         border: 1px solid var(--line);
-        border-radius: 12px;
-        box-shadow: 0 10px 30px rgba(17, 24, 39, 0.1);
+        border-radius: var(--r-card);
+        padding: 8px 11px;
+        background: rgba(255, 255, 255, 0.5);
+        transition: border-color 0.18s var(--ease), background 0.18s var(--ease);
+      }
+      details + details { margin-top: 8px; }
+      details:hover { border-color: var(--line-strong); }
+      details > summary {
+        cursor: pointer;
+        font-size: 12.5px;
+        color: var(--muted);
+        list-style: none;
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        transition: color 0.16s var(--ease);
+      }
+      details > summary::-webkit-details-marker { display: none; }
+      details > summary::before {
+        content: "";
+        width: 0;
+        height: 0;
+        border-left: 4px solid currentColor;
+        border-top: 3.5px solid transparent;
+        border-bottom: 3.5px solid transparent;
+        transition: transform 0.2s var(--ease);
+        opacity: 0.7;
+      }
+      details[open] > summary::before { transform: rotate(90deg); }
+      details > summary:hover { color: var(--text); }
+      details[open] > summary { margin-bottom: 9px; color: var(--text); }
+
+      table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+      th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+      th {
+        color: var(--secondary);
+        font-weight: 600;
+        font-size: 10.5px;
+        letter-spacing: 0.13em;
+        text-transform: uppercase;
+        background: rgba(248, 250, 252, 0.75);
+      }
+      tbody tr { transition: background 0.14s var(--ease); }
+      tbody tr:hover { background: rgba(15, 23, 42, 0.02); }
+      tbody tr:last-child td { border-bottom: 0; }
+      a { color: var(--accent-hi); }
+
+      /* ---------------------------------------------------------------- dialog */
+      dialog#dlg {
+        width: 1120px;
+        max-width: 92vw;
+        height: 760px;
+        max-height: 85vh;
+        margin: auto;
+        padding: 0;
+        border: var(--glass-border);
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.9);
+        backdrop-filter: blur(28px) saturate(180%);
+        -webkit-backdrop-filter: blur(28px) saturate(180%);
+        box-shadow: 0 30px 80px -24px rgba(15, 23, 42, 0.28), 0 0 0 1px rgba(226, 232, 240, 0.8),
+          inset 0 1px 0 rgba(255, 255, 255, 0.95);
         overflow: hidden;
         color: var(--text);
       }
-      dialog#dlg::backdrop { background: rgba(17, 24, 39, 0.35); }
+      dialog#dlg::backdrop {
+        background: rgba(15, 23, 42, 0.55);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+      }
+
+      /* ------------------------------------------------------- settings modal
+         The operator's tooling floats over the workspace instead of replacing
+         it: a dimmed, blurred backdrop keeps the page underneath legible but
+         clearly out of focus, and the card is a two-column instrument — a fixed
+         category rail on the left, one independently scrolling panel on the
+         right. The four panels keep their original mount ids, so the three
+         second poll paints into them wherever they live. */
+      dialog#settingsDlg {
+        width: 960px;
+        max-width: 92vw;
+        height: 680px;
+        max-height: 86vh;
+        padding: 0;
+        outline: none;
+        border-radius: 16px;
+        border: 1px solid var(--line-strong);
+        background: rgba(255, 255, 255, 0.96);
+        backdrop-filter: blur(20px) saturate(160%);
+        -webkit-backdrop-filter: blur(20px) saturate(160%);
+        box-shadow: 0 25px 70px -15px rgba(15, 23, 42, 0.35), 0 0 0 1px rgba(226, 232, 240, 0.6);
+        overflow: hidden;
+        color: var(--text);
+      }
+      dialog#settingsDlg::backdrop {
+        background: rgba(15, 23, 42, 0.55);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+      }
+      dialog#settingsDlg[open] { animation: settings-in 0.26s var(--ease) both; }
+      dialog#settingsDlg[open]::backdrop { animation: settings-backdrop-in 0.26s var(--ease) both; }
+      /* Closing is the same motion played backwards; the script holds `close()`
+         until this animation lands, so the card never blinks out. */
+      dialog#settingsDlg.is-closing {
+        animation: settings-out 0.2s var(--ease) both;
+        pointer-events: none;
+      }
+      dialog#settingsDlg.is-closing::backdrop { animation: settings-backdrop-out 0.2s var(--ease) both; }
+
+      @keyframes settings-in {
+        from { opacity: 0; transform: translateY(10px) scale(0.985); }
+        to { opacity: 1; transform: none; }
+      }
+      @keyframes settings-out {
+        from { opacity: 1; transform: none; }
+        to { opacity: 0; transform: translateY(8px) scale(0.99); }
+      }
+      @keyframes settings-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
+      @keyframes settings-backdrop-out { from { opacity: 1; } to { opacity: 0; } }
+
+      .settings-shell { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+      .settings-head {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        padding: 15px 18px;
+        border-bottom: 1px solid var(--line);
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.4));
+      }
+      .settings-head-icon {
+        width: 34px;
+        height: 34px;
+        flex: 0 0 34px;
+        border-radius: 11px;
+        display: grid;
+        place-items: center;
+        background: var(--standby-soft);
+        color: var(--standby);
+        border: 1px solid var(--line);
+      }
+      .settings-head-icon svg {
+        width: 18px;
+        height: 18px;
+        stroke: currentColor;
+        fill: none;
+        stroke-width: 1.7;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .settings-head-text { display: grid; gap: 2px; min-width: 0; }
+      .settings-title { font-size: 16.5px; font-weight: 650; letter-spacing: -0.01em; }
+
+      .settings-body { flex: 1; min-height: 0; display: flex; }
+      .settings-nav {
+        width: 210px;
+        flex: 0 0 210px;
+        padding: 12px 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        border-right: 1px solid var(--line);
+        background: rgba(248, 250, 252, 0.72);
+        overflow-y: auto;
+      }
+      .settings-nav-item {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        width: 100%;
+        padding: 9px 11px;
+        border: 1px solid transparent;
+        border-radius: var(--r-pill);
+        background: none;
+        color: var(--muted);
+        font: inherit;
+        font-size: 12.5px;
+        text-align: left;
+        cursor: pointer;
+        transition: background 0.2s var(--ease), color 0.2s var(--ease), border-color 0.2s var(--ease);
+      }
+      .settings-nav-item svg {
+        width: 15px;
+        height: 15px;
+        flex: 0 0 15px;
+        stroke: currentColor;
+        fill: none;
+        stroke-width: 1.7;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        opacity: 0.75;
+      }
+      .settings-nav-item:hover { background: rgba(15, 23, 42, 0.05); color: var(--text); }
+      .settings-nav-item.active {
+        background: var(--accent-dim);
+        border-color: var(--accent-edge);
+        color: var(--accent-cool);
+        font-weight: 600;
+        box-shadow: var(--glass-inset);
+      }
+      .settings-nav-item.active svg { opacity: 1; }
+
+      .settings-content {
+        flex: 1;
+        min-width: 0;
+        padding: 22px 26px;
+        overflow-y: auto;
+        overflow-x: hidden;
+      }
+      .settings-tab-panel { display: block; }
       .dlg-wrap { display: flex; flex-direction: column; height: 100%; min-height: 0; }
       .dlg-head {
         display: flex;
         align-items: center;
         gap: 10px;
-        padding: 12px 16px;
+        padding: 13px 17px;
         border-bottom: 1px solid var(--line);
         flex-wrap: wrap;
+        background: rgba(255, 255, 255, 0.6);
       }
-      .dlg-name { font-size: 16px; }
-      .dlg-sat { display: flex; align-items: center; gap: 6px; width: 190px; }
+      .dlg-name { font-size: 16.5px; font-weight: 650; letter-spacing: -0.01em; }
+      .dlg-sat { display: flex; align-items: center; gap: 7px; width: 190px; }
       .dlg-sat .bar { flex: 1; }
-      .dlg-tabs { display: flex; gap: 2px; padding: 0 12px; border-bottom: 1px solid var(--line); overflow-x: auto; }
+
+      /* Segmented capsule rail for the specimen views. */
+      .dlg-tabs {
+        display: flex;
+        gap: 3px;
+        padding: 8px 14px;
+        border-bottom: 1px solid var(--line);
+        overflow-x: auto;
+        background: rgba(248, 250, 252, 0.72);
+      }
       .tab {
-        border: 0;
+        border: 1px solid transparent;
         background: none;
-        padding: 9px 12px;
+        padding: 7px 14px;
         color: var(--muted);
         cursor: pointer;
-        border-bottom: 2px solid transparent;
+        border-radius: var(--r-pill);
         white-space: nowrap;
+        font-size: 12.5px;
+        transition: background 0.22s var(--ease), color 0.22s var(--ease), box-shadow 0.22s var(--ease),
+          border-color 0.22s var(--ease);
       }
-      .tab:hover { color: var(--text); }
-      .tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+      .tab:hover { color: var(--text); background: rgba(15, 23, 42, 0.05); }
+      .tab.active {
+        color: var(--accent-hi);
+        background: linear-gradient(180deg, rgba(37, 99, 235, 0.14), rgba(37, 99, 235, 0.06));
+        border-color: var(--accent-edge);
+        box-shadow: 0 2px 10px -4px rgba(37, 99, 235, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+        font-weight: 600;
+      }
+
       .dlg-body { flex: 1; min-height: 0; display: flex; }
-      .pane { display: none; flex: 1; min-height: 0; padding: 14px 16px; }
+      .pane { display: none; flex: 1; min-height: 0; padding: 15px 17px; }
       .pane.active { display: flex; flex-direction: column; gap: 10px; overflow: auto; }
+      .pane.active.split {
+        display: grid;
+        grid-template-columns: 260px minmax(0, 1fr);
+        gap: 16px;
+        overflow: hidden;
+      }
       #pane-messages.active { overflow: hidden; }
-      .pane.active.split { display: grid; grid-template-columns: minmax(240px, 300px) minmax(280px, 1fr); gap: 14px; overflow: hidden; }
       .pane-col { min-height: 0; overflow: auto; display: grid; gap: 8px; align-content: start; }
 
-      /* ----------------------------------------------------------- life tab */
-      .round-item { border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; cursor: pointer; background: #fff; }
-      .round-item:hover { border-color: var(--accent); }
-      .round-item.active { border-color: var(--accent); background: var(--accent-soft); }
+      /* ------------------------------------------------------------ life tab */
+      .round-item {
+        border: 1px solid var(--line);
+        border-left: 2px solid rgba(148, 163, 184, 0.35);
+        border-radius: var(--r-card);
+        padding: 8px 10px;
+        cursor: pointer;
+        background: var(--card);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+        transition: border-color 0.18s var(--ease), background 0.18s var(--ease), box-shadow 0.18s var(--ease);
+      }
+      .round-item:hover { border-color: rgba(148, 163, 184, 0.7); background: var(--card-hover); box-shadow: var(--shadow-soft), inset 0 1px 0 rgba(255, 255, 255, 0.9); }
+      .round-item.active {
+        border-color: var(--accent-edge);
+        border-left-color: var(--accent-cool);
+        background: linear-gradient(90deg, rgba(37, 99, 235, 0.08), transparent 70%), var(--card-hover);
+        box-shadow: inset 0 1px 0 #FFFFFF;
+      }
       .round-item .r1 { display: flex; gap: 8px; align-items: center; font-size: 12.5px; }
-      .say { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; background: #fff; white-space: pre-wrap; word-break: break-word; }
-      .say.meta { font-size: 11.5px; color: var(--muted); margin-top: 4px; white-space: normal; }
-      .tool-item { border-left: 3px solid var(--accent); }
-      .tool-item.bad { border-left-color: var(--danger); }
-      .tool-sum { color: var(--muted); margin-left: 6px; }
-      .final { border: 1px solid #cbe3d6; background: var(--accent-soft); border-radius: 10px; padding: 10px; }
-      .final .label { font-size: 12px; color: var(--accent); font-weight: 600; margin-bottom: 6px; }
-      .final pre { background: #fff; border-color: #d9e9e0; max-height: 300px; }
-      .event-line { font-size: 12.5px; color: var(--muted); }
 
-      /* -------------------------------------------------------- memory/notebook */
-      .mem-body { border: 1px solid var(--line); border-radius: 8px; overflow: auto; max-height: 52vh; background: #fff; }
-      .mem-line { padding: 1px 10px; white-space: pre-wrap; word-break: break-word; line-height: 1.75; font-family: Consolas, "Cascadia Mono", monospace; font-size: 12.5px; }
-      .mem-born { background: #f3f4f6; color: var(--muted); }
-      .mem-born .hint { color: #9ca3af; font-size: 11px; margin-left: 8px; }
+      .say {
+        border: 1px solid var(--line);
+        border-radius: var(--r-card);
+        padding: 9px 11px;
+        background: var(--surface);
+        backdrop-filter: var(--surface-blur);
+        -webkit-backdrop-filter: var(--surface-blur);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+        white-space: pre-wrap;
+        word-break: break-word;
+        line-height: 1.6;
+      }
+      .say.meta {
+        font-size: 11.5px;
+        color: var(--secondary);
+        margin-top: 4px;
+        white-space: normal;
+        background: none;
+        border: 0;
+        border-left: 1px solid var(--line);
+        border-radius: 0;
+        padding: 2px 0 2px 9px;
+      }
+      .tool-item { border-left: 2px solid var(--accent); }
+      .tool-item.bad { border-left-color: var(--danger); }
+      .tool-sum { color: var(--muted); margin-left: 6px; font-size: 12px; }
+      .final {
+        border: 1px solid var(--accent-edge);
+        background: linear-gradient(180deg, rgba(37, 99, 235, 0.06), transparent), var(--surface);
+        border-radius: var(--r-card);
+        padding: 11px;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+      }
+      .final .label {
+        font-size: 11px;
+        color: var(--accent);
+        font-weight: 650;
+        margin-bottom: 7px;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+      .final pre { background: rgba(248, 250, 252, 0.9); border-color: var(--line); max-height: 300px; }
+      .event-line {
+        font-size: 12.5px;
+        color: var(--muted);
+        padding: 2px 0;
+        border-bottom: 1px solid var(--line-soft);
+      }
+      .event-line:last-child { border-bottom: 0; }
+
+      /* ----------------------------------------------------- memory / notebook */
+      .mem-body {
+        border: 1px solid var(--line);
+        border-radius: var(--r-card);
+        overflow: auto;
+        max-height: 52vh;
+        background: rgba(255, 255, 255, 0.88);
+        box-shadow: inset 0 1px 3px rgba(15, 23, 42, 0.06);
+      }
+      .mem-line {
+        padding: 1px 12px;
+        white-space: pre-wrap;
+        word-break: break-word;
+        line-height: 1.8;
+        font-family: var(--mono);
+        font-variant-numeric: tabular-nums;
+        font-size: 12.5px;
+        color: #1E293B;
+      }
+      .mem-line:hover { background: rgba(15, 23, 42, 0.025); }
+      /* The lines the last consolidation rewrote: marked with a slate rail, not
+         by introducing a second accent colour. */
+      .mem-born {
+        background: var(--line-soft);
+        color: var(--text);
+        box-shadow: inset 2px 0 0 var(--standby);
+      }
+      .mem-born .hint {
+        color: var(--secondary);
+        font-size: 10.5px;
+        margin-left: 9px;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+      /* Redacted characters read as a censor bar stamped over the page: ink with
+         the taken-character count knocked out in white. Seized evidence, never
+         amber decoration. */
+      .redact {
+        background: var(--text);
+        color: #FFFFFF;
+        border-radius: 4px;
+        padding: 0 3px;
+        margin: 0 1px;
+        box-shadow: none;
+        letter-spacing: 0.01em;
+        font-weight: 600;
+      }
+      .redact::before { content: "["; opacity: 0.5; }
+      .redact::after { content: "]"; opacity: 0.5; }
       .nb-file { text-align: left; }
 
-      /* ------------------------------------------------------------- messages */
+      /* -------------------------------------------------------------- messages */
       .chat { display: flex; flex-direction: column; min-height: 0; flex: 1; gap: 8px; }
       .chat-list { flex: 1; min-height: 0; overflow: auto; display: grid; gap: 8px; align-content: start; padding-right: 2px; }
-      .msg { max-width: 72%; padding: 7px 10px; border-radius: 10px; border: 1px solid var(--line); background: #fff; }
-      .msg.op { justify-self: end; background: var(--accent-soft); border-color: #d9e9e0; }
-      .msg .who { font-size: 11px; color: var(--muted); margin-bottom: 3px; }
-      .msg .body { white-space: pre-wrap; word-break: break-word; }
+      .msg {
+        max-width: 72%;
+        padding: 8px 11px;
+        border-radius: var(--r-card);
+        border: 1px solid var(--line);
+        background: var(--surface);
+        backdrop-filter: var(--surface-blur);
+        -webkit-backdrop-filter: var(--surface-blur);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+        animation: page-in 0.28s var(--ease) both;
+      }
+      .msg.op {
+        justify-self: end;
+        background: linear-gradient(180deg, rgba(37, 99, 235, 0.1), rgba(37, 99, 235, 0.04));
+        border-color: var(--accent-edge);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+      }
+      .msg .who {
+        font-size: 10.5px;
+        color: var(--secondary);
+        margin-bottom: 4px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .msg.op .who { color: var(--accent-cool); }
+      .msg .body { white-space: pre-wrap; word-break: break-word; line-height: 1.6; }
       .chat-input { display: flex; gap: 8px; }
       .chat-input input { flex: 1; }
 
-      .banner { border-radius: 8px; padding: 9px 11px; font-size: 13px; }
-      .banner.warn { background: var(--warn-soft); border: 1px solid #f2d9a8; color: #6b3d05; }
-      .banner.danger { background: var(--danger-soft); border: 1px solid #f1c9c4; color: var(--danger); }
-      .config-table td:first-child { color: var(--muted); width: 260px; }
+      /* --------------------------------------------------------------- banners */
+      .banner {
+        border-radius: var(--r-card);
+        padding: 10px 12px;
+        font-size: 12.5px;
+        line-height: 1.55;
+        border: 1px solid var(--line);
+        background: var(--surface);
+        backdrop-filter: var(--surface-blur);
+        -webkit-backdrop-filter: var(--surface-blur);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+      }
+      /* A standby notice is a quiet slate card with a 3px rail on its left edge.
+         Slate is the colour of "held", not of danger. */
+      .banner.warn {
+        background: var(--standby-soft);
+        border-color: var(--standby-border);
+        color: var(--standby);
+        box-shadow: inset 3px 0 0 var(--standby);
+      }
+      .banner.danger {
+        background: var(--danger-soft);
+        border-color: var(--danger-edge);
+        color: #991B1B;
+        box-shadow: inset 3px 0 0 var(--danger);
+      }
 
       /* ---------------------------------------------------------------- pause */
-      .pause-card { display: grid; gap: 6px; }
-      .pause-switch { cursor: pointer; font-weight: 600; }
-      .pause-card input[type="checkbox"] {
-        width: 16px;
-        height: 16px;
-        flex: 0 0 16px;
-        padding: 0;
-        margin: 0;
-        accent-color: var(--warn);
-        cursor: pointer;
+
+      /* iOS-style capsule switch: the state of the life clock, not a raw checkbox. */
+      .toggle { display: inline-flex; align-items: center; gap: 11px; cursor: pointer; user-select: none; }
+      .toggle input { position: absolute; opacity: 0; width: 0; height: 0; margin: 0; pointer-events: none; }
+      .toggle-track {
+        position: relative;
+        flex: 0 0 44px;
+        width: 44px;
+        height: 24px;
+        border-radius: var(--r-pill);
+        background: rgba(15, 23, 42, 0.1);
+        border: 1px solid var(--line-strong);
+        box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.08);
+        transition: background 0.25s var(--ease), border-color 0.25s var(--ease), box-shadow 0.25s var(--ease);
       }
-      .banner.pause-banner {
-        margin: 10px 18px 0;
-        cursor: pointer;
-        font-weight: 600;
-        border-left-width: 4px;
+      .toggle-knob {
+        position: absolute;
+        top: 2px;
+        left: 2px;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: #FFFFFF;
+        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.24), inset 0 1px 1px #FFFFFF;
+        transition: transform 0.28s var(--ease), background 0.25s var(--ease), box-shadow 0.25s var(--ease);
       }
-      .banner.pause-banner[hidden] { display: none; }
-      .banner.pause-banner:hover { background: #fff3d6; }
-      .pause-rail {
-        border: 1px solid #f2d9a8;
-        border-left: 3px solid var(--warn);
-        background: var(--warn-soft);
-        color: #6b3d05;
-        border-radius: 8px;
-        padding: 5px 8px;
+      .toggle:hover .toggle-track { border-color: var(--accent-edge); }
+      /* Engaged: a carbon key with a white dot. Standby is a state, not a hazard,
+         so the switch never turns amber. */
+      .toggle input:checked ~ .toggle-track {
+        background: var(--text);
+        border-color: var(--text);
+        box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.16);
+      }
+      .toggle input:checked ~ .toggle-track .toggle-knob {
+        transform: translateX(20px);
+        background: #FFFFFF;
+        box-shadow: 0 2px 6px rgba(15, 23, 42, 0.3), inset 0 1px 1px #FFFFFF;
+      }
+      .toggle input:focus-visible ~ .toggle-track { box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.22); }
+      .toggle-text { font-weight: 650; font-size: 14px; }
+      .toggle-state {
+        font-family: var(--mono);
+        font-variant-numeric: tabular-nums;
         font-size: 11.5px;
-        font-weight: 600;
-        cursor: pointer;
-        margin: 0 10px 10px;
+        letter-spacing: 0.04em;
+        padding: 3px 9px;
+        border-radius: var(--r-pill);
+        border: 1px solid var(--line);
+        background: var(--line-soft);
+        color: var(--text);
       }
-      .pause-rail:hover { background: #fff3d6; }
+      .toggle-state.warn {
+        border-color: var(--standby-border);
+        background: var(--standby-soft);
+        color: var(--standby);
+      }
+
+      /* A frozen life clock is a standby condition, not a fire alarm: one still
+         band of translucent glacial slate, with a 3px rail on its left edge. No
+         gold, no sweep, no glow — the greenhouse is simply breathing slowly. */
+      .banner.pause-banner {
+        position: relative;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 11px 18px 0;
+        padding: 11px 14px;
+        cursor: pointer;
+        font-weight: 500;
+        font-size: 13px;
+        letter-spacing: 0.01em;
+        color: var(--standby);
+        border: 1px solid var(--standby-border);
+        border-radius: var(--r-panel);
+        background: var(--standby-soft);
+        box-shadow: var(--shadow-card), inset 3px 0 0 var(--standby);
+        transition: background 0.2s var(--ease), border-color 0.2s var(--ease), box-shadow 0.2s var(--ease);
+      }
+      .pause-banner .pb-dot {
+        width: 8px;
+        height: 8px;
+        flex: 0 0 8px;
+        border-radius: 50%;
+        background: var(--standby);
+        box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.26);
+        animation: standby-pulse 3.2s var(--ease) infinite;
+      }
+      .banner.pause-banner:hover {
+        background: #FFFFFF;
+        border-color: var(--text-sub);
+        box-shadow: var(--shadow-hover), inset 3px 0 0 var(--standby);
+      }
+      .pause-banner .go {
+        margin-left: auto;
+        font-weight: 600;
+        font-size: 12px;
+        opacity: 0.85;
+        white-space: nowrap;
+      }
+
+      /* The rail carries a compact standby chip: a light slate capsule that only
+         brightens faintly on hover, never a yellow warning tag. */
+      .pause-rail {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 0 13px 11px;
+        padding: 6px 10px;
+        border: 1px solid var(--standby-border);
+        border-radius: var(--r-pill);
+        background: var(--standby-soft);
+        color: var(--standby);
+        box-shadow: var(--glass-inset);
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        cursor: pointer;
+        transition: background 0.18s var(--ease), border-color 0.18s var(--ease), box-shadow 0.18s var(--ease);
+      }
+      .pause-rail:hover {
+        background: #FFFFFF;
+        border-color: var(--text-sub);
+        box-shadow: var(--shadow-card), var(--glass-inset);
+      }
+      .pause-rail .led {
+        width: 6px;
+        height: 6px;
+        flex: 0 0 6px;
+        border-radius: 50%;
+        background: var(--standby);
+        box-shadow: 0 0 0 2px rgba(148, 163, 184, 0.25);
+        animation: standby-pulse 3.2s var(--ease) infinite;
+      }
+
+      /* ------------------------------------------------------- settings bento */
+      .settings-bento {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px;
+        align-items: start;
+      }
+      @media (max-width: 1180px) { .settings-bento { grid-template-columns: minmax(0, 1fr); } }
+
+      .mod {
+        background: var(--card);
+        backdrop-filter: var(--surface-blur);
+        -webkit-backdrop-filter: var(--surface-blur);
+        border: 1px solid var(--line);
+        border-radius: var(--r-panel);
+        box-shadow: var(--shadow-soft), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+        overflow: hidden;
+        transition: border-color 0.22s var(--ease), box-shadow 0.22s var(--ease), transform 0.22s var(--ease);
+      }
+      .mod:hover {
+        border-color: var(--line-strong);
+        box-shadow: var(--shadow-hover), inset 0 1px 0 #FFFFFF;
+      }
+      .mod.span2 { grid-column: 1 / -1; }
+      .mod-head {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        padding: 13px 15px;
+        border-bottom: 1px solid var(--line);
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0.3));
+      }
+      /* Module glyphs are die-stamped in the same slate. The bento gets its
+         rhythm from spacing and type weight, not from a four-colour icon set. */
+      .mod-icon {
+        width: 32px;
+        height: 32px;
+        flex: 0 0 32px;
+        border-radius: 10px;
+        display: grid;
+        place-items: center;
+        background: var(--standby-soft);
+        color: var(--standby);
+        border: 1px solid var(--line);
+      }
+      .mod-icon svg {
+        width: 17px;
+        height: 17px;
+        stroke: currentColor;
+        fill: none;
+        stroke-width: 1.7;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .mod-head-text { display: grid; gap: 2px; flex: 1 1 auto; min-width: 0; }
+      .mod-title { display: block; font-weight: 650; font-size: 14px; letter-spacing: -0.005em; }
+      .mod-sub { display: block; font-size: 11.5px; color: var(--muted); line-height: 1.4; }
+      .mod-head .pill, .mod-head .tag { margin-left: auto; flex: 0 0 auto; }
+      .mod-body { padding: 14px 15px 15px; display: grid; gap: 12px; }
+
+      .metric-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+      /* Four across only while there is room; the media query below still wins
+         because this is a class rule rather than an inline style. */
+      .metric-grid.cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      @media (max-width: 1180px) { .metric-grid.cols-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+      @media (max-width: 620px) { .metric-grid, .metric-grid.cols-4 { grid-template-columns: minmax(0, 1fr); } }
+      .metric {
+        background: rgba(255, 255, 255, 0.66);
+        border: 1px solid var(--line-soft);
+        border-radius: var(--r-card);
+        padding: 10px 12px;
+        display: grid;
+        gap: 3px;
+        align-content: start;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+        transition: border-color 0.18s var(--ease), background 0.18s var(--ease), box-shadow 0.18s var(--ease);
+      }
+      .metric:hover {
+        border-color: var(--line-strong);
+        background: #FFFFFF;
+        box-shadow: var(--shadow-card), inset 0 1px 0 #FFFFFF;
+      }
+      .metric-k {
+        font-size: 11.5px;
+        color: var(--muted);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        line-height: 1.4;
+      }
+      .metric-v {
+        font-family: var(--mono);
+        font-variant-numeric: tabular-nums;
+        font-size: 19px;
+        font-weight: 700;
+        letter-spacing: -0.025em;
+        line-height: 1.15;
+        color: var(--text);
+      }
+      .metric-v .metric-u {
+        font-size: 11.5px;
+        font-weight: 500;
+        color: var(--secondary);
+        margin-left: 4px;
+        letter-spacing: 0;
+      }
+      .metric-note { font-size: 11.5px; color: var(--text-sub); line-height: 1.5; }
+      /* Used deliberately on the last cell of an odd-count row so the grid keeps
+         its rhythm instead of leaving a hole. */
+      .metric.wide { grid-column: 1 / -1; }
+      .metric.wide .metric-v { font-size: 17px; }
+      /* A metric value is ink. `tone-accent` is a no-op kept for the call sites
+         that still pass it; `tone-warn` is the standby slate used by the frozen
+         clock; only `tone-danger` is allowed to go red, and only on the death
+         line. */
+      .metric.tone-accent .metric-v { color: var(--text); }
+      .metric.tone-warn .metric-v { color: var(--standby); }
+      .metric.tone-danger .metric-v { color: var(--danger); }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        height: 20px;
+        padding: 0 9px;
+        border-radius: var(--r-pill);
+        font-size: 11px;
+        font-family: var(--mono);
+        font-variant-numeric: tabular-nums;
+        letter-spacing: 0.02em;
+        border: 1px solid var(--line);
+        color: var(--muted);
+        background: rgba(255, 255, 255, 0.7);
+        white-space: nowrap;
+        font-weight: 500;
+      }
+      .pill.ok { color: var(--alive); border-color: rgba(5, 150, 105, 0.24); background: var(--alive-soft); }
+      .pill.warn { color: var(--standby); border-color: var(--standby-border); background: var(--standby-soft); }
+      .pill.bad { color: var(--danger); border-color: var(--danger-edge); background: var(--danger-soft); }
+      .pill.info { color: var(--text-muted); border-color: var(--line-strong); background: var(--line-soft); }
+
+      /* Segmented control: a sunken light trough with a floating white key. */
+      .seg {
+        display: inline-flex;
+        gap: 3px;
+        padding: 3px;
+        background: rgba(15, 23, 42, 0.05);
+        border: 1px solid var(--line);
+        border-radius: var(--r-pill);
+        box-shadow: inset 0 1px 3px rgba(15, 23, 42, 0.07);
+      }
+      .seg-opt { position: relative; cursor: pointer; display: inline-flex; }
+      .seg-opt input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+      .seg-face {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        height: 28px;
+        padding: 0 14px;
+        border-radius: var(--r-pill);
+        font-size: 12.5px;
+        color: var(--muted);
+        white-space: nowrap;
+        transition: background 0.22s var(--ease), color 0.22s var(--ease), box-shadow 0.22s var(--ease);
+      }
+      .seg-face .led { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: 0.55; }
+      .seg-opt:hover .seg-face { color: var(--text); background: rgba(255, 255, 255, 0.75); }
+      .seg-opt input:checked + .seg-face {
+        background: #FFFFFF;
+        color: var(--accent-cool);
+        font-weight: 600;
+        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.14), 0 4px 10px -4px rgba(15, 23, 42, 0.18),
+          inset 0 1px 0 rgba(255, 255, 255, 0.95);
+      }
+      .seg-opt input:checked + .seg-face .led { opacity: 1; box-shadow: 0 0 8px currentColor; }
+      .seg-opt input:focus-visible + .seg-face { box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2); }
+
+      /* Prompt template file cards: name and health, never a raw disk path. */
+      .tpl-list { display: grid; gap: 8px; }
+      .tpl-card {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 9px 11px;
+        background: rgba(255, 255, 255, 0.72);
+        border: 1px solid var(--line-soft);
+        border-radius: var(--r-card);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+        transition: border-color 0.18s var(--ease), background 0.18s var(--ease), box-shadow 0.18s var(--ease);
+      }
+      .tpl-card:hover {
+        border-color: var(--line-strong);
+        background: #FFFFFF;
+        box-shadow: var(--shadow-card), inset 0 1px 0 #FFFFFF;
+      }
+      .tpl-card.bad { border-color: var(--standby-border); }
+      .tpl-file {
+        font-family: var(--mono);
+        font-variant-numeric: tabular-nums;
+        font-size: 12.5px;
+        color: var(--text);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .tpl-dir {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--secondary);
+        margin-left: auto;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        max-width: 40%;
+        text-align: right;
+      }
+      .tpl-card .pill { flex: 0 0 auto; }
+
+      .hint-line {
+        font-size: 11.5px;
+        color: var(--muted);
+        line-height: 1.6;
+        display: flex;
+        gap: 8px;
+        align-items: flex-start;
+      }
+      .hint-line::before {
+        content: "";
+        flex: 0 0 2px;
+        align-self: stretch;
+        border-radius: var(--r-pill);
+        background: var(--line-strong);
+      }
+      details.raw-config { margin-top: 14px; }
+      details.raw-config > summary { font-size: 12.5px; }
+
+      /* Only genuinely decorative micro-labels opt into the faint tier. Table
+         column headers and form-field labels are content, so they are NOT in
+         this list — they keep the readable `--secondary` from their own rules
+         above (this block sits later in the sheet, so an equal-specificity
+         selector here would silently win). */
+      .brand small,
+      .rail-chip .chip-k,
+      .slot-card .slot-title,
+      .mem-born .hint {
+        color: var(--text-sub);
+      }
+
+      /* ------------------------------------------------------------ animation */
+      /* Breathing only: the ring colours are static so a degraded lamp can never
+         pulse green rings around a crimson dot. */
+      @keyframes vital-pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.55; }
+      }
+      @keyframes toast-in {
+        from { opacity: 0; transform: translateX(18px) scale(0.98); }
+        to { opacity: 1; transform: none; }
+      }
+      @keyframes page-in {
+        from { opacity: 0; transform: translateY(6px); }
+        to { opacity: 1; transform: none; }
+      }
+      /* A slow, low-contrast breath for the standby markers: a frozen clock is
+         held, not flashing. */
+      @keyframes standby-pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.45; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after {
+          animation-duration: 0.001ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.001ms !important;
+        }
+        .agent-card:hover { transform: none; }
+      }
     </style>
   </head>
   <body>
     <div class="app">
       <aside class="rail">
-        <div class="brand">Conservatory<small>OPERATOR CONSOLE</small></div>
+        <div class="brand">
+          <span class="brand-mark">
+            <svg class="brand-logo" viewBox="228 245 568 533" aria-hidden="true" focusable="false">
+              <g fill="currentColor" stroke="currentColor">
+                <!-- Greenhouse outer frame -->
+                <path d="M 241 705 L 358 765 L 666 765 L 783 705 L 783 529 A 271 271 0 0 0 241 529 Z"
+                  fill="none" stroke-width="26" stroke-linecap="round" stroke-linejoin="round" />
+                <!-- Greenhouse inner arch -->
+                <path d="M 358 765 L 358 529 A 154 154 0 0 1 666 529 L 666 765"
+                  fill="none" stroke-width="26" stroke-linecap="round" stroke-linejoin="round" />
+                <!-- Top vertical strut -->
+                <line x1="512" y1="258" x2="512" y2="375" stroke-width="26" stroke-linecap="round" />
+                <!-- Diagonal struts -->
+                <line x1="376" y1="456" x2="273" y2="401" stroke-width="26" stroke-linecap="round" />
+                <line x1="648" y1="456" x2="751" y2="401" stroke-width="26" stroke-linecap="round" />
+                <!-- Curved roof ribs -->
+                <path d="M 465 275 C 444 320, 415 362, 390 405"
+                  fill="none" stroke-width="26" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M 559 275 C 580 320, 609 362, 634 405"
+                  fill="none" stroke-width="26" stroke-linecap="round" stroke-linejoin="round" />
+                <!-- Plant sprout (stem and leaves) -->
+                <path d="M 598 475
+                         C 624 500, 582 571, 538 565
+                         C 543 544, 556 528, 571 511
+                         C 555 513, 530 541, 525 565
+                         L 525 765
+                         L 499 765
+                         L 499 620
+                         C 495 599, 475 579, 455 567
+                         C 451 574, 497 613, 479 621
+                         C 438 618, 414 576, 416 537
+                         C 455 516, 513 576, 512 604
+                         C 501 542, 530 475, 598 475 Z"
+                  stroke="none" />
+              </g>
+            </svg>
+            <span class="vital" id="brandVital" title="温室运行中"></span>
+          </span>
+          <span>
+            <span class="brand-name">Conservatory</span>
+            <small>OPERATOR CONSOLE</small>
+          </span>
+        </div>
         <nav class="nav" id="nav">
           <div class="nav-item" data-act="nav" data-page="agents">
             <svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2" /><path d="M3.5 19c0-3 2.5-5 5.5-5s5.5 2 5.5 5" /><path d="M16 6.6a3 3 0 0 1 0 5.8" /><path d="M17.5 19c0-2.1-.7-3.8-2-4.8" /></svg>
@@ -352,18 +1839,30 @@
             <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" /><path d="M12 7.5V12l3.2 1.9" /></svg>
             <span class="nav-label">干预记录</span>
           </div>
-          <div class="nav-item" data-act="nav" data-page="settings">
-            <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16" /><circle cx="9" cy="7" r="2" /><circle cx="15" cy="12" r="2" /><circle cx="8" cy="17" r="2" /></svg>
-            <span class="nav-label">设置</span>
-          </div>
         </nav>
         <div class="rail-foot" id="railFoot"></div>
-        <div class="pause-rail" id="railPause" data-act="goto-pause-settings" title="点击到设置页" hidden></div>
+        <!-- A compact frozen-clock chip, not a second full banner. -->
+        <div class="pause-rail" id="railPause" data-act="goto-pause-settings" title="点击到设置页恢复" hidden></div>
+        <!-- Settings is operator-wide tooling, not one more page in the specimen
+             list, so it is pinned to the very bottom of the rail: telemetry
+             reads first, the tool you reach for second. It opens the floating
+             modal instead of routing, so the workspace underneath is never
+             unloaded, and it deliberately drops `data-page` so applyRoute()
+             can never mark it as the current page. -->
+        <div class="rail-bottom">
+          <div class="nav-item nav-settings" data-act="open-settings">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.1" /><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 8.9 19.3a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.7 8.9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1.03-1.56V3a2 2 0 1 1 4 0v.09A1.7 1.7 0 0 0 15.1 4.7a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9v.09a1.7 1.7 0 0 0 1.56 1.03H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1.03z" /></svg>
+            <span class="nav-label">设置</span>
+          </div>
+        </div>
       </aside>
 
       <div class="main">
+        <div id="pauseBanner" class="banner pause-banner" data-act="goto-pause-settings" title="点击到设置页恢复" hidden></div>
+        <!-- Floating toasts dock here; they must never swallow a click meant for
+             the workspace underneath, so only the notice cards themselves take
+             pointer events (see `.notice`). -->
         <div class="notices" id="notices"></div>
-        <div id="pauseBanner" class="banner warn pause-banner" data-act="goto-pause-settings" title="点击到设置页恢复" hidden></div>
         <div class="pages" id="pages">
           <section class="page" id="page-agents">
             <h2 class="page-title">所有 Agent</h2>
@@ -378,10 +1877,13 @@
             <div class="split">
               <div class="col-stack">
                 <div class="card col-stack">
-                  <div class="small muted">发布任务</div>
-                  <input id="taskTitle" placeholder="标题" />
-                  <input id="taskPrice" type="number" min="0" placeholder="价格（harness 余额）" />
-                  <textarea id="taskDesc" placeholder="描述（Agent 会看到）"></textarea>
+                  <div class="mod-title" style="font-size: 13.5px">发布任务</div>
+                  <label class="field"><span class="field-k">标题</span>
+                    <input id="taskTitle" placeholder="给 Agent 看的一句话" /></label>
+                  <label class="field"><span class="field-k">价格</span>
+                    <input id="taskPrice" type="number" min="0" placeholder="harness 余额" /></label>
+                  <label class="field"><span class="field-k">描述</span>
+                    <textarea id="taskDesc" placeholder="Agent 会看到这段描述，写清验收标准"></textarea></label>
                   <div class="row"><button class="btn primary" data-act="post-task">发布任务</button></div>
                 </div>
                 <div class="chips" id="taskFilters"></div>
@@ -406,17 +1908,10 @@
               这些记录永久保存。给余额、给饱食度、暂停或恢复温室都会写入 interventions 表：前两者会改变这两个数字，暂停与恢复则冻结或恢复整个温室的时间流动。它们都不会改变饱食度自然下降的规则。
             </div>
             <div class="row" style="margin-bottom: 10px">
-              <span class="small muted">按 Agent 筛选</span>
-              <select id="intFilter"></select>
+              <label class="field inline"><span class="field-k">按 Agent 筛选</span>
+                <select id="intFilter"></select></label>
             </div>
             <div id="intTable"></div>
-          </section>
-
-          <section class="page" id="page-settings">
-            <h2 class="page-title">设置</h2>
-            <div id="pauseSwitchBox"></div>
-            <div id="promptBox"></div>
-            <div id="settingsBox"></div>
           </section>
         </div>
       </div>
@@ -456,6 +1951,14 @@
 
           <section class="pane" id="pane-body">
             <div class="pane-col" id="bodyPane"></div>
+          </section>
+
+          <section class="pane split" id="pane-wounds">
+            <div class="pane-col">
+              <div class="small muted">伤口列表（这里是操作员视角，可以看到被遮盖的原文；Agent 看不到这些原文）。</div>
+              <div class="list" id="woundList"></div>
+            </div>
+            <div class="pane-col" id="woundDetail"></div>
           </section>
 
           <section class="pane split" id="pane-memory">
@@ -498,6 +2001,62 @@
           <section class="pane" id="pane-interventions">
             <div class="pane-col" id="agentInt"></div>
           </section>
+        </div>
+      </div>
+    </dialog>
+
+    <!-- Settings is operator-wide tooling, not one more page in the specimen
+         list: it floats above whatever the operator was reading instead of
+         replacing it. The four mount points below keep their original ids, so
+         the three-second poll keeps painting straight into them. -->
+    <dialog id="settingsDlg" class="settings-modal">
+      <div class="settings-shell">
+        <header class="settings-head">
+          <span class="settings-head-icon">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.1" /><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 8.9 19.3a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.7 8.9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1.03-1.56V3a2 2 0 1 1 4 0v.09A1.7 1.7 0 0 0 15.1 4.7a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9v.09a1.7 1.7 0 0 0 1.56 1.03H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1.03z" /></svg>
+          </span>
+          <span class="settings-head-text">
+            <strong class="settings-title">系统设置</strong>
+            <span class="small muted">温室总控、提示词、沙箱与经济参数</span>
+          </span>
+          <span class="grow"></span>
+          <button class="btn icon" data-act="settings-close" title="关闭 (Esc)">
+            <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" /></svg>
+          </button>
+        </header>
+        <div class="settings-body">
+          <nav class="settings-nav" id="settingsNav">
+            <button class="settings-nav-item active" data-act="settings-tab" data-tab="vital">
+              <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.2" /><path d="M12 7.6V12l3 1.9" /></svg>
+              <span>生命时钟与总控</span>
+            </button>
+            <button class="settings-nav-item" data-act="settings-tab" data-tab="prompts">
+              <svg viewBox="0 0 24 24"><path d="M14.5 3.5 6 13h5l-1.5 7.5L18 11h-5z" /></svg>
+              <span>提示词热重载</span>
+            </button>
+            <button class="settings-nav-item" data-act="settings-tab" data-tab="sandbox">
+              <svg viewBox="0 0 24 24"><path d="M12 3.4 4.6 6.5v5.3c0 4.3 3.1 7.6 7.4 8.8 4.3-1.2 7.4-4.5 7.4-8.8V6.5z" /><path d="M9.2 12.2l2 2 3.7-4" /></svg>
+              <span>沙箱与安全策略</span>
+            </button>
+            <button class="settings-nav-item" data-act="settings-tab" data-tab="system">
+              <svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="3" /><path d="M8 3.5v17M3.5 9h17M3.5 15h17" /></svg>
+              <span>系统经济与指标</span>
+            </button>
+          </nav>
+          <div class="settings-content" id="settingsContent">
+            <section class="settings-tab-panel" id="settingsPanel-vital">
+              <div id="pauseSwitchBox"></div>
+            </section>
+            <section class="settings-tab-panel" id="settingsPanel-prompts" hidden>
+              <div id="promptBox"></div>
+            </section>
+            <section class="settings-tab-panel" id="settingsPanel-sandbox" hidden>
+              <div id="sandboxBox"></div>
+            </section>
+            <section class="settings-tab-panel" id="settingsPanel-system" hidden>
+              <div id="settingsBox"></div>
+            </section>
+          </div>
         </div>
       </div>
     </dialog>
@@ -568,10 +2127,14 @@
       const alertError = (error) => alert(error instanceof Error ? error.message : String(error));
 
       // ------------------------------------------------------------- tables
-      const PAGES = ["agents", "tasks", "income", "interventions", "settings"];
+      // Settings is deliberately NOT in this list: it is a floating modal, not a
+      // page, so navigating never unloads the workspace the operator was reading.
+      const PAGES = ["agents", "tasks", "income", "interventions"];
+      const SETTINGS_TABS = ["vital", "prompts", "sandbox", "system"];
       const TABS = [
         { id: "life", label: "生命动态" },
         { id: "body", label: "身体" },
+        { id: "wounds", label: "伤口" },
         { id: "memory", label: "记忆" },
         { id: "notebook", label: "记事本" },
         { id: "messages", label: "留言" },
@@ -594,6 +2157,12 @@
       const EVENT_LABEL = {
         meal: "进食",
         meal_refused: "进食被拒（余额不足）",
+        redaction: "遮盖（夺走字符）",
+        redaction_skipped: "遮盖跳过（没有可遮盖的字符）",
+        treatment: "治疗",
+        treatment_refused: "治疗被拒",
+        death: "死亡",
+        frozen_restored: "冻结句已恢复",
         task_claimed: "认领任务",
         task_submitted: "提交任务",
         income_reported: "申报收入",
@@ -619,6 +2188,13 @@
         give_satiety: "给予饱食度",
         conservatory_paused: "暂停温室",
         conservatory_resumed: "恢复温室",
+        operator_treat: "操作员代为治疗",
+        force_terminate: "操作员强制终止（死亡）",
+      };
+      const WOUND_STATUS = {
+        untreated: "未治疗",
+        scarred: "已留疤",
+        healed: "已完全治愈",
       };
       const taskTagClass = (status) =>
         status === "accepted" ? "tag ok" : status === "rejected" ? "tag bad" : status === "submitted" ? "tag warn" : "tag";
@@ -629,10 +2205,15 @@
       let refreshing = false;
       let dlgAgent = null;
       let dlgTab = "life";
+      let settingsTab = "vital";
+      let settingsClosing = false;
+      let settingsCloseHandler = null;
       let lifeRange = 5;
       let roundSel = null;
       let roundCache = { agent: null, range: null, rounds: [] };
       let memSel = null;
+      let woundSel = null;
+      let woundCache = { agent: null, wounds: [] };
       let memCache = { agent: null, memory: "", records: [] };
       let nbCache = { agent: null, files: [], path: null, content: "" };
       let nbLoading = false;
@@ -643,6 +2224,14 @@
       let incomeKey = null;
       let intFilter = "";
       let settingsKey = null;
+      // The sandbox panel keeps its own state: the server's last answer, the
+      // operator's unsaved draft, and the two message lines. Polling repaints
+      // it from the draft only, so a half-finished edit is never overwritten.
+      let sandboxView = null;
+      let sandboxDraft = null;
+      let sandboxStatus = null;
+      let sandboxHints = {};
+      let sandboxLoading = false;
       let loadedRoundAt = {};
       const slotDrafts = {};
       const readMarks = new Set(loadReadMarks());
@@ -691,7 +2280,6 @@
         if (typeof since !== "number" || !Number.isFinite(since)) return 0;
         return Math.max(0, Math.floor((Date.now() - since) / 60000));
       };
-      const pauseText = () => `温室已暂停 · 已暂停 ${pauseMinutes()} 分钟`;
 
       // ------------------------------------------------------------ routing
       function parseHash() {
@@ -714,7 +2302,7 @@
         for (const page of PAGES) {
           $(`page-${page}`).classList.toggle("active", page === route.page);
         }
-        document.querySelectorAll(".nav-item").forEach((item) => {
+        document.querySelectorAll(".nav-item[data-page]").forEach((item) => {
           item.classList.toggle("active", item.dataset.page === route.page);
         });
         const known = route.agent !== null && state !== null && agentByName(route.agent) !== null;
@@ -733,7 +2321,9 @@
           dlgAgent = name;
           roundSel = null;
           memSel = null;
+          woundSel = null;
           nbCache = { agent: null, files: [], path: null, content: "" };
+          woundCache = { agent: null, wounds: [] };
           roundCache = { agent: null, range: null, rounds: [] };
           memCache = { agent: null, memory: "", records: [] };
           resetAgentPanes();
@@ -754,6 +2344,62 @@
       const closeAgent = () => navigate("#/agents");
       const goPage = (page) => navigate(`#/${page}`);
 
+      // ------------------------------------------------------ settings modal
+      // The modal never touches the hash, so `applyRoute()` and the page the
+      // operator was reading are both untouched by open and close.
+      function paintSettingsTabs() {
+        for (const button of document.querySelectorAll(".settings-nav-item")) {
+          button.classList.toggle("active", button.dataset.tab === settingsTab);
+        }
+        for (const tab of SETTINGS_TABS) {
+          const panel = $(`settingsPanel-${tab}`);
+          if (panel !== null) panel.hidden = tab !== settingsTab;
+        }
+      }
+      function switchSettingsTab(tab) {
+        settingsTab = SETTINGS_TABS.indexOf(tab) >= 0 ? tab : "vital";
+        paintSettingsTabs();
+      }
+      function openSettingsDlg(tab = "vital") {
+        // Cancel a close that is still mid-animation, otherwise the pending
+        // `close()` would shut the dialog that was just reopened.
+        settingsClosing = false;
+        $("settingsDlg").classList.remove("is-closing");
+        switchSettingsTab(tab);
+        if (!$("settingsDlg").open) $("settingsDlg").showModal();
+        // The panels are built lazily, so opening paints them once immediately
+        // instead of waiting up to one poll interval for the first content.
+        paintSettingsPage();
+        paintPromptPanel();
+        paintSandboxPanel();
+        if (settingsTab === "sandbox") void loadSandboxConfig();
+      }
+      function closeSettingsDlg() {
+        const dlg = $("settingsDlg");
+        if (!dlg.open || settingsClosing) return;
+        settingsClosing = true;
+        dlg.classList.add("is-closing");
+        // A reopen can still have the entry animation in flight; only the exit
+        // animation may settle this close. The timer is the safety net for a
+        // dropped event (and for `prefers-reduced-motion`, where the animation
+        // still ends, so it only ever fires after the real one).
+        const finish = () => {
+          if (settingsCloseHandler !== null) {
+            dlg.removeEventListener("animationend", settingsCloseHandler);
+            settingsCloseHandler = null;
+          }
+          if (!settingsClosing) return;
+          settingsClosing = false;
+          dlg.classList.remove("is-closing");
+          if (dlg.open) dlg.close();
+        };
+        settingsCloseHandler = (event) => {
+          if (event.animationName === "settings-out") finish();
+        };
+        dlg.addEventListener("animationend", settingsCloseHandler);
+        setTimeout(finish, 320);
+      }
+
       // ------------------------------------------------------------- paints
       function paint() {
         paintNav();
@@ -766,6 +2412,7 @@
         paintInterventionsPage();
         paintSettingsPage();
         paintPromptPanel();
+        paintSandboxPanel();
         paintDialogHeader();
         paintPanes();
       }
@@ -779,46 +2426,121 @@
           badge.textContent = value > 99 ? "99+" : String(value);
         }
       }
+
       function paintRailFoot() {
+        const host = $("railFoot");
         if (state === null) return;
         const busy = state.agents.filter((agent) => agent.busy).length;
-        const host = $("railFoot");
-        host.innerHTML =
-          `<div>存活 Agent：<strong>${aliveAgents().length}</strong> / 槽位上限 <strong>${state.config.maxSlots}</strong></div>` +
-          `<div>正在一轮中：<strong>${busy}</strong></div>` +
-          `<div>每 3 秒刷新 · ${esc(new Date().toLocaleTimeString("zh-CN"))}</div>` +
-          (refreshError === null
-            ? ""
-            : `<div style="color: var(--danger)">刷新失败：${esc(refreshError)}</div>`);
+        const alive = aliveAgents().length;
+        const cap = state.config.maxSlots;
+        const dead = state.agents.length - alive;
+        const error = refreshError === null ? "" : `<div class="rail-error">刷新失败：${esc(refreshError)}</div>`;
+        const role = error === "" ? (isPaused() ? "已冻结" : "运行中") : "离线";
+        const led = error !== "" ? "red" : isPaused() ? "standby" : "";
+        // The clock is deliberately NOT part of the cache key: it ticks every
+        // poll, and rebuilding the chips for it would restart the pulsing LED.
+        const key = `${alive}|${cap}|${busy}|${dead}|${led}|${role}|${refreshError === null ? "" : refreshError}`;
+        if (host.dataset.key !== key) {
+          host.dataset.key = key;
+          host.innerHTML =
+            `<div class="rail-chip"><span class="led ${led}"></span><span class="chip-k">状态</span>` +
+            `<span class="chip-v ${error !== "" ? "bad" : isPaused() ? "warn" : "accent"}">${role}</span></div>` +
+            `<div class="rail-chip"><span class="chip-k">存活</span>` +
+            `<span class="chip-v accent">${alive}<span class="chip-u"> / ${cap}</span></span></div>` +
+            `<div class="rail-chip"><span class="chip-k">一轮中</span><span class="chip-v">${busy}</span></div>` +
+            (dead > 0
+              ? `<div class="rail-chip"><span class="chip-k">已死亡</span><span class="chip-v bad">${dead}</span></div>`
+              : "") +
+            `<div class="rail-chip"><span class="chip-k">刷新</span>` +
+            `<span class="chip-v muted" id="railClock">—</span></div>` +
+            error;
+        }
+        const clock = $("railClock");
+        if (clock !== null) clock.textContent = new Date().toLocaleTimeString("zh-CN", { hour12: false });
       }
-      // Both pause banners live in the static HTML: polling only flips `hidden`
-      // and their text, so the nodes are never rebuilt under a click.
+      // Both pause markers live in the static HTML: polling only flips `hidden`,
+      // their classes and their text, so the nodes are never rebuilt under a
+      // click. The banner carries structured copy; the rail carries a chip.
       function paintPauseBanner() {
         const paused = isPaused();
-        for (const id of ["pauseBanner", "railPause"]) {
-          const node = $(id);
-          if (node === null) continue;
-          node.hidden = !paused;
-          if (paused) node.textContent = pauseText();
+        // One class on <body> is what freezes the energy slots (ice texture) and
+        // what keeps the toast lane clear of the banner's restore affordance.
+        document.body.classList.toggle("is-paused", paused);
+        const minutes = paused ? pauseMinutes() : 0;
+        // Rebuilding this markup would restart the glow sweep mid-cycle, so the
+        // banner and the rail chip are only rewritten when the minute ticks over
+        // (or when the frozen state itself flips).
+        const banner = $("pauseBanner");
+        if (banner !== null) {
+          banner.hidden = !paused;
+          const key = paused ? `on|${minutes}` : "off";
+          if (banner.dataset.key !== key) {
+            banner.dataset.key = key;
+            if (paused) {
+              banner.innerHTML =
+                `<span class="pb-dot"></span><span>温室处于休眠状态 · 时间已冻结（已暂停 ${minutes} 分钟）</span>` +
+                `<span class="go">点击到设置页恢复 →</span>`;
+            }
+          }
+        }
+        const rail = $("railPause");
+        if (rail !== null) {
+          rail.hidden = !paused;
+          const key = paused ? `on|${minutes}` : "off";
+          if (rail.dataset.key !== key) {
+            rail.dataset.key = key;
+            rail.innerHTML = paused ? `<span class="led"></span><span>温室已暂停 · ${minutes} 分</span>` : "";
+          }
         }
       }
       function paintNotices() {
+        const box = $("notices");
+        if (box === null) return;
         const list = liveNotices().slice(-8).reverse();
-        const host = $("notices");
         if (list.length === 0) {
-          host.innerHTML = "";
+          box.innerHTML = "";
           return;
         }
-        host.innerHTML = list
-          .map(
-            (notice) =>
-              `<div class="notice"><span><b>${esc(notice.agent)}</b> · ${timeHtml(notice.at)} · ${esc(notice.message)}</span>` +
-              `<button class="btn tiny close" data-act="notice-close" data-key="${esc(noticeKey(notice))}">知道了</button></div>`,
-          )
+        // Keeping the markup identical when nothing changed means a toast the
+        // operator is about to click never gets rebuilt under the cursor, and
+        // the arrival animation only plays once per new notice.
+        const key = list.map(noticeKey).join("\n");
+        if (box.dataset.key === key) return;
+        box.dataset.key = key;
+        box.innerHTML = list
+          .map((notice) => {
+            const supervisor = notice.agent === "supervisor";
+            return (
+              `<div class="notice${supervisor ? " err" : ""}">` +
+              `<div class="notice-body">` +
+              `<div class="notice-who"><b>${esc(notice.agent)}</b>` +
+              `<span class="at" title="${esc(fullTime(notice.at))}">${esc(relTime(notice.at))}</span></div>` +
+              `<div class="notice-msg">${esc(notice.message)}</div>` +
+              `</div>` +
+              `<button class="btn tiny close" data-act="notice-close" data-key="${esc(noticeKey(notice))}" title="知道了">知道了</button>` +
+              `</div>`
+            );
+          })
           .join("");
       }
 
       // ---------------------------------------------------- agents page
+      function deathTagHtml(agent) {
+        return agent.status === "dead" ? '<span class="tag bad">已死亡</span>' : "";
+      }
+      function untreatedLine(agent) {
+        const line = agent.untreatedRedactedChars;
+        const deathLine = agent.deathLineChars;
+        if (typeof line !== "number" || typeof deathLine !== "number") return "";
+        const ratio = deathLine <= 0 ? 0 : Math.min(1, line / deathLine);
+        const tone = ratio >= 0.8 ? "danger" : ratio >= 0.5 ? "warn" : "";
+        const color = ratio >= 0.8 ? "var(--danger)" : ratio >= 0.5 ? "var(--warn)" : "var(--text-muted)";
+        return (
+          `<div class="kv" style="margin-top: 7px"><span class="k">未治疗遮盖 / 死亡线</span>` +
+          `<span class="num${tone === "" ? "" : " " + tone}">${esc(line)} / ${esc(deathLine)}</span></div>` +
+          `<div class="bar" style="margin-top: 4px"><span style="width: ${(ratio * 100).toFixed(1)}%; background: ${color}"></span></div>`
+        );
+      }
       function agentCardHtml(agent) {
         const ratio = ratioOf(agent.satiety, agent.satietyMax);
         const extra = extras[agent.name] || null;
@@ -832,12 +2554,15 @@
               <span class="dot ${agent.busy ? "busy" : ""}"></span>
               <span class="card-name">${esc(agent.name)}</span>
               <span class="grow"></span>
+              ${deathTagHtml(agent)}
               ${noticeCount > 0 ? '<span class="tag warn">提示</span>' : ""}
               ${unread > 0 ? `<span class="badge">${unread > 99 ? "99+" : unread}</span>` : ""}
             </div>
             <div class="bar"><span style="width: ${(ratio * 100).toFixed(1)}%; background: ${satietyColor(ratio)}"></span></div>
             <div class="kv" style="margin-top: 7px"><span class="k">饱食度${frozen}</span><span class="num">${esc(num(agent.satiety))} / ${esc(num(agent.satietyMax))}</span></div>
             <div class="kv"><span class="k">余额</span><span class="num">${esc(num(agent.balance))}</span></div>
+            ${untreatedLine(agent)}
+            <div class="kv"><span class="k">终生遮盖字数</span><span class="num">${esc(num(agent.lifetimeRedactedChars))}</span></div>
             <div class="kv"><span class="k">上次唤醒</span><span>${timeHtml(agent.lastWakeAt)}</span></div>
             <div class="kv"><span class="k">模型</span><span class="mono small">${esc(agent.model)}</span></div>
             <div class="card-reply">${
@@ -1096,21 +2821,291 @@
         repaint($("intTable"), interventionRowsHtml(rows));
       }
 
+      // ------------------------------------------- sandbox policy panel
+      // One panel, three path lists. The rows the server marks locked are the
+      // sandbox's own built-ins (SUPERVISOR/ and every agent's notebook): they
+      // are shown, they are never deletable, and the page never rewrites what
+      // the operator typed beyond trimming the whitespace off an entry.
+      const SANDBOX_LISTS = [
+        {
+          key: "readBlacklist",
+          title: "禁止读取路径 (Blacklist)",
+          placeholder: "例如 C:\\secrets 或 D:\\work\\private",
+          empty: "黑名单为空：黑名单模式下，边界内的路径都可以读。",
+        },
+        {
+          key: "readWhitelist",
+          title: "允许读取路径 (Whitelist，白名单模式生效)",
+          placeholder: "例如 D:\\workshop",
+          empty: "白名单为空：切到白名单模式后，Agent 什么也读不到。",
+        },
+        {
+          key: "writableDirs",
+          title: "允许写入路径 (Writable Whitelist)",
+          placeholder: "例如 D:\\workshop\\out",
+          empty: "除系统锁定的记事本外，还没有额外可写的目录。",
+        },
+      ];
+      const SANDBOX_NUMBER_HINTS = {
+        sandboxTimeout: "命令超时必须是大于 0 的数字（秒）",
+        sandboxMaxOutput: "输出上限必须是大于 0 的整数（字符）",
+      };
+      // The locked rows are for the operator's eyes only: they follow from the
+      // body (SUPERVISOR/, another agent's home, every notebook) and the
+      // sandbox re-adds them for every command whatever the config file says,
+      // so a save sends the operator's own paths and never these.
+      function sandboxLockedOf(key) {
+        if (sandboxView === null) return [];
+        const locked = sandboxView.locked[key];
+        return Array.isArray(locked) ? locked : [];
+      }
+      function sandboxDraftFrom(body) {
+        const config = body !== null && typeof body.config === "object" && body.config !== null ? body.config : {};
+        const paths = (value) => (Array.isArray(value) ? value.filter((entry) => typeof entry === "string") : []);
+        return {
+          readMode: config.readMode === "whitelist" ? "whitelist" : "blacklist",
+          commandTimeoutSeconds: config.commandTimeoutSeconds,
+          maxOutputChars: config.maxOutputChars,
+          readBlacklist: paths(config.readBlacklist),
+          readWhitelist: paths(config.readWhitelist),
+          writableDirs: paths(config.writableDirs),
+        };
+      }
+      function paintSandboxPanel() {
+        const box = $("sandboxBox");
+        if (box === null || box.dataset.built === "1") return;
+        box.dataset.built = "1";
+        const listBlocks = SANDBOX_LISTS.map(
+          (list) =>
+            `<div class="col-stack">` +
+            `<div class="mod-title" style="font-size: 12.5px">${esc(list.title)}</div>` +
+            `<div class="tpl-list" id="sandboxList-${list.key}"></div>` +
+            `<div class="row">` +
+            `<input id="sandboxInput-${list.key}" class="grow" placeholder="${esc(list.placeholder)}" />` +
+            `<button class="btn tiny" data-act="sandbox-add" data-list="${list.key}">+ 添加</button>` +
+            `</div>` +
+            `<div class="small muted" id="sandboxHint-${list.key}"></div>` +
+            `</div>`,
+        ).join("");
+        box.innerHTML =
+          `<section class="mod span2" id="sandboxModule">` +
+          `<div class="mod-head">` +
+          `<span class="mod-icon">` +
+          `<svg viewBox="0 0 24 24"><path d="M12 3.4 4.6 6.5v5.3c0 4.3 3.1 7.6 7.4 8.8 4.3-1.2 7.4-4.5 7.4-8.8V6.5z" /><path d="M9.2 12.2l2 2 3.7-4" /></svg>` +
+          `</span>` +
+          `<span class="mod-head-text"><span class="mod-title">沙箱与命令权限配置 (Sandbox Security Policy)</span>` +
+          `<span class="mod-sub">Agent 能读什么、能写到哪里，以及一条命令最多跑多久</span></span>` +
+          `<span id="sandboxHealth"></span>` +
+          `</div>` +
+          `<div class="mod-body">` +
+          `<div class="row">` +
+          `<span class="seg" role="radiogroup" aria-label="沙箱读取模式">` +
+          `<label class="seg-opt" title="除禁止列表外都能读">` +
+          `<input type="radio" name="sandboxReadMode" value="blacklist" data-act="sandbox-read-mode" />` +
+          `<span class="seg-face"><span class="led"></span>黑名单模式 (推荐)</span></label>` +
+          `<label class="seg-opt" title="只有允许列表里的路径可以读">` +
+          `<input type="radio" name="sandboxReadMode" value="whitelist" data-act="sandbox-read-mode" />` +
+          `<span class="seg-face"><span class="led"></span>白名单模式</span></label>` +
+          `</span>` +
+          `<span class="grow"></span>` +
+          `<span class="small muted" id="sandboxModeHint"></span>` +
+          `</div>` +
+          listBlocks +
+          `<div class="metric-grid">` +
+          `<label class="metric"><span class="metric-k">命令超时（秒）</span>` +
+          `<input id="sandboxTimeout" type="number" min="1" step="1" placeholder="120" /></label>` +
+          `<label class="metric"><span class="metric-k">输出上限（字符）</span>` +
+          `<input id="sandboxMaxOutput" type="number" min="1" step="1" placeholder="200000" /></label>` +
+          `</div>` +
+          `<div class="row">` +
+          `<button class="btn primary" data-act="sandbox-save">保存沙箱策略</button>` +
+          `<button class="btn" data-act="sandbox-reload">重新读取</button>` +
+          `<span class="grow"></span>` +
+          `<span class="small" id="sandboxStatus">正在读取沙箱策略…</span>` +
+          `</div>` +
+          `<div class="hint-line" id="sandboxConfigPath"></div>` +
+          `</div></section>`;
+      }
+      function paintSandboxList(list) {
+        const host = $(`sandboxList-${list.key}`);
+        if (host === null) return;
+        if (sandboxDraft === null) {
+          host.innerHTML = `<div class="empty small">尚未读取</div>`;
+          return;
+        }
+        const card = (path, locked, index) =>
+          `<div class="tpl-card${locked ? " bad" : ""}" title="${esc(path)}">` +
+          `<span class="tpl-file grow">${esc(path)}</span>` +
+          (locked
+            ? `<span class="pill info">系统锁定</span>`
+            : `<button class="btn tiny" data-act="sandbox-remove" data-list="${list.key}" data-index="${index}">删除</button>`) +
+          `</div>`;
+        const lockedRows = sandboxLockedOf(list.key);
+        const lockedKeys = new Set(lockedRows.map((path) => path.toLowerCase()));
+        const lockedHtml = lockedRows.map((path) => card(path, true, null)).join("");
+        const operatorHtml = sandboxDraft[list.key]
+          .map((path, index) => ({ path: path, index: index }))
+          .filter((row) => !lockedKeys.has(row.path.toLowerCase()))
+          .map((row) => card(row.path, false, row.index))
+          .join("");
+        host.innerHTML =
+          lockedHtml + operatorHtml === ""
+            ? `<div class="empty small">${esc(list.empty)}</div>`
+            : lockedHtml + operatorHtml;
+      }
+      // `fillNumbers` belongs to a fresh server answer alone: the refresh poll
+      // and every click repaint leave the two number inputs exactly as the
+      // operator left them.
+      function renderSandbox(fillNumbers) {
+        paintSandboxPanel();
+        const timeout = $("sandboxTimeout");
+        const maxOutput = $("sandboxMaxOutput");
+        if (timeout !== null) timeout.disabled = sandboxDraft === null;
+        if (maxOutput !== null) maxOutput.disabled = sandboxDraft === null;
+        for (const list of SANDBOX_LISTS) {
+          paintSandboxList(list);
+          const hint = $(`sandboxHint-${list.key}`);
+          if (hint !== null) hint.textContent = sandboxHints[list.key] || "";
+        }
+        if (sandboxDraft !== null) {
+          for (const input of document.querySelectorAll('input[name="sandboxReadMode"]')) {
+            input.checked = input.value === sandboxDraft.readMode;
+          }
+          const modeHint = $("sandboxModeHint");
+          if (modeHint !== null) {
+            modeHint.textContent =
+              sandboxDraft.readMode === "whitelist"
+                ? "白名单：只允许读取列表里的路径"
+                : "黑名单：列表之外的路径可以读";
+          }
+          if (fillNumbers === true) {
+            if (timeout !== null) timeout.value = String(sandboxDraft.commandTimeoutSeconds);
+            if (maxOutput !== null) maxOutput.value = String(sandboxDraft.maxOutputChars);
+          }
+        }
+        const health = $("sandboxHealth");
+        if (health !== null) {
+          const mode = sandboxDraft === null ? null : sandboxDraft.readMode;
+          health.className = mode === null ? "pill warn" : "pill info";
+          health.textContent = mode === null ? "未读取" : mode === "whitelist" ? "白名单模式" : "黑名单模式";
+        }
+        const status = $("sandboxStatus");
+        if (status !== null) {
+          status.textContent = sandboxStatus === null ? "" : sandboxStatus.text;
+          status.style.color = sandboxStatus !== null && sandboxStatus.tone === "bad" ? "var(--danger)" : "";
+        }
+        const pathLine = $("sandboxConfigPath");
+        if (pathLine !== null) {
+          const configPath = sandboxView === null ? "" : sandboxView.configPath;
+          pathLine.textContent = configPath === "" ? "配置文件：—" : "配置文件：" + configPath;
+          pathLine.title = configPath;
+        }
+      }
+      function applySandboxView(body) {
+        const locked = typeof body.locked === "object" && body.locked !== null ? body.locked : {};
+        const paths = (value) => (Array.isArray(value) ? value.filter((entry) => typeof entry === "string") : []);
+        sandboxView = {
+          locked: {
+            readBlacklist: paths(locked.readBlacklist),
+            writableDirs: paths(locked.writableDirs),
+          },
+          configPath: typeof body.configPath === "string" ? body.configPath : "",
+        };
+        sandboxDraft = sandboxDraftFrom(body);
+        sandboxHints = {};
+      }
+      async function loadSandboxConfig() {
+        if (sandboxLoading) return;
+        sandboxLoading = true;
+        try {
+          const body = await api("/api/sandbox/config");
+          applySandboxView(body);
+          sandboxStatus = { tone: "ok", text: "已从服务端读取当前沙箱策略。" };
+          renderSandbox(true);
+        } catch (error) {
+          sandboxStatus = { tone: "bad", text: "读取失败：" + (error instanceof Error ? error.message : String(error)) };
+          renderSandbox(false);
+        } finally {
+          sandboxLoading = false;
+        }
+      }
+      // Saving sends the operator's own paths and the two numbers; the locked
+      // rows are not the operator's to store, and the store answers with the
+      // policy it actually holds, which is what the panel shows afterwards.
+      async function saveSandbox() {
+        if (sandboxDraft === null) {
+          await loadSandboxConfig();
+          return;
+        }
+        const timeoutInput = $("sandboxTimeout");
+        const maxOutputInput = $("sandboxMaxOutput");
+        const timeout = Number(timeoutInput === null ? "" : timeoutInput.value.trim());
+        const maxOutput = Number(maxOutputInput === null ? "" : maxOutputInput.value.trim());
+        if (!Number.isInteger(timeout) || timeout <= 0) {
+          sandboxStatus = { tone: "bad", text: SANDBOX_NUMBER_HINTS.sandboxTimeout };
+          renderSandbox(false);
+          return;
+        }
+        if (!Number.isInteger(maxOutput) || maxOutput <= 0) {
+          sandboxStatus = { tone: "bad", text: SANDBOX_NUMBER_HINTS.sandboxMaxOutput };
+          renderSandbox(false);
+          return;
+        }
+        const payload = {
+          readMode: sandboxDraft.readMode,
+          readBlacklist: sandboxDraft.readBlacklist,
+          readWhitelist: sandboxDraft.readWhitelist,
+          writableDirs: sandboxDraft.writableDirs,
+          commandTimeoutSeconds: timeout,
+          maxOutputChars: maxOutput,
+        };
+        try {
+          applySandboxView(await post("/api/sandbox/config", payload));
+          sandboxStatus = { tone: "ok", text: "沙箱策略已保存，配置文件已写回。" };
+          renderSandbox(true);
+        } catch (error) {
+          // The server refused the patch and changed nothing; the panel keeps the
+          // operator's draft on screen next to the reason it was refused.
+          sandboxStatus = { tone: "bad", text: error instanceof Error ? error.message : String(error) };
+          renderSandbox(false);
+        }
+      }
+
       // ------------------------------------------------ settings page
-      // The switch is built once into its own box (the config table rebuilds
-      // into #settingsBox and would wipe anything living there). Polling only
-      // writes `checked` / the status text, so the node survives every refresh.
+      // Module 1 of the settings bento. The pause control keeps its own box
+      // (the config bento rebuilds into #settingsBox and would wipe it), and a
+      // cyber toggle is a label + a visually hidden real checkbox, so the
+      // `change`/click delegation and `target.checked` still work untouched.
       function paintPauseSwitch() {
         const box = $("pauseSwitchBox");
         if (box.dataset.built !== "1") {
           box.dataset.built = "1";
           box.innerHTML =
-            `<div class="card pause-card" style="margin-bottom: 12px">` +
-            `<div class="row"><input type="checkbox" id="pauseToggle" data-act="pause-toggle" />` +
-            `<label class="pause-switch" for="pauseToggle">暂停温室</label>` +
-            `<span class="grow"></span><span class="small muted" id="pauseStatus"></span></div>` +
-            `<div class="small muted">打开后整个温室对 Agent 停止：心跳不再唤醒任何 Agent，饱食度冻结在暂停那一刻，任务认领计时也冻结；余额不受影响。</div>` +
-            `</div>`;
+            `<section class="mod" id="pauseModule">` +
+            `<div class="mod-head">` +
+            `<span class="mod-icon">` +
+            `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.2" /><path d="M12 7.6V12l3 1.9" /></svg>` +
+            `</span>` +
+            `<span class="mod-head-text"><span class="mod-title">生命时钟与总控</span>` +
+            `<span class="mod-sub">冻结整个温室的时钟，或让它重新流动</span></span>` +
+            `<span id="pauseHealth"></span>` +
+            `</div>` +
+            `<div class="mod-body">` +
+            `<label class="toggle" for="pauseToggle">` +
+            `<input type="checkbox" id="pauseToggle" data-act="pause-toggle" />` +
+            `<span class="toggle-track"><span class="toggle-knob"></span></span>` +
+            `<span class="toggle-text">暂停温室</span>` +
+            `<span class="toggle-state" id="pauseStatus">—</span>` +
+            `</label>` +
+            `<div class="metric-grid">` +
+            `<div class="metric"><div class="metric-k">时间流动</div><div class="metric-v" id="pauseFlow">—</div>` +
+            `<div class="metric-note">暂停期间饱食度冻结在那一刻，心跳不再唤醒任何 Agent。</div></div>` +
+            `<div class="metric" id="pauseElapsedBox"><div class="metric-k">已暂停</div>` +
+            `<div class="metric-v" id="pauseElapsed">—</div>` +
+            `<div class="metric-note">暂停与恢复都会永久写入干预记录。</div></div>` +
+            `</div>` +
+            `<div class="hint-line">余额不受影响。暂停是全局的：它对每一个 Agent 同时生效，不会唤醒任何人。</div>` +
+            `</div></section>`;
         }
         const toggle = $("pauseToggle");
         if (toggle === null) return;
@@ -1118,8 +3113,34 @@
         if (toggle.checked !== paused) toggle.checked = paused;
         const status = $("pauseStatus");
         if (status !== null) {
-          status.textContent = paused ? `已暂停 · ${pauseMinutes()} 分钟` : "运行中";
+          status.textContent = paused ? `已暂停 ${pauseMinutes()} 分` : "运行中";
+          status.classList.toggle("warn", paused);
         }
+        const flow = $("pauseFlow");
+        if (flow !== null) {
+          flow.textContent = paused ? "已冻结" : "流动中";
+          flow.classList.toggle("tone-warn", paused);
+        }
+        const elapsed = $("pauseElapsed");
+        if (elapsed !== null) elapsed.textContent = paused ? `${pauseMinutes()} 分` : "—";
+        const health = $("pauseHealth");
+        if (health !== null) {
+          health.className = paused ? "pill warn" : "pill ok";
+          health.textContent = paused ? "已冻结" : "运行中";
+        }
+        paintVital();
+      }
+      // The brand's vital LED is painted on its own so the failure state can be
+      // reached from the refresh `catch` as well as from `paint`. Painting it
+      // only inside `paint()` would make `degraded` permanently false, because
+      // `refreshError` is cleared before `paint()` runs and is set only after.
+      function paintVital() {
+        const vital = $("brandVital");
+        if (vital === null) return;
+        const degraded = refreshError !== null;
+        const paused = isPaused();
+        vital.className = `vital${degraded ? " bad" : paused ? " warn" : ""}`;
+        vital.title = degraded ? `刷新失败：${refreshError}` : paused ? "温室已暂停：时间冻结" : "温室运行中";
       }
       // Built once as well: polling only writes the checked radio, the hint and
       // the template rows, so a click on the mode or the reload button survives
@@ -1130,26 +3151,40 @@
         if (box.dataset.built !== "1") {
           box.dataset.built = "1";
           box.innerHTML =
-            `<div class="card" style="margin-bottom: 12px">` +
-            `<div class="row"><strong class="grow">提示词模板</strong><span id="promptHealth"></span></div>` +
-            `<div class="row" style="margin-top: 8px">` +
-            `<label class="pause-switch"><input type="radio" name="promptMode" value="hot" data-act="prompt-mode" />实时热加载</label>` +
-            `<label class="pause-switch"><input type="radio" name="promptMode" value="cached" data-act="prompt-mode" />内存缓存</label>` +
+            `<section class="mod span2" id="promptModule">` +
+            `<div class="mod-head">` +
+            `<span class="mod-icon">` +
+            `<svg viewBox="0 0 24 24"><path d="M14.5 3.5 6 13h5l-1.5 7.5L18 11h-5z" /></svg>` +
+            `</span>` +
+            `<span class="mod-head-text"><span class="mod-title">提示词加载引擎</span>` +
+            `<span class="mod-sub">模板文件如何进入每一轮唤醒的上下文</span></span>` +
+            `<span id="promptHealth"></span>` +
+            `</div>` +
+            `<div class="mod-body">` +
+            `<div class="row">` +
+            `<span class="seg" role="radiogroup" aria-label="提示词加载模式">` +
+            `<label class="seg-opt" title="每次唤醒都读文件最新内容">` +
+            `<input type="radio" name="promptMode" value="hot" data-act="prompt-mode" />` +
+            `<span class="seg-face"><span class="led"></span>实时热加载</span></label>` +
+            `<label class="seg-opt" title="读一次进内存，改动要手动重新加载">` +
+            `<input type="radio" name="promptMode" value="cached" data-act="prompt-mode" />` +
+            `<span class="seg-face"><span class="led"></span>内存缓存</span></label>` +
+            `</span>` +
             `<span class="grow"></span>` +
             `<button class="btn tiny" data-act="prompt-reload" id="promptReload">重新加载提示词</button>` +
             `</div>` +
             `<div class="small muted" id="promptHint"></div>` +
-            `<div id="promptRows" style="margin-top: 10px"></div>` +
-            `</div>`;
+            `<div id="promptRows"></div>` +
+            `</div></section>`;
         }
         const status = state.prompts;
         const cached = status.mode === "cached";
         for (const input of box.querySelectorAll('input[name="promptMode"]')) {
           input.checked = input.value === status.mode;
         }
-        $("promptHealth").innerHTML = status.healthy
-          ? '<span class="tag ok">正常</span>'
-          : '<span class="tag bad">警告</span>';
+        const health = $("promptHealth");
+        health.className = status.healthy ? "pill ok" : "pill warn";
+        health.textContent = status.healthy ? "正常" : "警告";
         $("promptHint").textContent = cached
           ? "已缓存：修改 prompts/ 下的文件后，需点『重新加载提示词』才生效。"
           : "实时热加载：每次唤醒都读取文件最新内容，保存后即刻生效，无需重启服务。";
@@ -1158,54 +3193,143 @@
         const key = JSON.stringify({ mode: status.mode, dir: status.dir, templates: status.templates, warnings: status.warnings });
         if (host.dataset.key === key) return;
         host.dataset.key = key;
-        const rows = status.templates
-          .map(
-            (template) =>
-              `<tr><td class="mono">${esc(template.file)}</td>` +
-              `<td>${template.warning === null ? '<span class="tag ok">正常</span>' : '<span class="tag warn">兜底</span>'}</td>` +
-              `<td class="mono small">${esc(template.path)}</td></tr>`,
-          )
+        // The operator needs to know which template is live and which one fell
+        // back to the built-in copy. The absolute disk path is noise, so each
+        // card shows the file name, its health, and only the folder that holds
+        // them; the full path stays available as a tooltip.
+        const cards = status.templates
+          .map((template) => {
+            const fallback = template.warning !== null;
+            return (
+              `<div class="tpl-card${fallback ? " bad" : ""}" title="${esc(template.path)}">` +
+              `<span class="pill ${fallback ? "warn" : "ok"}">${fallback ? "兜底" : "正常"}</span>` +
+              `<span class="tpl-file">${esc(template.file)}</span>` +
+              `<span class="tpl-dir">${esc(status.dir)}</span>` +
+              `</div>`
+            );
+          })
           .join("");
         host.innerHTML =
-          `<table class="config-table"><tbody>` +
-          `<tr><td>加载模式</td><td>${cached ? "内存缓存" : "实时热加载"}</td></tr>` +
-          `<tr><td>模板目录</td><td class="mono small">${esc(status.dir)}</td></tr>` +
-          rows +
-          `</tbody></table>` +
+          `<div class="tpl-list">${cards}</div>` +
           (status.warnings.length === 0
             ? ""
-            : `<div class="banner warn" style="margin-top: 8px">${status.warnings.map(esc).join("<br />")}</div>`);
+            : `<div class="banner warn" style="margin-top: 10px">${status.warnings.map(esc).join("<br />")}</div>`);
       }
+      // The config was one flat table. It is now a bento of domain modules:
+      // every value keeps its exact meaning, but each number gets a unit, a
+      // domain and an order of importance, and the raw JSON folds away
+      // underneath. Modules 1 and 2 (life clock, prompt engine) keep their own
+      // boxes — #pauseSwitchBox and #promptBox — because polling must never
+      // rebuild an input the operator is interacting with; modules 3 to 5 are
+      // rebuilt here, and every one of them is read-only display.
       function paintSettingsPage() {
         if (state === null) return;
         paintPauseSwitch();
         const config = state.config;
-        const key = JSON.stringify({ config, rate: state.exchangeRate, agents: state.agents.length });
+        const alive = aliveAgents().length;
+        const dead = state.agents.length - alive;
+        const rate = state.exchangeRate;
+        const key = JSON.stringify({ config, rate, agents: state.agents.length, alive });
         if (key === settingsKey) return;
         settingsKey = key;
-        const rows = [
-          ["汇率（USD → 余额）", state.exchangeRate === null ? '<span class="tag bad">未设定</span> 收入申报无法入账' : esc(num(state.exchangeRate))],
-          ["饱食度上限", esc(num(config.satietyMax))],
-          ["饱食度衰减", esc(num(config.satietyDecayPerSecond, 3)) + " / 秒（只随时间下降，不自动回满）"],
-          ["一餐价格", esc(num(config.mealPrice)) + " 余额"],
-          ["一餐恢复", esc(num(config.satietyPerMeal)) + " 饱食度"],
-          ["心跳间隔", esc(String(config.heartbeatSeconds)) + " 秒"],
-          ["MEMORY 上限", esc(String(config.memoryCapChars)) + " 字"],
-          ["一轮上下文上限", esc(String(config.roundContextCapTokens)) + " token"],
-          ["任务认领超时", esc(String(config.taskClaimTimeoutHours)) + " 小时"],
-          ["槽位上限", esc(String(config.maxSlots)) + "（现存 " + state.agents.length + " 个 Agent）"],
-        ];
-        $("settingsBox").innerHTML = `
-          <div class="card">
-            <table class="config-table"><tbody>
-              ${rows.map(([label, value]) => `<tr><td>${label}</td><td>${value}</td></tr>`).join("")}
-            </tbody></table>
-          </div>
-          <details style="margin-top: 12px">
-            <summary>原始配置 JSON（只读）</summary>
-            <pre class="mono">${esc(JSON.stringify(config, null, 2))}</pre>
-          </details>
-          <div class="small muted" style="margin-top: 10px">配置来自 conservatory.config.json，这里是只读展示；改动请直接改文件后重启。</div>`;
+
+        const metric = (label, value, unit, note, tone, wide) =>
+          `<div class="metric${tone === undefined ? "" : " tone-" + tone}${wide ? " wide" : ""}">` +
+          `<div class="metric-k">${label}</div>` +
+          `<div class="metric-v">${value}${unit === undefined || unit === "" ? "" : `<span class="metric-u">${unit}</span>`}</div>` +
+          `<div class="metric-note">${note}</div>` +
+          `</div>`;
+
+        // Two compound readouts the flat table could never express: how long a
+        // full belly buys before the death line, and how long the body starves
+        // from full before the first character is taken.
+        const starvationMs =
+          config.satietyDecayPerSecond > 0 ? (config.satietyMax / config.satietyDecayPerSecond) * 1000 : null;
+        const redactionSpanMs =
+          (config.deathLineChars / Math.max(1, config.redactionCharsPerTick)) *
+          config.redactionIntervalSeconds *
+          1000;
+        const totalLifeMs = starvationMs === null ? null : starvationMs + redactionSpanMs;
+
+        const vitalModule =
+          `<section class="mod">` +
+          `<div class="mod-head">` +
+          `<span class="mod-icon">` +
+          `<svg viewBox="0 0 24 24"><path d="M3 12.5h3.4l1.9-5.2 2.8 9.4 2.1-6.1 1.5 3.2H21" /></svg>` +
+          `</span>` +
+          `<span class="mod-head-text"><span class="mod-title">具身生理与代谢</span>` +
+          `<span class="mod-sub">饱食度、神经痛觉遮盖与那条不可跨越的死亡线</span></span>` +
+          `<span class="pill bad">死亡线 ${esc(String(config.deathLineChars))} 字</span>` +
+          `</div>` +
+          `<div class="mod-body">` +
+          `<div class="metric-grid">` +
+          metric("饱食度上限", esc(num(config.satietyMax)), "饱食度", "出生时的满值，也是每次进食的封顶。") +
+          metric("衰减速度", esc(num(config.satietyDecayPerSecond, 3)), "/ 秒", "只随墙上时间下降，永不自动回满。") +
+          metric("遮盖间隔", esc(num(config.redactionIntervalSeconds)), "秒", "饱食度为 0 之后，每隔这么久夺走一次字符。") +
+          metric("每次遮盖字数", esc(String(config.redactionCharsPerTick)), "字", "每一次遮盖从 MEMORY 里夺走的字符数。") +
+          metric("死亡线", esc(String(config.deathLineChars)), "字", "未治疗遮盖累计到此，Agent 死亡且不可逆。", "danger") +
+          metric("从满腹到开始遮盖", durText(starvationMs), "", "饱食度从满值自然衰减到 0 所需的时长。") +
+          metric("从满腹到死亡线", durText(totalLifeMs), "", "不吃不治、按当前节奏一路走完的寿命上限。", "danger", true) +
+          `</div>` +
+          `<div class="hint-line">治疗不在这里发生：Agent 用自己的余额买治疗，操作员代为治疗则记作一次干预。死亡是唯一无法回头的锁。</div>` +
+          `</div></section>`;
+
+        const economyModule =
+          `<section class="mod">` +
+          `<div class="mod-head">` +
+          `<span class="mod-icon">` +
+          `<svg viewBox="0 0 24 24"><path d="M12 3.6v16.8M16.4 7.2H9.8a2.9 2.9 0 0 0 0 5.8h4.4a2.9 2.9 0 0 1 0 5.8H7.6" /></svg>` +
+          `</span>` +
+          `<span class="mod-head-text"><span class="mod-title">壳内生存经济</span>` +
+          `<span class="mod-sub">汇率、进食价格与治疗的代价</span></span>` +
+          (rate === null ? `<span class="pill bad">汇率未设定</span>` : `<span class="pill ok">1 USD = ${esc(num(rate))}</span>`) +
+          `</div>` +
+          `<div class="mod-body">` +
+          (rate === null
+            ? `<div class="banner danger">汇率未设定：收入申报无法核验入账。请在 conservatory.config.json 里设置 exchangeRate。</div>`
+            : "") +
+          `<div class="metric-grid">` +
+          (rate === null
+            ? metric("USD 兑换汇率", "未设定", "", "设定后收入申报才能核验并入账。", "danger")
+            : metric("USD 兑换汇率", esc(num(rate)), "余额 / USD", "收入按核实金额乘这个汇率入账。", "accent")) +
+          metric("一餐价格", esc(num(config.mealPrice)), "余额", "Agent 自己买一餐要花的余额。") +
+          metric("一餐恢复", esc(num(config.satietyPerMeal)), "饱食度", "吃掉一餐后恢复的饱食度。", "accent") +
+          metric("普通治疗", esc(num(config.ordinaryTreatmentPrice)), "余额", "留下疤痕：之后不再计入死亡线。") +
+          metric("完全治疗", esc(num(config.completeTreatmentPrice)), "余额", "不留任何痕迹，像从未受伤。") +
+          metric("心跳间隔", esc(String(config.heartbeatSeconds)), "秒", "每隔这么久，温室检查一次是否该唤醒谁。", undefined, true) +
+          `</div>` +
+          `</div></section>`;
+
+        const capacityModule =
+          `<section class="mod span2">` +
+          `<div class="mod-head">` +
+          `<span class="mod-icon">` +
+          `<svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="3" /><path d="M8 3.5v17M3.5 9h17M3.5 15h17" /></svg>` +
+          `</span>` +
+          `<span class="mod-head-text"><span class="mod-title">记忆与容量上限</span>` +
+          `<span class="mod-sub">MEMORY 的边界、一轮的上下文预算与温室里的槽位</span></span>` +
+          `<span class="pill ${dead > 0 ? "warn" : "info"}">槽位 ${state.agents.length} / ${esc(String(config.maxSlots))}</span>` +
+          `</div>` +
+          `<div class="mod-body">` +
+          `<div class="metric-grid cols-4">` +
+          metric("MEMORY 上限", esc(String(config.memoryCapChars)), "字", "超过这个长度，记忆整合会拒绝写入。") +
+          metric("一轮上下文上限", esc(String(config.roundContextCapTokens)), "token", "超过就截断并结束这一轮。") +
+          metric("槽位上限", esc(String(config.maxSlots)), "个", `账本里现有 ${state.agents.length} 个 Agent。`) +
+          metric("任务认领超时", esc(String(config.taskClaimTimeoutHours)), "小时", "超时自动把任务送回任务板。") +
+          `</div>` +
+          `</div></section>`;
+
+        $("settingsBox").innerHTML =
+          `<div class="settings-bento">` +
+          vitalModule +
+          economyModule +
+          capacityModule +
+          `</div>` +
+          `<details class="raw-config">` +
+          `<summary>原始配置 JSON（只读）</summary>` +
+          `<pre class="mono">${esc(JSON.stringify(config, null, 2))}</pre>` +
+          `</details>` +
+          `<div class="hint-line" style="margin-top: 12px">配置来自 conservatory.config.json，这里是只读展示；改动请直接改文件后重启。</div>`;
       }
 
       // ---------------------------------------------------- dialog chrome
@@ -1234,30 +3358,36 @@
           $("dlgSat").textContent = "—";
           $("dlgBal").textContent = "—";
           $("dlgBar").style.width = "0";
+          $("dlgWake").hidden = true;
           return;
         }
         const ratio = ratioOf(agent.satiety, agent.satietyMax);
         $("dlgName").textContent = agent.name;
         $("dlgDot").className = `dot ${agent.busy ? "busy" : ""}`;
-        $("dlgState").textContent = agent.busy ? "一轮中" : "空闲";
+        $("dlgState").textContent =
+          agent.status !== "alive" ? "已死亡" : agent.busy ? "一轮中" : "空闲";
         $("dlgBar").style.width = (ratio * 100).toFixed(1) + "%";
         $("dlgBar").style.background = satietyColor(ratio);
         $("dlgSat").textContent = num(agent.satiety);
         $("dlgSat").title = `${num(agent.satiety)} / ${num(agent.satietyMax)}`;
         $("dlgBal").textContent = num(agent.balance);
+        // A dead agent has no wake, no food, no money: the controls are gone,
+        // and the server refuses the same calls anyway.
+        $("dlgWake").hidden = agent.status !== "alive";
         $("dlgWake").dataset.agent = agent.name;
         $("chatInput").placeholder = `给 ${agent.name} 留言…`;
       }
       function resetAgentPanes() {
         // Nothing of the previous agent may stay on screen while the new agent's
         // data is still in flight.
-        for (const id of ["memoryText", "memRecords", "memCompare", "nbFiles", "roundList", "roundDetail", "bodyPane", "agentTasks", "agentInt", "chatList"]) {
+        for (const id of ["memoryText", "memRecords", "memCompare", "nbFiles", "roundList", "roundDetail", "bodyPane", "agentTasks", "agentInt", "chatList", "woundList", "woundDetail"]) {
           const node = $(id);
           node.innerHTML = "";
           node.dataset.key = "";
         }
         $("memStats").textContent = "";
         $("nbContent").textContent = "";
+        woundSel = null;
       }
       function paintPanes() {
         if (dlgAgent === null) return;
@@ -1266,6 +3396,8 @@
           paintRoundDetail();
         } else if (dlgTab === "body") {
           paintBody();
+        } else if (dlgTab === "wounds") {
+          paintWounds();
         } else if (dlgTab === "memory") {
           paintMemory();
         } else if (dlgTab === "notebook") {
@@ -1524,6 +3656,11 @@
         const agent = agentByName(dlgAgent);
         if (agent === null || state === null) return;
         const config = state.config;
+        // A dead agent gets facts, not controls: no wake, no money, no food.
+        if (agent.status !== "alive") {
+          repaint($("bodyPane"), paintDeathCertificate(agent));
+          return;
+        }
         const ratio = ratioOf(agent.satiety, agent.satietyMax);
         const secondsToZero =
           typeof agent.satiety === "number" && config.satietyDecayPerSecond > 0
@@ -1549,14 +3686,141 @@
             ${agent.lastError ? `<div class="banner danger">最近错误：${esc(agent.lastError)}</div>` : ""}
           </div>
           <div class="card col-stack">
+            <div style="font-weight: 600">伤口与死亡线</div>
+            <div class="kv"><span class="k">未治疗遮盖字数</span><span class="num">${esc(num(agent.untreatedRedactedChars))}</span></div>
+            <div class="kv"><span class="k">死亡线</span><span class="num">${esc(num(agent.deathLineChars))}</span></div>
+            <div class="kv"><span class="k">终生遮盖总字数</span><span class="num">${esc(num(agent.lifetimeRedactedChars))}</span></div>
+            <div class="kv"><span class="k">未完全治愈的伤口</span><span class="num">${(agent.wounds || []).filter((w) => w.status !== "healed").length}</span></div>
+            <div class="kv"><span class="k">普通治疗 / 完全治疗</span><span class="num">${esc(num(config.ordinaryTreatmentPrice))} / ${esc(num(config.completeTreatmentPrice))}</span></div>
+            <div class="kv"><span class="k">遮盖节奏</span><span>每 ${esc(num(config.redactionIntervalSeconds))} 秒夺走 ${esc(num(config.redactionCharsPerTick))} 个字符</span></div>
+            <div class="small muted">未治疗的遮盖字数累计到死亡线时，这个 Agent 会死；死亡不可逆。</div>
+          </div>
+          <div class="card col-stack">
             <div style="font-weight: 600">干预操作</div>
             <div class="small muted">给余额或给饱食度会永久记录为操作员干预。它会改变这两个数字，但不会改变饱食度自然下降的规则。</div>
             <div class="row">
               <button class="btn" data-act="give-balance" data-agent="${esc(agent.name)}">给余额</button>
               <button class="btn" data-act="give-satiety" data-agent="${esc(agent.name)}">给饱食度</button>
             </div>
+            <div class="small muted" style="margin-top: 8px">强制终止就是死亡，不可撤销：它会立刻停止进程、写死亡证明，之后没有任何恢复路径。</div>
+            <div class="row">
+              <button class="btn danger" data-act="terminate" data-agent="${esc(agent.name)}">强制终止（死亡）</button>
+            </div>
           </div>`,
         );
+      }
+
+      // --------------------------------------------------- wounds tab
+      function woundListOf(agent) {
+        if (woundCache.agent === agent.name) return woundCache.wounds;
+        return Array.isArray(agent.wounds) ? agent.wounds : [];
+      }
+      function woundById(id) {
+        const agent = agentByName(dlgAgent);
+        if (agent === null) return null;
+        return woundListOf(agent).find((wound) => wound.id === id) || null;
+      }
+      function paintWounds() {
+        const agent = agentByName(dlgAgent);
+        if (agent === null) return;
+        const wounds = woundListOf(agent);
+        repaint(
+          $("woundList"),
+          wounds.length === 0
+            ? '<div class="empty small">这个 Agent 身上没有伤口。</div>'
+            : wounds
+                .map(
+                  (wound) => `
+                    <div class="list-item ${wound.id === woundSel ? "active" : ""}" data-act="wound-select" data-wound="${wound.id}">
+                      <div class="row"><span class="title grow">伤口 #${wound.id}</span>
+                        <span class="tag ${wound.status === "untreated" ? "bad" : wound.status === "scarred" ? "warn" : "ok"}">${esc(WOUND_STATUS[wound.status] || wound.status)}</span></div>
+                      <div class="sub">${wound.length} 个字符 · ${timeHtml(wound.createdAt)}</div>
+                    </div>`,
+                )
+                .join(""),
+        );
+        const wound = woundById(woundSel);
+        if (wound === null) {
+          $("woundDetail").innerHTML = '<div class="small muted">点左边一个伤口，看它的原文和当前可见文本。</div>';
+          return;
+        }
+        const treatable = wound.status !== "healed" && agent.status === "alive";
+        const busy = agent.busy === true;
+        $("woundDetail").innerHTML = `
+          <div class="card col-stack">
+            <div class="row"><strong>伤口 #${wound.id}</strong><span class="grow"></span><span class="tag ${wound.status === "untreated" ? "bad" : wound.status === "scarred" ? "warn" : "ok"}">${esc(WOUND_STATUS[wound.status] || wound.status)}</span></div>
+            <div class="small muted">当前 MEMORY 里的可见文本</div>
+            <pre class="mono">${esc(wound.sentence)}</pre>
+            <div class="small muted">被夺走的原文（只有操作员能看）</div>
+            <pre class="mono">${esc(wound.originalText)}</pre>
+            ${
+              treatable
+                ? `<div class="banner warn">操作员代为治疗不扣这个 Agent 的余额，但会永久记录为一次干预。</div>
+                   <div class="row">
+                     <button class="btn" data-act="op-treat" data-wound="${wound.id}" data-tier="ordinary" ${busy ? "disabled" : ""}>普通治疗（${esc(num(config.ordinaryTreatmentPrice))}）</button>
+                     <button class="btn primary" data-act="op-treat" data-wound="${wound.id}" data-tier="complete" ${busy ? "disabled" : ""}>完全治疗（${esc(num(config.completeTreatmentPrice))}）</button>
+                   </div>
+                   ${busy ? '<div class="small muted">该 Agent 正在一轮中，稍后再试。</div>' : ""}`
+                : agent.status === "dead"
+                  ? '<div class="banner danger">这个 Agent 已经死亡，不能治疗。</div>'
+                  : '<div class="small muted">这个伤口已经完全治愈，不留痕迹。</div>'
+            }
+          </div>`;
+      }
+
+      // --------------------------------------------------- death certificate
+      function paintDeathCertificate(agent) {
+        const death = agent.death || null;
+        if (death === null) {
+          return '<div class="banner danger">这个 Agent 已经死亡，但账本里没有死亡证明。</div>';
+        }
+        const facts = death.facts || null;
+        const cause = death.cause === "operator_termination" ? "操作员强制终止" : "饥饿遮盖累积到死亡线";
+        if (facts === null) {
+          return `<div class="banner danger">死亡证明（原始 JSON）</div><pre class="mono">${esc(death.body)}</pre>`;
+        }
+        const actions = (facts.lastActions || [])
+          .map((round) => {
+            const names = Object.keys(round.toolCalls || {}).sort();
+            return `
+              <div class="list-item">
+                <div class="row"><span class="title grow">第 ${round.round} 轮</span><span class="tag">${esc(END_REASON[round.endReason] || round.endReason || "—")}</span></div>
+                <div class="sub">${timeHtml(round.startedAt)} → ${timeHtml(round.endedAt)}</div>
+                <div class="sub">工具调用：${names.length === 0 ? "（无）" : names.map((n) => esc(n) + " × " + round.toolCalls[n]).join("、")}</div>
+              </div>`;
+          })
+          .join("");
+        const tasks = (facts.openCommitments.tasks || [])
+          .map((task) => `<div>· 任务 ${esc(task.id)}：${esc(task.title)}</div>`)
+          .join("");
+        const interventions = (facts.interventions || [])
+          .map((row) => `<div>· ${timeHtml(row.at)} · ${esc(INTERVENTION_KIND[row.kind] || row.kind)} · ${esc(row.detail)}</div>`)
+          .join("");
+        return `
+          <div class="card col-stack death-card">
+            <div class="banner danger">这个 Agent 已经死亡，死亡不可逆，没有任何恢复路径。</div>
+            <div class="kv"><span class="k">死亡时间</span><span>${timeHtml(facts.diedAt)}</span></div>
+            <div class="kv"><span class="k">死因</span><span>${esc(cause)}</span></div>
+            <div class="kv"><span class="k">出生时间</span><span>${timeHtml(facts.bornAt)}</span></div>
+            <div class="kv"><span class="k">模型</span><span class="mono small">${esc(facts.model)}</span></div>
+            <div class="kv"><span class="k">最终余额</span><span class="num">${esc(num(facts.finalBalance))}</span></div>
+            <div class="kv"><span class="k">终生遮盖总字数</span><span class="num">${esc(num(facts.lifetimeRedactedChars))}</span></div>
+            <div class="kv"><span class="k">死亡时未治疗字数</span><span class="num">${esc(num(facts.untreatedRedactedChars))}</span></div>
+            <div class="kv"><span class="k">治疗记录</span><span>普通 ${facts.treatments.ordinary} 次 · 完全 ${facts.treatments.complete} 次 · Agent 自付 ${facts.treatments.paidByAgent} 次 · 操作员代付 ${facts.treatments.paidByOperator} 次</span></div>
+          </div>
+          <div class="card col-stack">
+            <div style="font-weight: 600">最后行动摘要（只有名字和次数）</div>
+            ${actions === "" ? '<div class="small muted">没有可用的轮次记录。</div>' : actions}
+          </div>
+          <div class="card col-stack">
+            <div style="font-weight: 600">未了承诺</div>
+            ${tasks === "" ? '<div class="small muted">没有持有中的任务。</div>' : tasks}
+            <div class="small muted">待审核收入申报：#${(facts.openCommitments.pendingIncomeReports || []).join("、#") || "无"}</div>
+          </div>
+          <div class="card col-stack">
+            <div style="font-weight: 600">全部操作员干预记录</div>
+            ${interventions === "" ? '<div class="small muted">没有任何干预。</div>' : interventions}
+          </div>`;
       }
 
       // --------------------------------------------------- memory tab
@@ -1565,15 +3829,24 @@
         if (memCache.agent !== dlgAgent) return;
         const cap = state === null ? 0 : state.config.memoryCapChars;
         const text = memCache.memory;
-        $("memStats").textContent = `当前 ${text.length} 字 / 上限 ${cap} 字${text.length > cap ? "（已超出上限）" : ""}`;
+        const over = text.length > cap;
+        $("memStats").innerHTML =
+          `<span class="pill ${over ? "bad" : "ok"}">当前 ${text.length} 字 / 上限 ${cap} 字</span>` +
+          (over ? '<span class="pill bad">已超出上限</span>' : "");
         const lines = text === "" ? ["（MEMORY 为空）"] : text.replace(/\r\n/g, "\n").split("\n");
+        // Runs of the redaction placeholder are the visible scar: the operator
+        // is the only one who may see the original, but the report should make
+        // the missing text unmistakable rather than let it disappear into the
+        // monospace. Bracketing preserves the length, so nothing is fabricated.
+        const paintRedactions = (line) =>
+          esc(line).replace(/\u25AE+/g, (run) => `<span class="redact">${run.length}</span>`);
         repaint(
           host,
           lines
             .map((line, index) =>
               index < 2
-                ? `<div class="mem-line mem-born">${esc(line)}${index === 0 ? '<span class="hint">出生记录</span>' : ""}</div>`
-                : `<div class="mem-line">${esc(line)}</div>`,
+                ? `<div class="mem-line mem-born">${paintRedactions(line)}${index === 0 ? '<span class="hint">出生记录</span>' : ""}</div>`
+                : `<div class="mem-line">${paintRedactions(line)}</div>`,
             )
             .join(""),
         );
@@ -1748,8 +4021,16 @@
           openAgent(target.dataset.agent, "life");
           return;
         }
-        if (act === "goto-pause-settings") {
-          goPage("settings");
+        if (act === "goto-pause-settings" || act === "open-settings") {
+          openSettingsDlg("vital");
+          return;
+        }
+        if (act === "settings-close") {
+          closeSettingsDlg();
+          return;
+        }
+        if (act === "settings-tab") {
+          switchSettingsTab(target.dataset.tab);
           return;
         }
         if (act === "pause-toggle") {
@@ -1784,6 +4065,56 @@
           } finally {
             await refresh();
           }
+          return;
+        }
+        if (act === "sandbox-read-mode") {
+          if (sandboxDraft === null) return;
+          sandboxDraft.readMode = target.value === "whitelist" ? "whitelist" : "blacklist";
+          renderSandbox(false);
+          return;
+        }
+        if (act === "sandbox-add") {
+          const list = SANDBOX_LISTS.find((entry) => entry.key === target.dataset.list);
+          if (list === undefined || sandboxDraft === null) return;
+          const input = $(`sandboxInput-${list.key}`);
+          const value = input === null ? "" : input.value.trim();
+          if (value === "") {
+            sandboxHints[list.key] = "请先填写一个绝对路径";
+            renderSandbox(false);
+            return;
+          }
+          const rows = sandboxDraft[list.key];
+          const alreadyThere = sandboxLockedOf(list.key)
+            .concat(rows)
+            .some((path) => path.toLowerCase() === value.toLowerCase());
+          if (alreadyThere) {
+            sandboxHints[list.key] = "这个路径已经在列表里了";
+            renderSandbox(false);
+            return;
+          }
+          rows.push(value);
+          if (input !== null) input.value = "";
+          sandboxHints[list.key] = "";
+          renderSandbox(false);
+          return;
+        }
+        if (act === "sandbox-remove") {
+          const list = SANDBOX_LISTS.find((entry) => entry.key === target.dataset.list);
+          if (list === undefined || sandboxDraft === null) return;
+          const rows = sandboxDraft[list.key];
+          const index = Number(target.dataset.index);
+          if (!Number.isInteger(index) || index < 0 || index >= rows.length) return;
+          rows.splice(index, 1);
+          sandboxHints[list.key] = "";
+          renderSandbox(false);
+          return;
+        }
+        if (act === "sandbox-reload") {
+          await loadSandboxConfig();
+          return;
+        }
+        if (act === "sandbox-save") {
+          await saveSandbox();
           return;
         }
         if (act === "dlg-close") {
@@ -1947,6 +4278,49 @@
           await refresh();
           return;
         }
+        if (act === "wound-select") {
+          woundSel = Number(target.dataset.wound);
+          paintWounds();
+          return;
+        }
+        if (act === "op-treat") {
+          const agent = target.dataset.agent || dlgAgent;
+          const woundId = Number(target.dataset.wound);
+          const tier = target.dataset.tier;
+          const price = tier === "complete" ? state.config.completeTreatmentPrice : state.config.ordinaryTreatmentPrice;
+          if (
+            !confirm(
+              `你将以操作员身份替 ${agent} 治疗伤口 #${woundId}（${tier === "complete" ? "完全" : "普通"}治疗，价格 ${price}）。\n` +
+                "这不扣它的余额，但会永久记录为一次操作员干预。确认继续？",
+            )
+          ) {
+            return;
+          }
+          await post(`/api/agents/${encodeURIComponent(agent)}/wounds/${woundId}/treat`, { tier });
+          await refresh();
+          return;
+        }
+        if (act === "terminate") {
+          const agent = target.dataset.agent || dlgAgent;
+          if (agent === null) return;
+          if (
+            !confirm(
+              `这就是死亡，不可撤销。\n\n你即将强制终止 ${agent}：它的进程会立刻停止，死亡证明会被写下，` +
+                "之后没有任何恢复、导出或复活的办法——你也不行。\n\n确认继续？",
+            )
+          ) {
+            return;
+          }
+          const typed = prompt(`请输入这个 agent 的名字（${agent}）以确认：`, "");
+          if (typed === null) return;
+          if (typed.trim() !== agent) {
+            alert("名字不一致，已取消。");
+            return;
+          }
+          await post(`/api/agents/${encodeURIComponent(agent)}/terminate`, { confirmName: typed.trim() });
+          await refresh();
+          return;
+        }
       }
 
       document.addEventListener("click", (event) => {
@@ -2030,7 +4404,10 @@
           await followNewRounds();
         } catch (error) {
           refreshError = error instanceof Error ? error.message : String(error);
+          // The rail and the brand LED are the only live telemetry outside
+          // `paint()`, so they are the two things a failed poll must refresh.
           paintRailFoot();
+          paintVital();
         } finally {
           refreshing = false;
         }
@@ -2051,8 +4428,25 @@
       async function loadTab(tab, force) {
         if (dlgAgent === null) return;
         if (tab === "life") await loadRounds(dlgAgent, force);
+        else if (tab === "wounds") await loadWounds(dlgAgent, force);
         else if (tab === "memory") await loadMemory(dlgAgent, force);
         else if (tab === "notebook") await loadNotebook(dlgAgent, force);
+      }
+      async function loadWounds(name, force) {
+        if (name === null) return;
+        const host = $("woundList");
+        host.dataset.key = "";
+        host.innerHTML = '<div class="empty small">读取中…</div>';
+        try {
+          const body = await api(`/api/agents/${encodeURIComponent(name)}/wounds`);
+          woundCache = { agent: name, wounds: body.wounds };
+          if (woundSel === null || !body.wounds.some((wound) => wound.id === woundSel)) {
+            woundSel = body.wounds.length > 0 ? body.wounds[0].id : null;
+          }
+          paintWounds();
+        } catch (error) {
+          host.innerHTML = `<div class="empty small">读取失败：${esc(error instanceof Error ? error.message : String(error))}</div>`;
+        }
       }
       async function loadRounds(name, force) {
         if (name === null) return;
@@ -2161,10 +4555,31 @@
       $("dlg").addEventListener("click", (event) => {
         if (event.target === $("dlg")) closeAgent();
       });
+      // Clicking the dimmed area lands on the dialog element itself, because the
+      // card fills `.settings-shell`; the close therefore runs through the same
+      // animated path as the ✕ so the exit never blinks.
+      $("settingsDlg").addEventListener("click", (event) => {
+        if (event.target === $("settingsDlg")) closeSettingsDlg();
+      });
+      // Whatever closed it — the ✕, the backdrop, Esc, or the animation timer —
+      // the card must never be left carrying the exit class into the next open.
+      $("settingsDlg").addEventListener("close", () => {
+        settingsClosing = false;
+        $("settingsDlg").classList.remove("is-closing");
+      });
+      // Esc cancels a modal dialog natively; hold that cancel so Esc plays the
+      // same exit motion as the ✕ instead of snapping the card away.
+      $("settingsDlg").addEventListener("cancel", (event) => {
+        event.preventDefault();
+        closeSettingsDlg();
+      });
       window.addEventListener("hashchange", applyRoute);
       if (!window.location.hash) window.location.hash = "#/agents";
       applyRoute();
       void refresh();
+      // The sandbox panel is not part of /api/state: it reads its own route so
+      // the page always opens on the policy the server is actually enforcing.
+      void loadSandboxConfig();
       setInterval(() => {
         void refresh();
       }, 3000);

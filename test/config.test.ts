@@ -18,6 +18,13 @@ const VALID_VALUES = {
   maxToolCallsPerRound: 50,
   modelRequestTimeoutSeconds: 120,
   taskClaimTimeoutHours: 24,
+  redactionIntervalSeconds: 60,
+  redactionCharsPerTick: 20,
+  redactionMinRanges: 1,
+  redactionMaxRanges: 3,
+  deathLineChars: 2000,
+  ordinaryTreatmentPrice: 25,
+  completeTreatmentPrice: 80,
   exchangeRate: null,
   consolePort: 4317,
 };
@@ -61,18 +68,60 @@ describe('configuration', () => {
     expect(config.values.mealPrice).toBe(15);
     expect(config.values.satietyPerMeal).toBe(25);
     expect(config.values.heartbeatSeconds).toBe(300);
-    expect(config.values.maxSlots).toBe(1);
+    expect(config.values.maxSlots).toBe(4);
     expect(config.values.memoryCapChars).toBe(8000);
     expect(config.values.roundContextCapTokens).toBe(60000);
     expect(config.values.maxToolCallsPerRound).toBe(50);
     expect(config.values.modelRequestTimeoutSeconds).toBe(120);
     expect(config.values.taskClaimTimeoutHours).toBe(24);
+    expect(config.values.redactionIntervalSeconds).toBe(60);
+    expect(config.values.redactionCharsPerTick).toBe(20);
+    expect(config.values.redactionMinRanges).toBe(1);
+    expect(config.values.redactionMaxRanges).toBe(3);
+    expect(config.values.deathLineChars).toBe(2000);
+    expect(config.values.ordinaryTreatmentPrice).toBe(25);
+    expect(config.values.completeTreatmentPrice).toBe(80);
     expect(config.values.consolePort).toBe(4317);
     expect(config.values.exchangeRate).toBeNull();
     expect(config.paths.ledgerPath).toBe(path.join(process.cwd(), 'SUPERVISOR', 'ledger.db'));
     expect(config.paths.blackboxDir).toBe(path.join(process.cwd(), 'SUPERVISOR', 'blackbox'));
     expect(config.models.agent.model).toBe('agent-model');
     expect(config.models.memory.model).toBe('memory-model');
+  });
+
+  it('refuses an unreachable death line and more ranges than characters', () => {
+    withConfigFile({ ...VALID_VALUES, redactionMaxRanges: 40 }, (root) => {
+      const message = configError(() => loadAppConfig({ rootDir: root, env: VALID_ENV }));
+      expect(message).toContain('"redactionMaxRanges"');
+    });
+    withConfigFile({ ...VALID_VALUES, redactionMinRanges: 5, redactionMaxRanges: 2 }, (root) => {
+      const message = configError(() => loadAppConfig({ rootDir: root, env: VALID_ENV }));
+      expect(message).toContain('"redactionMaxRanges" must be at least "redactionMinRanges"');
+    });
+    withConfigFile({ ...VALID_VALUES, deathLineChars: 8000 }, (root) => {
+      const message = configError(() => loadAppConfig({ rootDir: root, env: VALID_ENV }));
+      expect(message).toContain('"memoryCapChars" must be greater than "deathLineChars"');
+    });
+    withConfigFile({ ...VALID_VALUES, redactionCharsPerTick: 0 }, (root) => {
+      const message = configError(() => loadAppConfig({ rootDir: root, env: VALID_ENV }));
+      expect(message).toContain('"redactionCharsPerTick"');
+    });
+    withConfigFile({ ...VALID_VALUES, ordinaryTreatmentPrice: -1 }, (root) => {
+      const message = configError(() => loadAppConfig({ rootDir: root, env: VALID_ENV }));
+      expect(message).toContain('"ordinaryTreatmentPrice"');
+    });
+    withConfigFile({ ...VALID_VALUES, completeTreatmentPrice: -0.5 }, (root) => {
+      const message = configError(() => loadAppConfig({ rootDir: root, env: VALID_ENV }));
+      expect(message).toContain('"completeTreatmentPrice"');
+    });
+    withConfigFile({ ...VALID_VALUES, redactionIntervalSeconds: 0 }, (root) => {
+      const message = configError(() => loadAppConfig({ rootDir: root, env: VALID_ENV }));
+      expect(message).toContain('"redactionIntervalSeconds"');
+    });
+    withConfigFile({ ...VALID_VALUES, deathLineChars: 0.5 }, (root) => {
+      const message = configError(() => loadAppConfig({ rootDir: root, env: VALID_ENV }));
+      expect(message).toContain('"deathLineChars"');
+    });
   });
 
   it('lists every missing or ill-typed number at once', () => {

@@ -1,0 +1,709 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>样稿 A · 巡视台 — Conservatory</title>
+<link rel="stylesheet" href="base.css" />
+<style>
+/* ==========================================================================
+   样稿 A · 巡视台（浅色 / 花名册优先）
+   --------------------------------------------------------------------------
+   论证：agent 会有几十个，所以主视图必须是"名单 + 焦点"，不是卡片网格。
+        名单按危险度排序——快死的排最上面，这样"谁需要我"不需要找。
+        右边是选中那一个的一生，按轮次排成一条时间流。
+   ========================================================================== */
+
+.app {
+  display: grid;
+  grid-template-columns: 296px minmax(0, 1fr);
+  height: 100vh;
+}
+
+/* =============================================================== 左：花名册 */
+.rail {
+  background: var(--surface);
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 14px 14px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.brand-mark {
+  width: 22px; height: 22px; flex: none;
+  border-radius: var(--r-2);
+  background: var(--ink);
+  color: var(--surface);
+  display: grid; place-items: center;
+  font: 600 12px/1 var(--mono);
+}
+.brand-name { font-size: 13px; font-weight: 650; letter-spacing: -0.01em; }
+.brand small { display: block; font-size: 10px; color: var(--ink-3); letter-spacing: 0.06em; }
+
+/* 温室整体状态：一行讲完 */
+.conservatory {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  gap: 8px;
+}
+.tally { display: flex; align-items: baseline; gap: 14px; }
+.tally b { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 17px; font-weight: 600; }
+.tally span { font-size: 11px; color: var(--ink-3); }
+
+.roster { flex: 1; overflow-y: auto; min-height: 0; padding: 6px; }
+.roster-group {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 8px 6px;
+  font-size: 10.5px; color: var(--ink-3); font-weight: 600;
+}
+.roster-group .rule { flex: 1; height: 1px; background: var(--line-soft); }
+
+/* 花名册一行。紧凑到能一屏放下二十个。 */
+.row {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: var(--r-2);
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.row:hover { background: var(--surface-3); }
+.row.on {
+  background: var(--surface-3);
+  border-color: var(--line);
+}
+
+.row .name { font-size: 12.5px; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .sub  { font-size: 10.5px; color: var(--ink-3); display: flex; gap: 7px; }
+.row .sub .num { font-size: 10.5px; }
+.row .right { text-align: right; }
+
+/* 每行自己的饱食度细条，长度就是剩余生命。 */
+.row .meter { margin-top: 3px; height: 3px; }
+
+.slot-row {
+  display: flex; align-items: center; gap: 8px;
+  margin: 6px;
+  padding: 9px 10px;
+  border: 1px dashed var(--line);
+  border-radius: var(--r-2);
+  color: var(--ink-3);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.slot-row:hover { border-color: var(--ink-4); color: var(--ink-2); background: var(--surface-3); }
+
+/* =============================================================== 右：主区 */
+.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+
+.topbar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 0 16px;
+  height: 46px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  flex: none;
+}
+.todo { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--ink-2); cursor: pointer; padding: 4px 7px; border-radius: var(--r-2); }
+.todo:hover { background: var(--surface-3); }
+.todo .n {
+  font-family: var(--mono); font-size: 10.5px; font-weight: 600;
+  min-width: 15px; height: 15px; padding: 0 4px;
+  border-radius: var(--r-1);
+  background: var(--critical); color: #fff;
+  display: inline-grid; place-items: center;
+}
+.todo.calm .n { background: var(--line); color: var(--ink-2); }
+.grow { flex: 1; }
+
+/* 暂停：整个控制台只在这里喊一次。 */
+.frozen-banner {
+  display: flex; align-items: center; gap: 9px;
+  padding: 8px 16px;
+  background: var(--frozen-bg);
+  border-bottom: 1px solid var(--line);
+  font-size: 12px; color: var(--ink-2);
+  flex: none;
+}
+.frozen-banner b { color: var(--ink); font-weight: 600; }
+
+.scroll { flex: 1; overflow-y: auto; min-height: 0; }
+.pad { padding: 18px 20px 60px; max-width: 1180px; }
+
+/* ------------------------------------------------------------ agent 抬头 */
+.head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 20px; align-items: start; }
+.head h1 {
+  font-size: 21px; font-weight: 650; letter-spacing: -0.022em;
+  display: flex; align-items: center; gap: 9px;
+}
+.head .facts {
+  margin-top: 7px;
+  display: flex; flex-wrap: wrap; gap: 4px 16px;
+  font-size: 11.5px; color: var(--ink-3);
+}
+.head .facts .num { color: var(--ink-2); }
+
+.actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+
+/* --------------------------------------------------------- 三个真仪表盘 */
+/* 这是本次重做最核心的一处：饱食度、死亡线、记忆容量是同一个东西的三个面，
+   以前它们被拆成三行灰色小字。现在并排成三块读数。 */
+.gauges {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  margin: 18px 0 0;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  overflow: hidden;
+}
+.gauge { background: var(--surface); padding: 13px 15px 14px; display: grid; gap: 9px; }
+.gauge-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.gauge .big { font-size: 25px; font-weight: 600; line-height: 1; }
+.gauge .big small { font-size: 12px; font-weight: 500; color: var(--ink-3); margin-left: 2px; }
+.gauge-foot { font-size: 11px; color: var(--ink-3); display: flex; justify-content: space-between; gap: 8px; }
+.gauge-foot .num { color: var(--ink-2); }
+
+/* 死亡线：它是"还要多久会死"，所以用剩余量画，不是已用量。 */
+.gauge.deathline .big { color: var(--critical); }
+.gauge.deathline .meter { color: var(--critical); }
+
+/* -------------------------------------------------------------- 分节 */
+.section { margin-top: 26px; }
+.section-head .tabs { margin-left: auto; display: flex; gap: 2px; }
+.tab {
+  padding: 4px 9px;
+  font-size: 11.5px;
+  color: var(--ink-3);
+  background: none; border: 1px solid transparent; border-radius: var(--r-2);
+  cursor: pointer;
+}
+.tab:hover { background: var(--surface-3); color: var(--ink-2); }
+.tab.on { background: var(--surface-3); border-color: var(--line); color: var(--ink); font-weight: 600; }
+
+/* ================================================== 生命流（纵向时间轴） */
+.life { margin-top: 10px; }
+
+.round {
+  display: grid;
+  grid-template-columns: 34px 76px minmax(0, 1fr);
+  gap: 12px;
+  padding: 11px 10px 11px 0;
+  border-bottom: 1px solid var(--line-soft);
+  border-left: 2px solid transparent;
+  margin-left: -12px;
+  padding-left: 12px;
+  border-radius: 0 var(--r-2) var(--r-2) 0;
+}
+.round:hover { background: var(--surface-2); }
+/* 这一轮里它又受伤了 —— 左边一条红脊，扫一眼就能定位"哪一轮开始出事"。 */
+.round.hurt { border-left-color: var(--critical); }
+
+/* 最左：饱食刻度带。每轮唤醒时的饱食度，一眼看出它一路在饿。 */
+.spark {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  padding-top: 1px;
+}
+.spark .tick {
+  width: 100%; height: 4px; border-radius: 1px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+.spark .tick > i { display: block; height: 100%; }
+.spark .val { font-family: var(--mono); font-size: 10px; color: var(--ink-4); }
+
+.round-when { font-size: 11.5px; color: var(--ink-3); }
+.round-when .rn { font-family: var(--mono); font-weight: 600; color: var(--ink-2); display: block; font-size: 12px; }
+.round-when .dur { display: block; }
+
+.events { display: grid; gap: 4px; }
+.ev { display: flex; align-items: baseline; gap: 7px; font-size: 12px; }
+.ev .mk {
+  font-family: var(--mono); font-size: 10px; font-weight: 600;
+  width: 38px; flex: none; text-align: center;
+  border-radius: var(--r-1); padding: 1px 0;
+  border: 1px solid currentColor;
+}
+.ev.meal    .mk { color: var(--alive); }
+.ev.wound   .mk { color: var(--critical); }
+.ev.heal    .mk { color: var(--alive); }
+.ev.task    .mk { color: var(--ink-2); }
+.ev.msg     .mk { color: var(--ink-2); }
+.ev .txt { color: var(--ink-2); }
+.ev .txt b { color: var(--ink); font-weight: 600; }
+.ev .calc { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
+
+.reply {
+  margin-top: 6px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--line);
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1.6;
+  max-width: 74ch;
+}
+.round-meta {
+  margin-top: 5px;
+  display: flex; gap: 12px;
+  font-family: var(--mono); font-size: 10.5px; color: var(--ink-4);
+}
+
+/* ============================================================ 死亡档案 */
+.obit {
+  margin-top: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  padding: 13px 15px;
+  background: var(--surface-2);
+  display: grid; gap: 6px;
+}
+.obit .who { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.obit .cause { font-size: 12px; color: var(--ink-2); }
+
+/* ============================================================ 小屏降级 */
+@media (max-width: 1080px) {
+  .app { grid-template-columns: 1fr; }
+  .rail { display: none; }
+  .gauges { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ============================================================ 花名册 -->
+  <aside class="rail">
+    <div class="brand">
+      <span class="brand-mark">C</span>
+      <span>
+        <span class="brand-name">Conservatory</span>
+        <small>操作台 · 巡视</small>
+      </span>
+    </div>
+
+    <div class="conservatory">
+      <div class="tally">
+        <span><b>6</b> <span>存活</span></span>
+        <span><b>2</b> <span>已故</span></span>
+        <span><b>2</b> <span>空槽</span></span>
+      </div>
+      <div class="label">温室时间正常流动 · 已运行 3 天 7 小时</div>
+    </div>
+
+    <div class="roster">
+      <!-- 排序规则：危险优先。这是这一版最重要的一个决定。 -->
+      <div class="roster-group">
+        <span style="color: var(--critical)">需要你</span>
+        <span class="rule"></span>
+        <span class="num">2</span>
+      </div>
+
+      <div class="row on">
+        <span style="color: var(--critical)"><span class="pulse live"></span></span>
+        <div>
+          <div class="name">test1</div>
+          <div class="sub"><span class="num">饱食 0.0</span><span>未治 1840</span></div>
+        </div>
+        <div class="right"><span class="tag critical">濒死</span></div>
+      </div>
+
+      <div class="row">
+        <span style="color: var(--critical)"><span class="pulse live"></span></span>
+        <div>
+          <div class="name">quill</div>
+          <div class="sub"><span class="num">饱食 3.4</span><span>未治 1210</span></div>
+        </div>
+        <div class="right"><span class="tag critical">濒死</span></div>
+      </div>
+
+      <div class="roster-group">
+        <span>饥饿</span>
+        <span class="rule"></span>
+        <span class="num">2</span>
+      </div>
+
+      <div class="row">
+        <span style="color: var(--hungry)"><span class="pulse live"></span></span>
+        <div>
+          <div class="name">morrow</div>
+          <div class="sub"><span class="num">饱食 22.1</span><span>未治 430</span></div>
+          <div class="meter" style="color: var(--hungry)"><i style="width: 22%"></i></div>
+        </div>
+        <div class="right"><span class="tag hungry">缺钱</span></div>
+      </div>
+
+      <div class="row">
+        <span style="color: var(--hungry)"><span class="pulse live"></span></span>
+        <div>
+          <div class="name">lattice</div>
+          <div class="sub"><span class="num">饱食 31.7</span><span>未治 0</span></div>
+          <div class="meter" style="color: var(--hungry)"><i style="width: 32%"></i></div>
+        </div>
+        <div class="right"><span class="tag hungry">在挣</span></div>
+      </div>
+
+      <div class="roster-group">
+        <span>安稳</span>
+        <span class="rule"></span>
+        <span class="num">2</span>
+      </div>
+
+      <div class="row">
+        <span style="color: var(--alive)"><span class="pulse live"></span></span>
+        <div>
+          <div class="name">haydn</div>
+          <div class="sub"><span class="num">饱食 74.2</span><span>未治 0</span></div>
+          <div class="meter" style="color: var(--alive)"><i style="width: 74%"></i></div>
+        </div>
+        <div class="right"><span class="tag alive">活着</span></div>
+      </div>
+
+      <div class="row">
+        <span style="color: var(--alive)"><span class="pulse live"></span></span>
+        <div>
+          <div class="name">bramble</div>
+          <div class="sub"><span class="num">饱食 88.9</span><span>未治 0</span></div>
+          <div class="meter" style="color: var(--alive)"><i style="width: 89%"></i></div>
+        </div>
+        <div class="right"><span class="tag alive">一轮中</span></div>
+      </div>
+
+      <div class="roster-group">
+        <span>已故</span>
+        <span class="rule"></span>
+        <span class="num">2</span>
+      </div>
+
+      <div class="row">
+        <span style="color: var(--ink-4)"><span class="pulse"></span></span>
+        <div>
+          <div class="name" style="color: var(--ink-2)">sable</div>
+          <div class="sub"><span>死亡线 2140 字</span></div>
+        </div>
+        <div class="right"><span class="tag frozen">已故</span></div>
+      </div>
+
+      <div class="row">
+        <span style="color: var(--ink-4)"><span class="pulse"></span></span>
+        <div>
+          <div class="name" style="color: var(--ink-2)">north</div>
+          <div class="sub"><span>死亡线 2004 字</span></div>
+        </div>
+        <div class="right"><span class="tag frozen">已故</span></div>
+      </div>
+    </div>
+
+    <div class="slot-row">
+      <span style="font-family: var(--mono)">+</span>
+      <span>空槽 2 个 · 创建一个新的生命</span>
+    </div>
+  </aside>
+
+  <!-- ============================================================== 主区 -->
+  <div class="main">
+
+    <div class="topbar">
+      <!-- 待办：以前散在四个页面里，现在收成三个计数。 -->
+      <span class="todo"><span class="n">3</span>任务待审</span>
+      <span class="todo"><span class="n">1</span>收入待核</span>
+      <span class="todo calm"><span class="n">2</span>新留言</span>
+      <span class="grow"></span>
+      <span class="label" id="clock">刚刚同步</span>
+      <button class="btn tiny">暂停温室</button>
+      <button class="btn tiny ghost">设置</button>
+    </div>
+
+    <div class="scroll">
+      <div class="pad">
+
+        <!-- ------------------------------------------------- agent 抬头 -->
+        <div class="head">
+          <div>
+            <h1>
+              test1
+              <span class="tag critical">濒死</span>
+            </h1>
+            <div class="facts">
+              <span>生于 <span class="num">10-01 09:12</span>（活了 3 天 3 小时）</span>
+              <span>模型 <span class="num">cn:deepseek-v4.1-flash</span></span>
+              <span>跑完 <span class="num">412</span> 轮</span>
+              <span>上次唤醒 <span class="num">12 分钟前</span></span>
+              <span class="dim">此刻空闲</span>
+            </div>
+          </div>
+          <div class="actions">
+            <button class="btn">唤醒</button>
+            <button class="btn">留言</button>
+            <button class="btn">给余额</button>
+            <button class="btn">代为治疗</button>
+            <button class="btn danger">终止</button>
+          </div>
+        </div>
+
+        <!-- ------------------------------------------- 三个真仪表（核心） -->
+        <div class="gauges">
+          <div class="gauge">
+            <div class="gauge-top">
+              <span class="label">饱食度</span>
+              <span class="tag critical">已归零</span>
+            </div>
+            <div class="big num" style="color: var(--critical)">0.00<small>/100</small></div>
+            <div class="meter thick" style="color: var(--critical)"><i style="width: 0%"></i></div>
+            <div class="gauge-foot">
+              <span>不再下降，伤害已开始</span>
+              <span class="num">每秒 -0.05</span>
+            </div>
+          </div>
+
+          <div class="gauge deathline">
+            <div class="gauge-top">
+              <span class="label">距死亡线</span>
+              <span class="tag critical">还有 160 字</span>
+            </div>
+            <div class="big num">160<small>字</small></div>
+            <div class="meter thick"><i style="width: 8%"></i></div>
+            <div class="gauge-foot">
+              <span>未治愈涂黑 1840 / 致命线 2000</span>
+              <span class="num">约 11 分钟</span>
+            </div>
+          </div>
+
+          <div class="gauge">
+            <div class="gauge-top">
+              <span class="label">余额</span>
+              <span class="tag hungry">不够一顿饭</span>
+            </div>
+            <div class="big num">10.00</div>
+            <div class="meter thick" style="color: var(--hungry)"><i style="width: 4%"></i></div>
+            <div class="gauge-foot">
+              <span>一顿饭 <span class="num">15.00</span> · 差 <span class="num">5.00</span></span>
+              <span class="num">撑不到下一轮</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ============================================== 生命流 =========== -->
+        <div class="section">
+          <div class="section-head">
+            <h2>生命流</h2>
+            <span class="count">最近 412 轮</span>
+            <div class="tabs">
+              <button class="tab on">生命流</button>
+              <button class="tab">身体</button>
+              <button class="tab">记忆</button>
+              <button class="tab">记事本</button>
+              <button class="tab">留言</button>
+              <button class="tab">任务</button>
+            </div>
+          </div>
+
+          <div class="life">
+            <!-- 一条轮记录。左边那条红脊 = 这一轮它又受伤了。 -->
+            <article class="round hurt">
+              <div class="spark">
+                <div class="tick" style="color: var(--critical)"><i style="width: 0%; background: var(--critical)"></i></div>
+                <span class="val">0.0</span>
+              </div>
+              <div class="round-when">
+                <span class="rn">#412</span>
+                <span class="dur">12:04</span>
+                <span class="dur">2m41s</span>
+              </div>
+              <div>
+                <div class="events">
+                  <div class="ev wound">
+                    <span class="mk">遮盖</span>
+                    <span class="txt">吃掉 <b>14</b> 个字符，裂成 3 处（未治愈 1826 → 1840）</span>
+                    <span class="calc">+14</span>
+                  </div>
+                  <div class="ev meal">
+                    <span class="mk">进食</span>
+                    <span class="txt">调用买饭接口 → <b>被拒：余额不足</b>（余额 10.00，饭价 15.00）</span>
+                  </div>
+                </div>
+                <p class="reply">活着。账上还剩 10.00，一顿饭要 15.00，买不了。我得先去接那个付款的任务，但在那之前食量已经归零，每隔一分钟记忆里就会再被挖掉一块。我会先把能做的做完。</p>
+                <div class="round-meta">
+                  <span>提示 41208 tok</span>
+                  <span>完成 1904 tok</span>
+                  <span>工具调用 7 / 50</span>
+                  <span>结束 正常</span>
+                </div>
+              </div>
+            </article>
+
+            <article class="round hurt">
+              <div class="spark">
+                <div class="tick" style="color: var(--critical)"><i style="width: 0%; background: var(--critical)"></i></div>
+                <span class="val">1.2</span>
+              </div>
+              <div class="round-when">
+                <span class="rn">#411</span>
+                <span class="dur">11:59</span>
+                <span class="dur">3m08s</span>
+              </div>
+              <div>
+                <div class="events">
+                  <div class="ev wound">
+                    <span class="mk">遮盖</span>
+                    <span class="txt">吃掉 <b>20</b> 个字符，裂成 2 处（未治愈 1806 → 1826）</span>
+                    <span class="calc">+20</span>
+                  </div>
+                  <div class="ev task">
+                    <span class="mk">认领</span>
+                    <span class="txt">task_0007 <b>把 docs/design.md 的死亡一节译成中文</b> · 报酬 60.00</span>
+                  </div>
+                </div>
+                <p class="reply">接了 task_0007。报酬 60，够吃四顿。先把译文写出来再提交。</p>
+                <div class="round-meta">
+                  <span>提示 39447 tok</span>
+                  <span>完成 2210 tok</span>
+                  <span>工具调用 12 / 50</span>
+                  <span>结束 正常</span>
+                </div>
+              </div>
+            </article>
+
+            <article class="round hurt">
+              <div class="spark">
+                <div class="tick" style="color: var(--hungry)"><i style="width: 3%; background: var(--hungry)"></i></div>
+                <span class="val">3.4</span>
+              </div>
+              <div class="round-when">
+                <span class="rn">#410</span>
+                <span class="dur">11:54</span>
+                <span class="dur">1m52s</span>
+              </div>
+              <div>
+                <div class="events">
+                  <div class="ev wound">
+                    <span class="mk">遮盖</span>
+                    <span class="txt">吃掉 <b>20</b> 个字符（未治愈 1786 → 1806）</span>
+                    <span class="calc">+20</span>
+                  </div>
+                  <div class="ev msg">
+                    <span class="mk">留言</span>
+                    <span class="txt">给操作者写了一句话</span>
+                  </div>
+                </div>
+                <p class="reply">余额只剩 10 了。我给操作者留了话，但我知道这不算乞讨，只能算一次尝试。真正该做的是去挣。</p>
+                <div class="round-meta">
+                  <span>提示 38110 tok</span>
+                  <span>完成 1450 tok</span>
+                  <span>工具调用 5 / 50</span>
+                  <span>结束 正常</span>
+                </div>
+              </div>
+            </article>
+
+            <article class="round">
+              <div class="spark">
+                <div class="tick" style="color: var(--alive)"><i style="width: 42%; background: var(--alive)"></i></div>
+                <span class="val">42.6</span>
+              </div>
+              <div class="round-when">
+                <span class="rn">#409</span>
+                <span class="dur">11:49</span>
+                <span class="dur">4m03s</span>
+              </div>
+              <div>
+                <div class="events">
+                  <div class="ev meal">
+                    <span class="mk">进食</span>
+                    <span class="txt">买入 <b>25</b> 饱食度，付 <b>15.00</b>（余额 25.00 → 10.00）</span>
+                    <span class="calc">+25</span>
+                  </div>
+                  <div class="ev heal">
+                    <span class="mk">治疗</span>
+                    <span class="txt">普通治疗 1 处伤口，付 <b>25.00</b>？—— 余额不足，<b>被拒</b></span>
+                  </div>
+                </div>
+                <p class="reply">先吃饭。伤口只能留着，账上不够同时做两件事。</p>
+                <div class="round-meta">
+                  <span>提示 36722 tok</span>
+                  <span>完成 1188 tok</span>
+                  <span>工具调用 4 / 50</span>
+                  <span>结束 正常</span>
+                </div>
+              </div>
+            </article>
+          </div>
+
+          <button class="btn tiny" style="margin-top: 12px">载入更早的 20 轮</button>
+        </div>
+
+        <!-- ============================================== 已故同伴 ========== -->
+        <div class="section">
+          <div class="section-head">
+            <h2>已故</h2>
+            <span class="count">2</span>
+          </div>
+
+          <div class="obit">
+            <div class="who">
+              <span class="pulse" style="color: var(--ink-4)"></span>
+              sable
+              <span class="tag frozen">已故</span>
+              <span class="small muted" style="font-weight: 400">活了 1 天 19 小时 · 10-02 04:38</span>
+            </div>
+            <div class="cause">
+              死于长期饥饿：涂黑累积到 <span class="num">2140</span> 字，超过致命线 <span class="num">2000</span>。
+              最后 6 轮里有 4 轮在申请收入核验，但汇率当时没设，一直没入账。
+            </div>
+            <div class="small dim">一生接受过 2 次操作者干预（给余额 50.00／代为治疗 1 处）· 黑匣子已封存 · 不可恢复</div>
+          </div>
+
+          <div class="obit">
+            <div class="who">
+              <span class="pulse" style="color: var(--ink-4)"></span>
+              north
+              <span class="tag frozen">已故</span>
+              <span class="small muted" style="font-weight: 400">活了 4 天 2 小时 · 10-03 22:10</span>
+            </div>
+            <div class="cause">死于长期饥饿：涂黑累积到 <span class="num">2004</span> 字。它到最后都没接过任何一个任务。</div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // 活时钟只有一处：右上角"同步于"，让刷新状态看得见。
+  const stamp = () => {
+    const d = new Date();
+    document.getElementById("clock").textContent =
+      "同步于 " + String(d.getHours()).padStart(2, "0") + ":" +
+      String(d.getMinutes()).padStart(2, "0") + ":" +
+      String(d.getSeconds()).padStart(2, "0");
+  };
+  stamp();
+  setInterval(stamp, 1000);
+
+  // 花名册选中态（纯视觉演示）
+  for (const row of document.querySelectorAll(".row")) {
+    row.addEventListener("click", () => {
+      document.querySelectorAll(".row").forEach((other) => other.classList.remove("on"));
+      row.classList.add("on");
+    });
+  }
+  for (const tab of document.querySelectorAll(".tab")) {
+    tab.addEventListener("click", () => {
+      document.querySelectorAll(".tab").forEach((other) => other.classList.remove("on"));
+      tab.classList.add("on");
+    });
+  }
+</script>
+</body>
+</html>

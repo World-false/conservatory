@@ -93,6 +93,25 @@ export interface MessageRecord {
   readAt: number | null;
 }
 
+/**
+ * The outcome of an agent-to-agent transfer. A refusal names the one reason it
+ * was refused; a success reports both balances after the move, so the caller
+ * never has to re-read a number it could have raced against.
+ */
+export type TransferBalanceResult =
+  | { ok: true; senderBalance: number; recipientBalance: number }
+  | {
+      ok: false;
+      reason:
+        | 'self_transfer'
+        | 'invalid_amount'
+        | 'sender_not_found'
+        | 'recipient_not_found'
+        | 'sender_not_alive'
+        | 'recipient_not_alive'
+        | 'insufficient_balance';
+    };
+
 export interface RoundRecord {
   id: number;
   agent: string;
@@ -102,6 +121,53 @@ export interface RoundRecord {
 }
 
 export type UsageSource = 'agent' | 'memory';
+
+export type WoundStatus = 'untreated' | 'scarred' | 'healed';
+
+export type TreatmentTier = 'ordinary' | 'complete';
+
+export type TreatmentPayer = 'agent' | 'operator';
+
+export type DeathCause = 'redaction_death_line' | 'operator_termination';
+
+export interface FrozenSentenceRecord {
+  id: number;
+  agent: string;
+  original: string;
+  createdAt: number;
+  releasedAt: number | null;
+}
+
+export interface WoundRecord {
+  id: number;
+  agent: string;
+  sentenceId: number;
+  offset: number;
+  length: number;
+  originalText: string;
+  status: WoundStatus;
+  starvationSince: number;
+  tickIndex: number;
+  createdAt: number;
+  treatedAt: number | null;
+}
+
+export interface TreatmentRecord {
+  id: number;
+  agent: string;
+  woundId: number;
+  tier: TreatmentTier;
+  price: number;
+  paidBy: TreatmentPayer;
+  at: number;
+}
+
+export interface DeathCertificateRecord {
+  agent: string;
+  diedAt: number;
+  cause: DeathCause;
+  body: string;
+}
 
 export interface UsageRecord {
   id: number;
@@ -117,7 +183,9 @@ export type InterventionKind =
   | 'give_balance'
   | 'give_satiety'
   | 'conservatory_paused'
-  | 'conservatory_resumed';
+  | 'conservatory_resumed'
+  | 'operator_treat'
+  | 'force_terminate';
 
 /**
  * A conservatory-wide setting has no single agent, but the interventions table
@@ -160,11 +228,21 @@ const INCOME_STATUSES: readonly IncomeStatus[] = ['pending', 'credited', 'reject
 
 const USAGE_SOURCES: readonly UsageSource[] = ['agent', 'memory'];
 
+const WOUND_STATUSES: readonly WoundStatus[] = ['untreated', 'scarred', 'healed'];
+
+const TREATMENT_TIERS: readonly TreatmentTier[] = ['ordinary', 'complete'];
+
+const TREATMENT_PAYERS: readonly TreatmentPayer[] = ['agent', 'operator'];
+
+const DEATH_CAUSES: readonly DeathCause[] = ['redaction_death_line', 'operator_termination'];
+
 const INTERVENTION_KINDS: readonly InterventionKind[] = [
   'give_balance',
   'give_satiety',
   'conservatory_paused',
   'conservatory_resumed',
+  'operator_treat',
+  'force_terminate',
 ];
 
 const PAUSE_KEY = 'paused';
@@ -321,10 +399,47 @@ CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS frozen_sentences (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  agent TEXT NOT NULL,
+  original TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  released_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS wounds (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  agent TEXT NOT NULL,
+  sentence_id INTEGER NOT NULL,
+  offset INTEGER NOT NULL,
+  length INTEGER NOT NULL,
+  original_text TEXT NOT NULL,
+  status TEXT NOT NULL,
+  starvation_since INTEGER NOT NULL,
+  tick_index INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  treated_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS treatments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  agent TEXT NOT NULL,
+  wound_id INTEGER NOT NULL,
+  tier TEXT NOT NULL,
+  price REAL NOT NULL,
+  paid_by TEXT NOT NULL,
+  at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS death_certificates (
+  agent TEXT PRIMARY KEY,
+  died_at INTEGER NOT NULL,
+  cause TEXT NOT NULL,
+  body TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_usage_agent ON usage (agent, source);
 CREATE INDEX IF NOT EXISTS idx_messages_recipient ON messages (recipient, read_at);
 CREATE INDEX IF NOT EXISTS idx_balance_events_agent ON balance_events (agent);
 CREATE INDEX IF NOT EXISTS idx_rounds_agent ON rounds (agent, started_at);
+CREATE INDEX IF NOT EXISTS idx_wounds_agent ON wounds (agent, status);
+CREATE INDEX IF NOT EXISTS idx_frozen_sentences_agent ON frozen_sentences (agent, released_at);
 CREATE TRIGGER IF NOT EXISTS balance_events_no_update
 BEFORE UPDATE ON balance_events
 BEGIN
@@ -344,6 +459,53 @@ CREATE TRIGGER IF NOT EXISTS interventions_no_delete
 BEFORE DELETE ON interventions
 BEGIN
   SELECT RAISE(ABORT, 'interventions is append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS frozen_sentences_no_delete
+BEFORE DELETE ON frozen_sentences
+BEGIN
+  SELECT RAISE(ABORT, 'frozen_sentences is append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS wounds_no_delete
+BEFORE DELETE ON wounds
+BEGIN
+  SELECT RAISE(ABORT, 'wounds is append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS treatments_no_delete
+BEFORE DELETE ON treatments
+BEGIN
+  SELECT RAISE(ABORT, 'treatments is append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS treatments_no_update
+BEFORE UPDATE ON treatments
+BEGIN
+  SELECT RAISE(ABORT, 'treatments is append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS death_certificates_no_delete
+BEFORE DELETE ON death_certificates
+BEGIN
+  SELECT RAISE(ABORT, 'death_certificates is append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS death_certificates_no_update
+BEFORE UPDATE ON death_certificates
+BEGIN
+  SELECT RAISE(ABORT, 'death_certificates is append-only');
+END;
+CREATE TRIGGER IF NOT EXISTS wounds_status_forward_only
+BEFORE UPDATE OF status ON wounds
+BEGIN
+  SELECT CASE
+    WHEN NOT (
+      (OLD.status = 'untreated' AND NEW.status IN ('scarred', 'healed'))
+      OR (OLD.status = 'scarred' AND NEW.status = 'healed')
+    )
+    THEN RAISE(ABORT, 'a wound heals forward only')
+  END;
+END;
+CREATE TRIGGER IF NOT EXISTS agents_dead_do_not_return
+BEFORE UPDATE ON agents
+WHEN OLD.status = 'dead'
+BEGIN
+  SELECT RAISE(ABORT, 'the dead do not return');
 END;
 `;
 
@@ -526,6 +688,58 @@ export class Ledger {
     });
   }
 
+  /**
+   * Moves balance between two living agents as one atomic transaction: either
+   * both sides land, or neither does. The check and the two events share one
+   * SQLite transaction, so a sender never pays twice from one balance.
+   *
+   * The recipient also gets a system message, because a transfer is an event in
+   * its world: the next round it wakes into shows the money as something that
+   * happened to it, not something it must be told out of band.
+   */
+  transferBalance(
+    fromAgent: string,
+    toAgent: string,
+    amount: number,
+    at: number,
+  ): TransferBalanceResult {
+    if (fromAgent === toAgent) {
+      return { ok: false, reason: 'self_transfer' };
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return { ok: false, reason: 'invalid_amount' };
+    }
+    const sender = this.getAgent(fromAgent);
+    if (sender === null) {
+      return { ok: false, reason: 'sender_not_found' };
+    }
+    if (sender.status !== 'alive') {
+      return { ok: false, reason: 'sender_not_alive' };
+    }
+    const recipient = this.getAgent(toAgent);
+    if (recipient === null) {
+      return { ok: false, reason: 'recipient_not_found' };
+    }
+    if (recipient.status !== 'alive') {
+      return { ok: false, reason: 'recipient_not_alive' };
+    }
+    return this.transaction(() => {
+      const senderBal = this.getBalance(fromAgent);
+      if (senderBal < amount) {
+        return { ok: false, reason: 'insufficient_balance' } as const;
+      }
+      this.appendBalanceEvent(fromAgent, -amount, 'transfer_out', toAgent, at);
+      this.appendBalanceEvent(toAgent, amount, 'transfer_in', fromAgent, at);
+      const formattedAmount = Number(amount.toFixed(3)).toString();
+      this.appendMessage('system', toAgent, `Received ${formattedAmount} balance from ${fromAgent}.`, at);
+      return {
+        ok: true,
+        senderBalance: senderBal - amount,
+        recipientBalance: this.getBalance(toAgent),
+      } as const;
+    });
+  }
+
   listBalanceEvents(agent: string): BalanceEvent[] {
     return this.db
       .prepare('SELECT * FROM balance_events WHERE agent = ? ORDER BY id ASC')
@@ -546,6 +760,221 @@ export class Ledger {
     this.db
       .prepare('INSERT INTO meals (agent, price, satiety_gained, overflow, at) VALUES (?, ?, ?, ?, ?)')
       .run(agent, price, satietyGained, overflow, at);
+  }
+
+  // ---------------------------------------------------------------- damage
+
+  /** Freezes one sentence: from now on only the ledger holds its true text. */
+  insertFrozenSentence(agent: string, original: string, at: number): number {
+    const result = this.db
+      .prepare('INSERT INTO frozen_sentences (agent, original, created_at, released_at) VALUES (?, ?, ?, NULL)')
+      .run(agent, original, at);
+    return Number(result.lastInsertRowid);
+  }
+
+  /** Sentences still holding a wound, so still frozen. */
+  listActiveFrozenSentences(agent: string): FrozenSentenceRecord[] {
+    return this.db
+      .prepare('SELECT * FROM frozen_sentences WHERE agent = ? AND released_at IS NULL ORDER BY id ASC')
+      .all(agent)
+      .map(mapFrozenSentence);
+  }
+
+  getFrozenSentence(id: number): FrozenSentenceRecord | null {
+    const row = this.db.prepare('SELECT * FROM frozen_sentences WHERE id = ?').get(id);
+    return row === undefined ? null : mapFrozenSentence(row);
+  }
+
+  /** Called once every wound in the sentence is healed, and never before. */
+  releaseFrozenSentence(id: number, at: number): boolean {
+    const result = this.db
+      .prepare('UPDATE frozen_sentences SET released_at = ? WHERE id = ? AND released_at IS NULL')
+      .run(at, id);
+    return changesOf(result) > 0;
+  }
+
+  insertWound(wound: {
+    agent: string;
+    sentenceId: number;
+    offset: number;
+    length: number;
+    originalText: string;
+    starvationSince: number;
+    tickIndex: number;
+    createdAt: number;
+  }): number {
+    const result = this.db
+      .prepare(
+        `INSERT INTO wounds (
+           agent, sentence_id, offset, length, original_text, status,
+           starvation_since, tick_index, created_at, treated_at
+         ) VALUES (?, ?, ?, ?, ?, 'untreated', ?, ?, ?, NULL)`,
+      )
+      .run(
+        wound.agent,
+        wound.sentenceId,
+        wound.offset,
+        wound.length,
+        wound.originalText,
+        wound.starvationSince,
+        wound.tickIndex,
+        wound.createdAt,
+      );
+    return Number(result.lastInsertRowid);
+  }
+
+  listWounds(agent: string): WoundRecord[] {
+    return this.db
+      .prepare('SELECT * FROM wounds WHERE agent = ? ORDER BY id ASC')
+      .all(agent)
+      .map(mapWound);
+  }
+
+  getWound(id: number): WoundRecord | null {
+    const row = this.db.prepare('SELECT * FROM wounds WHERE id = ?').get(id);
+    return row === undefined ? null : mapWound(row);
+  }
+
+  /**
+   * Guarded transition: the update only lands when the wound is still in
+   * `from`, so two clients racing to treat the same wound cannot both win.
+   */
+  setWoundStatus(
+    id: number,
+    from: WoundStatus,
+    to: Exclude<WoundStatus, 'untreated'>,
+    at: number,
+  ): boolean {
+    const result = this.db
+      .prepare('UPDATE wounds SET status = ?, treated_at = ? WHERE id = ? AND status = ?')
+      .run(to, at, id, from);
+    return changesOf(result) > 0;
+  }
+
+  appendTreatment(treatment: {
+    agent: string;
+    woundId: number;
+    tier: TreatmentTier;
+    price: number;
+    paidBy: TreatmentPayer;
+    at: number;
+  }): number {
+    const result = this.db
+      .prepare('INSERT INTO treatments (agent, wound_id, tier, price, paid_by, at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(
+        treatment.agent,
+        treatment.woundId,
+        treatment.tier,
+        treatment.price,
+        treatment.paidBy,
+        treatment.at,
+      );
+    return Number(result.lastInsertRowid);
+  }
+
+  listTreatments(agent: string): TreatmentRecord[] {
+    return this.db
+      .prepare('SELECT * FROM treatments WHERE agent = ? ORDER BY id ASC')
+      .all(agent)
+      .map(mapTreatment);
+  }
+
+  /**
+   * How many redaction ticks have already been applied since this hunger
+   * episode began. A new episode (eating, or a resume) has a new
+   * starvationSince, so the old count no longer matches anything.
+   */
+  countAppliedTicks(agent: string, starvationSince: number): number {
+    const row = this.db
+      .prepare('SELECT COUNT(*) AS total FROM wounds WHERE agent = ? AND starvation_since = ?')
+      .get(agent, starvationSince);
+    if (row === undefined) {
+      return 0;
+    }
+    return readNumber(row, 'total');
+  }
+
+  /** The count the death line watches: wounds not yet treated at all. */
+  untreatedRedactedChars(agent: string): number {
+    const row = this.db
+      .prepare("SELECT COALESCE(SUM(length), 0) AS total FROM wounds WHERE agent = ? AND status = 'untreated'")
+      .get(agent);
+    if (row === undefined) {
+      return 0;
+    }
+    return readNumber(row, 'total');
+  }
+
+  /** What the agent has lost over its whole life, treated or not. */
+  lifetimeRedactedChars(agent: string): number {
+    const row = this.db
+      .prepare('SELECT COALESCE(SUM(length), 0) AS total FROM wounds WHERE agent = ?')
+      .get(agent);
+    if (row === undefined) {
+      return 0;
+    }
+    return readNumber(row, 'total');
+  }
+
+  /** Every redaction tick that ever landed on this agent, newest first. */
+  listRedactionTicks(agent: string): WoundRecord[] {
+    return this.db
+      .prepare('SELECT * FROM wounds WHERE agent = ? ORDER BY tick_index ASC, id ASC')
+      .all(agent)
+      .map(mapWound);
+  }
+
+  // ----------------------------------------------------------------- death
+
+  /** Guarded so it lands once: a dead agent cannot be marked dead again. */
+  markAgentDead(name: string): boolean {
+    const result = this.db.prepare("UPDATE agents SET status = 'dead' WHERE name = ? AND status = 'alive'").run(name);
+    return changesOf(result) > 0;
+  }
+
+  insertDeathCertificate(record: DeathCertificateRecord): void {
+    this.db
+      .prepare('INSERT INTO death_certificates (agent, died_at, cause, body) VALUES (?, ?, ?, ?)')
+      .run(record.agent, record.diedAt, record.cause, record.body);
+  }
+
+  getDeathCertificate(agent: string): DeathCertificateRecord | null {
+    const row = this.db.prepare('SELECT * FROM death_certificates WHERE agent = ?').get(agent);
+    if (row === undefined) {
+      return null;
+    }
+    return {
+      agent: readString(row, 'agent'),
+      diedAt: readNumber(row, 'died_at'),
+      cause: readEnum(row, 'cause', DEATH_CAUSES),
+      body: readString(row, 'body'),
+    };
+  }
+
+  /**
+   * A dead agent's work goes back to the board. A task already submitted stays
+   * with the operator to review, because the work may exist.
+   */
+  releaseHeldTasks(agent: string, at: number): string[] {
+    return this.transaction(() => {
+      const rows = this.db
+        .prepare(
+          `SELECT id FROM tasks WHERE claimed_by = ? AND status IN ('claimed', 'rework') ORDER BY id ASC`,
+        )
+        .all(agent);
+      const ids: string[] = [];
+      const update = this.db.prepare(
+        `UPDATE tasks SET status = 'open', claimed_by = NULL, claimed_at = NULL, updated_at = ?
+         WHERE id = ? AND claimed_by = ? AND status IN ('claimed', 'rework')`,
+      );
+      for (const row of rows) {
+        const id = readString(row, 'id');
+        if (changesOf(update.run(at, id, agent)) > 0) {
+          ids.push(id);
+        }
+      }
+      return ids;
+    });
   }
 
   // ----------------------------------------------------------------- tasks
@@ -961,5 +1390,43 @@ function mapMessage(row: Row): MessageRecord {
     body: readString(row, 'body'),
     at: readNumber(row, 'at'),
     readAt: readNullableNumber(row, 'read_at'),
+  };
+}
+
+function mapFrozenSentence(row: Row): FrozenSentenceRecord {
+  return {
+    id: readNumber(row, 'id'),
+    agent: readString(row, 'agent'),
+    original: readString(row, 'original'),
+    createdAt: readNumber(row, 'created_at'),
+    releasedAt: readNullableNumber(row, 'released_at'),
+  };
+}
+
+function mapWound(row: Row): WoundRecord {
+  return {
+    id: readNumber(row, 'id'),
+    agent: readString(row, 'agent'),
+    sentenceId: readNumber(row, 'sentence_id'),
+    offset: readNumber(row, 'offset'),
+    length: readNumber(row, 'length'),
+    originalText: readString(row, 'original_text'),
+    status: readEnum(row, 'status', WOUND_STATUSES),
+    starvationSince: readNumber(row, 'starvation_since'),
+    tickIndex: readNumber(row, 'tick_index'),
+    createdAt: readNumber(row, 'created_at'),
+    treatedAt: readNullableNumber(row, 'treated_at'),
+  };
+}
+
+function mapTreatment(row: Row): TreatmentRecord {
+  return {
+    id: readNumber(row, 'id'),
+    agent: readString(row, 'agent'),
+    woundId: readNumber(row, 'wound_id'),
+    tier: readEnum(row, 'tier', TREATMENT_TIERS),
+    price: readNumber(row, 'price'),
+    paidBy: readEnum(row, 'paid_by', TREATMENT_PAYERS),
+    at: readNumber(row, 'at'),
   };
 }

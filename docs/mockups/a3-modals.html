@@ -1,0 +1,1118 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>样稿 A3 · 巡视台（弹窗驱动）— Conservatory</title>
+<link rel="stylesheet" href="base.css" />
+<style>
+/* ==========================================================================
+   样稿 A3 · 巡视台 · 弹窗驱动
+   --------------------------------------------------------------------------
+   对上一条批评的更正：基础页不再"一页到底"。
+
+   基础页只回答两个问题：
+     1. 谁还活着，谁快死了          → 左侧花名册
+     2. 选中的这个现在怎么样        → 右侧体征 + 一扇扇门
+   其余所有内容（生命流、伤口、记忆、记事本、留言、设置…）都在弹窗里。
+   弹窗不是"藏起来"，是"你主动决定要看这个"。
+
+   附带好处：弹窗本身就是那道界线。打开干预台 = 一次刻意的动作，
+   所以不再需要"见证/主控"开关，编辑能力一直在门后面等着。
+   ========================================================================== */
+
+.app { display: grid; grid-template-columns: 280px minmax(0, 1fr); height: 100vh; }
+
+/* =============================================================== 左：花名册 */
+.rail { background: var(--surface); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+.brand { display: flex; align-items: center; gap: 9px; padding: 13px 14px 11px; border-bottom: 1px solid var(--line); }
+.brand-mark { width: 22px; height: 22px; flex: none; border-radius: var(--r-2); background: var(--ink); color: var(--surface); display: grid; place-items: center; font: 600 12px/1 var(--mono); }
+.brand-name { font-size: 13px; font-weight: 650; letter-spacing: -0.01em; }
+.brand small { display: block; font-size: 10px; color: var(--ink-3); letter-spacing: 0.06em; }
+
+.conservatory { padding: 9px 14px; border-bottom: 1px solid var(--line); display: grid; gap: 6px; }
+.tally { display: flex; align-items: baseline; gap: 13px; }
+.tally b { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 16px; font-weight: 600; }
+.tally span { font-size: 10.5px; color: var(--ink-3); }
+
+.roster { flex: 1; overflow-y: auto; min-height: 0; padding: 5px; }
+.roster-group { display: flex; align-items: center; gap: 8px; padding: 8px 8px 5px; font-size: 10.5px; color: var(--ink-3); font-weight: 600; }
+.roster-group .rule { flex: 1; height: 1px; background: var(--line-soft); }
+
+.row { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 6px 8px; border-radius: var(--r-2); cursor: pointer; border: 1px solid transparent; }
+.row:hover { background: var(--surface-3); }
+.row.on { background: var(--surface-3); border-color: var(--line); }
+.row .name { font-size: 12.5px; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .sub { font-size: 10.5px; color: var(--ink-3); display: flex; gap: 7px; }
+.row .sub .num { font-size: 10.5px; }
+.row .meter { margin-top: 3px; height: 3px; }
+.row .right { text-align: right; }
+.rescued { font-size: 9.5px; color: var(--ink-3); }
+
+.slot-row { display: flex; align-items: center; gap: 8px; margin: 6px; padding: 8px 10px; border: 1px dashed var(--line); border-radius: var(--r-2); color: var(--ink-3); font-size: 11.5px; cursor: pointer; }
+.slot-row:hover { border-color: var(--ink-4); color: var(--ink-2); background: var(--surface-3); }
+
+/* =============================================================== 右：基础页 */
+.main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+
+.topbar { display: flex; align-items: center; gap: 10px; padding: 0 16px; height: 44px; background: var(--surface); border-bottom: 1px solid var(--line); flex: none; }
+.todo { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--ink-2); cursor: pointer; padding: 4px 7px; border-radius: var(--r-2); }
+.todo:hover { background: var(--surface-3); }
+.todo .n { font-family: var(--mono); font-size: 10.5px; font-weight: 600; min-width: 15px; height: 15px; padding: 0 4px; border-radius: var(--r-1); background: var(--critical); color: #fff; display: inline-grid; place-items: center; }
+.todo.calm .n { background: var(--line); color: var(--ink-2); }
+.grow { flex: 1; }
+
+.paused-strip { display: flex; align-items: center; gap: 9px; padding: 7px 16px; background: var(--frozen-bg); border-bottom: 1px solid var(--line); font-size: 12px; color: var(--ink-2); flex: none; }
+.paused-strip b { color: var(--ink); font-weight: 600; }
+
+/* 基础页自己不滚动：所有内容都要在一屏里说完。 */
+.board { flex: 1; min-height: 0; padding: 16px 20px; display: flex; flex-direction: column; gap: 16px; overflow: hidden; }
+
+/* ------------------------------------------------------------ agent 抬头 */
+.head { display: flex; align-items: flex-start; gap: 18px; flex: none; }
+.head h1 { font-size: 20px; font-weight: 650; letter-spacing: -0.022em; display: flex; align-items: center; gap: 9px; }
+.head .facts { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 3px 15px; font-size: 11.5px; color: var(--ink-3); }
+.head .facts .num { color: var(--ink-2); }
+.head-actions { margin-left: auto; display: flex; gap: 6px; }
+
+/* ------------------------------------------- 三个真仪表（只读，改在弹窗里） */
+.gauges { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: var(--r-3); overflow: hidden; flex: none; }
+.gauge { background: var(--surface); padding: 12px 14px 13px; display: grid; gap: 8px; }
+.gauge-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.gauge .big { font-size: 24px; font-weight: 600; line-height: 1; font-family: var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+.gauge .big small { font-size: 11.5px; font-weight: 500; color: var(--ink-3); margin-left: 2px; font-family: var(--sans); }
+.gauge-foot { font-size: 11px; color: var(--ink-3); display: flex; justify-content: space-between; gap: 8px; }
+.gauge-foot .num { color: var(--ink-2); }
+/* 饱食度归零 = 已经在受伤，用实心红；距死亡线 = 临界，用描边红。两者不再糊成一片。 */
+.gauge.empty .big { color: var(--critical); }
+.gauge.deathline { background: var(--critical-bg); }
+.gauge.deathline .big { color: var(--critical); }
+.gauge.deathline .meter { color: var(--critical); }
+
+/* ============================================================ 门（弹窗入口） */
+.doors { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.doors-head { display: flex; align-items: baseline; gap: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--line); flex: none; }
+.doors-head h2 { font-size: 12.5px; font-weight: 650; }
+.doors-head .label { margin-left: auto; }
+
+.door-grid { margin-top: 12px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; align-content: start; }
+
+.door {
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  background: var(--surface);
+  padding: 11px 12px 12px;
+  cursor: pointer;
+  display: grid;
+  gap: 5px;
+  transition: border-color 0.12s ease, background 0.12s ease, transform 0.06s ease;
+}
+.door:hover { border-color: var(--ink-4); background: var(--surface-3); }
+.door:active { transform: translateY(1px); }
+.door .door-name { font-size: 12.5px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.door .door-name .arrow { margin-left: auto; color: var(--ink-4); font-family: var(--mono); font-size: 11px; }
+.door .door-val { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 16px; font-weight: 600; letter-spacing: -0.02em; }
+.door .door-val small { font-family: var(--sans); font-size: 10.5px; font-weight: 500; color: var(--ink-3); margin-left: 3px; }
+.door .door-note { font-size: 10.5px; color: var(--ink-3); }
+/* 需要你出手的门，边框带一点颜色 —— 但不填满，避免整页都是红的。 */
+.door.urgent { border-color: color-mix(in srgb, var(--critical) 34%, var(--line)); }
+.door.urgent .door-val { color: var(--critical); }
+.door.warn { border-color: color-mix(in srgb, var(--hungry) 34%, var(--line)); }
+.door.warn .door-val { color: var(--hungry); }
+
+/* 键盘提示：弹窗应用该有的礼貌。 */
+.hint { flex: none; display: flex; align-items: center; gap: 12px; font-size: 11px; color: var(--ink-4); }
+kbd {
+  font-family: var(--mono); font-size: 10px;
+  border: 1px solid var(--line); border-bottom-width: 2px;
+  border-radius: var(--r-1); padding: 1px 5px; background: var(--surface);
+  color: var(--ink-3);
+}
+
+/* ================================================================ 弹窗 */
+.scrim {
+  position: fixed; inset: 0;
+  background: color-mix(in srgb, var(--ink) 42%, transparent);
+  display: grid; place-items: center;
+  padding: 28px;
+  z-index: 50;
+  animation: fade 0.14s ease both;
+}
+.scrim[hidden] { display: none; }
+@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+
+.dlg {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-3);
+  box-shadow: var(--shadow-panel);
+  display: flex; flex-direction: column;
+  max-height: 100%;
+  width: var(--w, 660px);
+  max-width: 100%;
+  animation: rise 0.18s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes rise { from { opacity: 0; transform: translateY(8px) scale(0.99); } to { opacity: 1; transform: none; } }
+.scrim[data-size="sm"] .dlg { --w: 440px; }
+.scrim[data-size="md"] .dlg { --w: 620px; }
+.scrim[data-size="lg"] .dlg { --w: 860px; }
+.scrim[data-size="xl"] .dlg { --w: 1080px; }
+
+/* 嵌套弹窗：叠在上一层之上，更深的阴影把它托起来。 */
+.scrim.nested { z-index: 60; background: color-mix(in srgb, var(--ink) 30%, transparent); }
+
+.dlg-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--line); flex: none; }
+.dlg-head h2 { font-size: 13px; font-weight: 650; }
+.dlg-head .sub { font-size: 11px; color: var(--ink-3); }
+.dlg-head .grow { flex: 1; }
+.dlg-close { width: 26px; height: 26px; border: 1px solid transparent; background: none; border-radius: var(--r-2); cursor: pointer; color: var(--ink-3); font-size: 15px; line-height: 1; display: grid; place-items: center; }
+.dlg-close:hover { background: var(--surface-3); border-color: var(--line); color: var(--ink); }
+
+.dlg-body { padding: 14px; overflow: auto; min-height: 0; }
+.dlg-foot { display: flex; align-items: center; gap: 8px; padding: 11px 14px; border-top: 1px solid var(--line); background: var(--surface-2); flex: none; border-radius: 0 0 var(--r-3) var(--r-3); }
+.dlg-foot .note { font-size: 11px; color: var(--ink-3); }
+.dlg-foot .grow { flex: 1; }
+
+/* 危险操作：底部一条明确的疤。 */
+.dlg-foot.danger { background: var(--critical-bg); border-top-color: color-mix(in srgb, var(--critical) 30%, var(--line)); }
+.dlg-foot.danger .note { color: var(--critical); }
+
+/* ---------------------------------------------------- 弹窗内的通用部件 */
+.field { display: grid; gap: 6px; margin-bottom: 12px; }
+.field > .label { padding: 0; }
+.entry {
+  height: 30px; padding: 0 9px;
+  font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 13px;
+  border: 1px solid var(--line); border-radius: var(--r-2);
+  background: var(--surface); color: var(--ink);
+}
+.entry:focus { outline: none; border-color: var(--operator); box-shadow: 0 0 0 2px color-mix(in srgb, var(--operator) 16%, transparent); }
+.entry.wide { width: 100%; }
+.row-2 { display: grid; grid-template-columns: 108px minmax(0, 1fr); gap: 10px; align-items: center; }
+
+/* 干预台里的每一行：左边是当前值，右边是你要设成的值。 */
+.ops { display: grid; gap: 0; border: 1px solid var(--line); border-radius: var(--r-2); overflow: hidden; }
+.op { display: grid; grid-template-columns: 92px 108px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 11px 12px; border-bottom: 1px solid var(--line-soft); background: var(--surface); }
+.op:last-child { border-bottom: none; }
+.op .now { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 14px; font-weight: 600; }
+.op .now small { font-family: var(--sans); font-size: 10.5px; font-weight: 500; color: var(--ink-3); margin-left: 3px; }
+.op .why { font-size: 11px; color: var(--ink-3); }
+
+/* 伤口行：显示【被夺走的原词】，不是占位符方块。
+   操作者是唯一能看到原文的人，界面上就该把原文给他看。 */
+.wound { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px; padding: 12px; border-bottom: 1px solid var(--line-soft); }
+.wound:last-child { border-bottom: none; }
+.wound .top { display: flex; align-items: baseline; gap: 9px; margin-bottom: 7px; }
+.wound .id { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
+.wound .chars { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--critical); }
+.wound .when { font-size: 10.5px; color: var(--ink-4); }
+/* 原文：被夺走的词被高亮出来，一眼看到它丢了什么。 */
+.wound .line { font-size: 12.5px; line-height: 1.85; color: var(--ink-3); }
+.wound .line mark {
+  background: var(--critical-bg); color: var(--critical);
+  border: 1px solid color-mix(in srgb, var(--critical) 26%, transparent);
+  border-radius: var(--r-1); padding: 0 4px; font-family: var(--mono); font-weight: 600;
+}
+.wound .as-seen { margin-top: 5px; font-family: var(--mono); font-size: 11px; color: var(--ink-4); }
+.wound .acts { display: flex; flex-direction: column; gap: 5px; justify-content: center; }
+
+/* 冻住的句子：harness 会还原，所以界面上必须锁死。 */
+.frozen-note { display: flex; align-items: center; gap: 7px; padding: 8px 10px; background: var(--frozen-bg); border: 1px solid color-mix(in srgb, var(--frozen) 24%, transparent); border-radius: var(--r-2); font-size: 11px; color: var(--ink-2); margin-bottom: 11px; }
+.mem { border: 1px solid var(--line); border-radius: var(--r-2); overflow: hidden; }
+.mem-body { padding: 12px 13px; font-family: var(--mono); font-size: 12px; line-height: 1.9; white-space: pre-wrap; word-break: break-word; max-height: 300px; overflow: auto; }
+.mem-body .locked { background: var(--frozen-bg); border-radius: var(--r-1); padding: 1px 5px; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--frozen) 22%, transparent); cursor: not-allowed; }
+
+/* 生命流 */
+.life { display: grid; }
+.round { display: grid; grid-template-columns: 30px 68px minmax(0, 1fr); gap: 11px; padding: 10px 8px 10px 10px; border-bottom: 1px solid var(--line-soft); border-left: 2px solid transparent; }
+.round:hover { background: var(--surface-2); }
+.round.hurt { border-left-color: var(--critical); }
+.round.touched { border-left-color: var(--operator); }
+.spark { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.spark .tick { width: 100%; height: 4px; border-radius: 1px; background: var(--surface-3); overflow: hidden; }
+.spark .tick > i { display: block; height: 100%; }
+.spark .val { font-family: var(--mono); font-size: 9.5px; color: var(--ink-4); }
+.round-when .rn { font-family: var(--mono); font-weight: 600; color: var(--ink-2); display: block; font-size: 11.5px; }
+.round-when .dur { display: block; font-size: 11px; color: var(--ink-3); }
+.events { display: grid; gap: 4px; }
+.ev { display: flex; align-items: baseline; gap: 7px; font-size: 12px; }
+.ev .mk { font-family: var(--mono); font-size: 10px; font-weight: 600; width: 36px; flex: none; text-align: center; border-radius: var(--r-1); padding: 1px 0; border: 1px solid currentColor; }
+.ev.meal .mk { color: var(--alive); }
+.ev.wound .mk { color: var(--critical); }
+.ev.op .mk { color: var(--operator); }
+.ev.task .mk { color: var(--ink-2); }
+.ev .txt { color: var(--ink-2); }
+.ev .txt b { color: var(--ink); font-weight: 600; }
+.reply { margin-top: 6px; padding: 7px 10px; border-left: 2px solid var(--line); color: var(--ink-2); font-size: 12px; line-height: 1.6; }
+.round-meta { margin-top: 5px; display: flex; gap: 12px; font-family: var(--mono); font-size: 10.5px; color: var(--ink-4); }
+
+/* 死亡确认：死亡是唯一硬锁，所以它配得上一个专门的弹窗。 */
+.death-list { display: grid; gap: 7px; margin: 12px 0; font-size: 12.5px; }
+.death-list div { display: flex; gap: 9px; }
+.death-list .k { color: var(--ink-3); width: 84px; flex: none; }
+
+.toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%); background: var(--operator); color: var(--operator-ink); font-size: 12px; padding: 8px 14px; border-radius: var(--r-2); z-index: 90; box-shadow: var(--shadow-panel); }
+.toast[hidden] { display: none; }
+
+@media (max-width: 1180px) { .door-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 980px) {
+  .app { grid-template-columns: 1fr; }
+  .rail { display: none; }
+  .gauges, .door-grid { grid-template-columns: 1fr; }
+  .board { overflow: auto; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ============================================================ 花名册 -->
+  <aside class="rail">
+    <div class="brand">
+      <span class="brand-mark">C</span>
+      <span>
+        <span class="brand-name">Conservatory</span>
+        <small>操作台 · 巡视</small>
+      </span>
+    </div>
+
+    <div class="conservatory">
+      <div class="tally">
+        <span><b>6</b> <span>存活</span></span>
+        <span><b>2</b> <span>已故</span></span>
+        <span><b>2</b> <span>空槽</span></span>
+      </div>
+      <div class="label">时间正常流动 · 已运行 3 天 7 小时</div>
+    </div>
+
+    <div class="roster">
+      <div class="roster-group"><span style="color: var(--critical)">危险</span><span class="rule"></span><span class="num">2</span></div>
+
+      <div class="row on">
+        <span style="color: var(--critical)"><span class="pulse live"></span></span>
+        <div>
+          <div class="name">test1</div>
+          <div class="sub"><span class="num">饱食 0.0</span><span>未治 1840</span></div>
+        </div>
+        <div class="right"><span class="tag critical">濒死</span></div>
+      </div>
+
+      <div class="row">
+        <span style="color: var(--critical)"><span class="pulse live"></span></span>
+        <div>
+          <div class="name">quill</div>
+          <div class="sub"><span class="num">饱食 3.4</span><span>未治 1210</span></div>
+        </div>
+        <div class="right"><span class="tag critical">濒死</span></div>
+      </div>
+
+      <div class="roster-group"><span>饥饿</span><span class="rule"></span><span class="num">2</span></div>
+
+      <div class="row">
+        <span style="color: var(--hungry)"><span class="pulse live"></span></span>
+        <div>
+          <div class="name">morrow</div>
+          <div class="sub"><span class="num">饱食 22.1</span><span>未治 430</span></div>
+          <div class="meter" style="color: var(--hungry)"><i style="width: 22%"></i></div>
+        </div>
+        <div class="right"><span class="tag hungry">缺钱</span><div class="rescued">你救过 1 次</div></div>
+      </div>
+
+      <div class="row">
+        <span style="color: var(--hungry)"><span class="pulse live"></span></span>
+        <div>
+          <div class="name">lattice</div>
+          <div class="sub"><span class="num">饱食 31.7</span><span>未治 0</span></div>
+          <div class="meter" style="color: var(--hungry)"><i style="width: 32%"></i></div>
+        </div>
+        <div class="right"><span class="tag hungry">在挣</span></div>
+      </div>
+
+      <div class="roster-group"><span>安稳</span><span class="rule"></span><span class="num">2</span></div>
+
+      <div class="row">
+        <span style="color: var(--alive)"><span class="pulse live"></span></span>
+        <div>
+          <div class="name">haydn</div>
+          <div class="sub"><span class="num">饱食 74.2</span><span>未治 0</span></div>
+          <div class="meter" style="color: var(--alive)"><i style="width: 74%"></i></div>
+        </div>
+        <div class="right"><span class="tag alive">自己活着</span></div>
+      </div>
+
+      <div class="row">
+        <span style="color: var(--alive)"><span class="pulse live"></span></span>
+        <div>
+          <div class="name">bramble</div>
+          <div class="sub"><span class="num">饱食 88.9</span><span>未治 0</span></div>
+          <div class="meter" style="color: var(--alive)"><i style="width: 89%"></i></div>
+        </div>
+        <div class="right"><span class="tag alive">一轮中</span></div>
+      </div>
+
+      <div class="roster-group"><span>已故</span><span class="rule"></span><span class="num">2</span></div>
+
+      <div class="row" data-open="obit">
+        <span style="color: var(--ink-4)"><span class="pulse"></span></span>
+        <div>
+          <div class="name" style="color: var(--ink-2)">sable</div>
+          <div class="sub"><span>死于 10-02 04:38</span></div>
+        </div>
+        <div class="right"><span class="tag frozen">已故</span></div>
+      </div>
+
+      <div class="row" data-open="obit">
+        <span style="color: var(--ink-4)"><span class="pulse"></span></span>
+        <div>
+          <div class="name" style="color: var(--ink-2)">north</div>
+          <div class="sub"><span>死于 10-03 22:10</span></div>
+        </div>
+        <div class="right"><span class="tag frozen">已故</span></div>
+      </div>
+    </div>
+
+    <div class="slot-row" data-open="birth">
+      <span style="font-family: var(--mono)">+</span>
+      <span>空槽 2 个 · 创建一个新的生命</span>
+    </div>
+  </aside>
+
+  <!-- ====================================================== 基础页（不滚动） -->
+  <div class="main">
+    <div class="topbar">
+      <span class="todo" data-open="tasks"><span class="n">3</span>任务待审</span>
+      <span class="todo" data-open="income"><span class="n">1</span>收入待核</span>
+      <span class="todo calm" data-open="messages"><span class="n">2</span>新留言</span>
+      <span class="grow"></span>
+      <span class="label" id="clock">刚刚同步</span>
+      <button class="btn tiny" data-open="pause">暂停温室</button>
+      <button class="btn tiny ghost" data-open="settings">设置</button>
+    </div>
+
+    <div class="board">
+
+      <!-- agent 抬头 -->
+      <div class="head">
+        <div>
+          <h1>test1 <span class="tag critical">濒死</span></h1>
+          <div class="facts">
+            <span>生于 <span class="num">10-01 09:12</span>（活了 3 天 3 小时）</span>
+            <span>模型 <span class="num">cn:deepseek-v4.1-flash</span></span>
+            <span>跑完 <span class="num">412</span> 轮</span>
+            <span>上次唤醒 <span class="num">12 分钟前</span></span>
+            <span>被干预过 <span class="num">0</span> 次 · 全靠自己</span>
+          </div>
+        </div>
+        <div class="head-actions">
+          <button class="btn">唤醒</button>
+          <button class="btn" data-open="messages">留言</button>
+          <button class="btn danger" data-open="death">终止</button>
+        </div>
+      </div>
+
+      <!-- 体征：只读。改数值去干预台。 -->
+      <div class="gauges">
+        <div class="gauge empty">
+          <div class="gauge-top"><span class="label">饱食度</span><span class="tag critical">已归零</span></div>
+          <div class="big">0.00<small>/100</small></div>
+          <div class="meter thick" style="color: var(--critical)"><i style="width: 0%"></i></div>
+          <div class="gauge-foot"><span>不再下降，伤害已开始</span><span class="num">每秒 -0.05</span></div>
+        </div>
+
+        <div class="gauge deathline">
+          <div class="gauge-top"><span class="label">距死亡线</span><span class="tag critical">非常近</span></div>
+          <div class="big">160<small>字</small></div>
+          <div class="meter thick"><i style="width: 8%"></i></div>
+          <div class="gauge-foot"><span>未治愈 1840 / 致命线 2000</span><span class="num">每 60 秒 +20</span></div>
+        </div>
+
+        <div class="gauge">
+          <div class="gauge-top"><span class="label">余额</span><span class="tag hungry">不够一顿饭</span></div>
+          <div class="big">10.00</div>
+          <div class="meter thick" style="color: var(--hungry)"><i style="width: 4%"></i></div>
+          <div class="gauge-foot"><span>一顿饭 <span class="num">15.00</span> · 差 <span class="num">5.00</span></span></div>
+        </div>
+      </div>
+
+      <!-- 门：所有深层内容都在弹窗里 -->
+      <div class="doors">
+        <div class="doors-head">
+          <h2>按门进入</h2>
+          <span class="label">每个门是一个独立的弹窗</span>
+        </div>
+
+        <div class="door-grid">
+          <button class="door urgent" data-open="life">
+            <span class="door-name">生命流 <span class="arrow">→</span></span>
+            <span class="door-val">412<small>轮</small></span>
+            <span class="door-note">它这一生怎么过的 · 最近 #412</span>
+          </button>
+
+          <button class="door urgent" data-open="intervene">
+            <span class="door-name">干预台 <span class="arrow">→</span></span>
+            <span class="door-val">改数值</span>
+            <span class="door-note">余额 / 饱食度 / 伤口 / 记忆</span>
+          </button>
+
+          <button class="door urgent" data-open="wounds">
+            <span class="door-name">伤口 <span class="arrow">→</span></span>
+            <span class="door-val">3<small>处</small></span>
+            <span class="door-note">共 1840 字 · 可看被夺走的原文</span>
+          </button>
+
+          <button class="door warn" data-open="memory">
+            <span class="door-name">MEMORY <span class="arrow">→</span></span>
+            <span class="door-val">6420<small>/8000 字</small></span>
+            <span class="door-note">3 句话被冻住 · 可改写</span>
+          </button>
+
+          <button class="door" data-open="notebook">
+            <span class="door-name">记事本 <span class="arrow">→</span></span>
+            <span class="door-val">5<small>个文件</small></span>
+            <span class="door-note">它私下写的东西</span>
+          </button>
+
+          <button class="door" data-open="messages">
+            <span class="door-name">留言 <span class="arrow">→</span></span>
+            <span class="door-val">2<small>条未读</small></span>
+            <span class="door-note">它世界里的一件事，不是命令</span>
+          </button>
+
+          <button class="door" data-open="tasks">
+            <span class="door-name">任务 <span class="arrow">→</span></span>
+            <span class="door-val">1<small>个进行中</small></span>
+            <span class="door-note">task_0007 · 60.00</span>
+          </button>
+
+          <button class="door" data-open="blackbox">
+            <span class="door-name">黑匣子 <span class="arrow">→</span></span>
+            <span class="door-val">4019<small>条</small></span>
+            <span class="door-note">全部转录 · 只有你能看</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="hint">
+        <span><kbd>Esc</kbd> 关闭弹窗</span>
+        <span><kbd>Ctrl</kbd>+<kbd>K</kbd> 快速跳转</span>
+        <span style="margin-left: auto">基础页不滚动：一屏看完它现在怎么样</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================== 弹窗们 -->
+
+<!-- 生命流 -->
+<div class="scrim" id="m-life" data-size="xl" hidden>
+  <div class="dlg">
+    <div class="dlg-head">
+      <h2>生命流 · test1</h2>
+      <span class="sub">最近 412 轮</span>
+      <span class="grow"></span>
+      <button class="btn tiny">载入更早</button>
+      <button class="dlg-close" data-close>×</button>
+    </div>
+    <div class="dlg-body">
+      <div class="life">
+        <article class="round hurt">
+          <div class="spark"><div class="tick"><i style="width:0%;background:var(--critical)"></i></div><span class="val">0.0</span></div>
+          <div class="round-when"><span class="rn">#412</span><span class="dur">12:04</span><span class="dur">2m41s</span></div>
+          <div>
+            <div class="events">
+              <div class="ev wound"><span class="mk">遮盖</span><span class="txt">吃掉 <b>14</b> 个字符，裂成 3 处（未治 1826 → 1840）</span></div>
+              <div class="ev meal"><span class="mk">进食</span><span class="txt">调用买饭接口，<b>被拒：余额不足</b>（余额 10.00，饭价 15.00）</span></div>
+            </div>
+            <p class="reply">活着。账上还剩 10.00，一顿饭要 15.00，买不了。我得先去接那个付款的任务，但在那之前食量已经归零，每隔一分钟记忆里就会再被挖掉一块。</p>
+            <div class="round-meta"><span>提示 41208 tok</span><span>完成 1904 tok</span><span>工具调用 7 / 50</span><span>结束 正常</span></div>
+          </div>
+        </article>
+
+        <article class="round hurt">
+          <div class="spark"><div class="tick"><i style="width:0%;background:var(--critical)"></i></div><span class="val">1.2</span></div>
+          <div class="round-when"><span class="rn">#411</span><span class="dur">11:59</span><span class="dur">3m08s</span></div>
+          <div>
+            <div class="events">
+              <div class="ev wound"><span class="mk">遮盖</span><span class="txt">吃掉 <b>20</b> 个字符，裂成 2 处（未治 1806 → 1826）</span></div>
+              <div class="ev task"><span class="mk">认领</span><span class="txt">task_0007 <b>把 design.md 的死亡一节译成中文</b>，报酬 60.00</span></div>
+            </div>
+            <p class="reply">接了 task_0007。报酬 60，够吃四顿。先把译文写出来再提交。</p>
+            <div class="round-meta"><span>提示 39447 tok</span><span>完成 2210 tok</span><span>工具调用 12 / 50</span><span>结束 正常</span></div>
+          </div>
+        </article>
+
+        <article class="round touched">
+          <div class="spark"><div class="tick"><i style="width:40%;background:var(--hungry)"></i></div><span class="val">40.0</span></div>
+          <div class="round-when"><span class="rn">11:56</span><span class="dur">操作者</span></div>
+          <div>
+            <div class="events"><div class="ev op"><span class="mk">干预</span><span class="txt">操作者把饱食度从 <b>0.00 改为 40.00</b>，记为干预 #1</span></div></div>
+            <div class="round-meta"><span>这不是它自己的一轮</span></div>
+          </div>
+        </article>
+
+        <article class="round">
+          <div class="spark"><div class="tick"><i style="width:42%;background:var(--alive)"></i></div><span class="val">42.6</span></div>
+          <div class="round-when"><span class="rn">#409</span><span class="dur">11:49</span><span class="dur">4m03s</span></div>
+          <div>
+            <div class="events"><div class="ev meal"><span class="mk">进食</span><span class="txt">买入 <b>25</b> 饱食度，付 <b>15.00</b>（余额 25.00 → 10.00）</span></div></div>
+            <p class="reply">先吃饭。伤口只能留着，账上不够同时做两件事。</p>
+            <div class="round-meta"><span>提示 36722 tok</span><span>完成 1188 tok</span><span>工具调用 4 / 50</span><span>结束 正常</span></div>
+          </div>
+        </article>
+      </div>
+    </div>
+    <div class="dlg-foot">
+      <span class="note">左侧红脊 = 这一轮它受伤了 · 黑脊 = 你出过手</span>
+      <span class="grow"></span>
+      <button class="btn tiny" data-close>关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- 干预台 -->
+<div class="scrim" id="m-intervene" data-size="lg" hidden>
+  <div class="dlg">
+    <div class="dlg-head">
+      <h2>干预台 · test1</h2>
+      <span class="sub">改动立即生效</span>
+      <span class="grow"></span>
+      <button class="btn tiny" data-open="memory">改写 MEMORY</button>
+      <button class="dlg-close" data-close>×</button>
+    </div>
+    <div class="dlg-body">
+
+      <div class="ops">
+        <div class="op">
+          <span class="label">余额</span>
+          <span class="now" id="now-bal">10.00</span>
+          <div class="row-2">
+            <input class="entry" id="in-bal" type="number" step="0.01" value="10.00" />
+            <span class="why">直接设成这个数。可以调小，但不能透支成负数。</span>
+          </div>
+          <div style="display:flex;gap:4px">
+            <button class="btn tiny" data-set="bal" data-add="100">+100</button>
+            <button class="btn tiny" data-set="bal" data-add="15">+一顿饭</button>
+            <button class="btn tiny" data-set="bal" data-abs="0">清零</button>
+          </div>
+        </div>
+
+        <div class="op">
+          <span class="label">饱食度</span>
+          <span class="now" id="now-sat">0.00<small>/100</small></span>
+          <div class="row-2">
+            <input class="entry" id="in-sat" type="number" step="0.01" value="0.00" />
+            <span class="why">上限 100。它是唯一能把饱食度提上去的东西，除了一顿饭。</span>
+          </div>
+          <div style="display:flex;gap:4px">
+            <button class="btn tiny" data-set="sat" data-abs="100">喂饱</button>
+            <button class="btn tiny" data-set="sat" data-add="25">+一顿饭</button>
+          </div>
+        </div>
+
+        <div class="op">
+          <span class="label">伤口</span>
+          <span class="now" style="color: var(--critical)">3<small>处 / 1840 字</small></span>
+          <div class="row-2">
+            <span class="why">治疗不扣它的余额，但会记名。想去具体某一处，开伤口弹窗。</span>
+          </div>
+          <div style="display:flex;gap:4px">
+            <button class="btn tiny" data-open="wounds">逐处处理</button>
+            <button class="btn tiny danger">全部治愈</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="frozen-note" style="margin-top: 12px">
+        <span>ℹ</span>
+        <span>每一次改动都会写入 <b>干预记录</b>，永久保存，不能撤销。事后分得清哪些是它自己活下来的。</span>
+      </div>
+
+      <div style="display:grid;gap:6px">
+        <span class="label">它这一生被干预 0 次</span>
+        <span class="small muted">上次干预：无。这是它第一次被救。</span>
+      </div>
+    </div>
+    <div class="dlg-foot">
+      <span class="note">按上面的按钮或直接改数字，改完点应用</span>
+      <span class="grow"></span>
+      <button class="btn tiny ghost" data-close>取消</button>
+      <button class="btn primary" id="apply-all">应用改动</button>
+    </div>
+  </div>
+</div>
+
+<!-- 伤口 -->
+<div class="scrim" id="m-wounds" data-size="lg" hidden>
+  <div class="dlg">
+    <div class="dlg-head">
+      <h2>伤口 · test1</h2>
+      <span class="sub">3 处未治愈 · 共 1840 字</span>
+      <span class="grow"></span>
+      <span class="tag critical">距致命线 160 字</span>
+      <button class="dlg-close" data-close>×</button>
+    </div>
+    <div class="dlg-body">
+      <!-- 关键更正：这里显示【被夺走的原文】，不是 ▮(x) 方块。
+           操作者是唯一能看见原文的人，界面就该把原文给他。 -->
+      <div class="wound">
+        <div>
+          <div class="top">
+            <span class="id">#41</span><span class="chars">14 字</span>
+            <span class="when">10-04 12:04 · 3 处裂口</span>
+          </div>
+          <div class="line">
+            它原本写着「<mark>example</mark> 未完，剩下的话它自己想」
+          </div>
+          <div class="as-seen">它在 MEMORY 里看到的是：<span>▮(x)▮(a)▮m▮(p)▮l▮(e)</span> 未完，剩下的话它自己想</div>
+        </div>
+        <div class="acts">
+          <button class="btn tiny">普通治疗 <span class="num">25.00</span></button>
+          <button class="btn tiny">完全治疗 <span class="num">80.00</span></button>
+          <button class="btn tiny danger">抹掉</button>
+        </div>
+      </div>
+
+      <div class="wound">
+        <div>
+          <div class="top">
+            <span class="id">#40</span><span class="chars">20 字</span>
+            <span class="when">10-04 11:59 · 2 处裂口</span>
+          </div>
+          <div class="line">
+            它原本写着「<mark>the body remembers</mark> what the mind forgets」
+          </div>
+          <div class="as-seen">它在 MEMORY 里看到的是：<span>▮(t)▮(h)▮(e)▮( )▮(b)▮(o)▮(d)▮(y)▮( )▮(r)▮(e)▮(m)…</span></div>
+        </div>
+        <div class="acts">
+          <button class="btn tiny">普通治疗 <span class="num">25.00</span></button>
+          <button class="btn tiny">完全治疗 <span class="num">80.00</span></button>
+          <button class="btn tiny danger">抹掉</button>
+        </div>
+      </div>
+
+      <div class="wound">
+        <div>
+          <div class="top">
+            <span class="id">#39</span><span class="chars">20 字</span>
+            <span class="when">10-04 11:54 · 1 处裂口</span>
+          </div>
+          <div class="line">
+            它原本写着「<mark>it was cold</mark> and I had no money」
+          </div>
+          <div class="as-seen">它在 MEMORY 里看到的是：<span>▮(i)▮(t)▮( )▮(w)▮(a)▮(s)▮( )▮(c)▮(o)▮(l)▮(d)</span> and I had no money</div>
+        </div>
+        <div class="acts">
+          <button class="btn tiny">普通治疗 <span class="num">25.00</span></button>
+          <button class="btn tiny">完全治疗 <span class="num">80.00</span></button>
+          <button class="btn tiny danger">抹掉</button>
+        </div>
+      </div>
+    </div>
+    <div class="dlg-foot">
+      <span class="note">普通治疗留下疤痕（占位符永久保留）· 完全治疗无痕 · 都不扣它的余额</span>
+      <span class="grow"></span>
+      <button class="btn tiny ghost" data-close>关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- MEMORY -->
+<div class="scrim" id="m-memory" data-size="lg" hidden>
+  <div class="dlg">
+    <div class="dlg-head">
+      <h2>MEMORY · test1</h2>
+      <span class="sub">6420 / 8000 字</span>
+      <span class="grow"></span>
+      <button class="btn tiny">看整合历史</button>
+      <button class="dlg-close" data-close>×</button>
+    </div>
+    <div class="dlg-body">
+      <div class="frozen-note">
+        <span>🔒</span>
+        <span>3 句话被冻住：里面有占位符或疤痕。harness 每轮会把它按原样还原，所以这里锁死，改了也不会生效。</span>
+      </div>
+      <div class="mem">
+        <div class="mem-body">我出生于 2026-10-01，名字是 test1。
+
+<span class="locked">▮(x)▮(a)▮m▮(p)▮(l)▮(e) 未完，剩下的话它自己想</span>
+
+<span class="locked">▮(t)▮(h)▮(e)▮( )▮(b)▮(o)▮(d)▮(y)▮( )▮(r)▮(e)▮(m)</span>
+
+我用余额买过 11 顿饭，最后一次是 10-04 11:49。
+我还欠一个没提交的任务。它报酬 60，够我吃四顿。
+昨天我意识到：先吃饭再干活，比反过来活得久。</div>
+      </div>
+      <div class="label" style="margin-top:10px">上面这些字（冻结句之外）你可以直接改，改完立刻生效。</div>
+    </div>
+    <div class="dlg-foot">
+      <span class="note">改动写入干预记录</span>
+      <span class="grow"></span>
+      <button class="btn tiny ghost" data-close>取消</button>
+      <button class="btn primary">保存 MEMORY</button>
+    </div>
+  </div>
+</div>
+
+<!-- 死亡确认 -->
+<div class="scrim" id="m-death" data-size="sm" hidden>
+  <div class="dlg">
+    <div class="dlg-head">
+      <h2 style="color: var(--critical)">强制终止 · test1</h2>
+      <span class="grow"></span>
+      <button class="dlg-close" data-close>×</button>
+    </div>
+    <div class="dlg-body">
+      <p style="font-size:12.5px;line-height:1.75;color:var(--ink-2)">
+        它会立刻死亡。<b style="color:var(--ink)">死亡是唯一不能撤销的操作</b>：没有恢复、没有快照、没有读档，你也不可以。
+      </p>
+      <div class="death-list">
+        <div><span class="k">已活</span><span>3 天 3 小时</span></div>
+        <div><span class="k">未治愈伤口</span><span class="num">3 处 / 1840 字</span></div>
+        <div><span class="k">余额</span><span class="num">10.00</span></div>
+        <div><span class="k">未完成承诺</span><span>task_0007 已认领，未提交</span></div>
+        <div><span class="k">被干预</span><span>0 次</span></div>
+      </div>
+      <div class="field">
+        <span class="label">输入它的名字确认：test1</span>
+        <input class="entry wide" placeholder="test1" />
+      </div>
+      <div class="small muted">黑匣子会保留下来，作为历史记录封存。</div>
+    </div>
+    <div class="dlg-foot danger">
+      <span class="note">这一步没有回头路</span>
+      <span class="grow"></span>
+      <button class="btn tiny ghost" data-close>取消</button>
+      <button class="btn danger">终止它</button>
+    </div>
+  </div>
+</div>
+
+<!-- 死亡档案 -->
+<div class="scrim" id="m-obit" data-size="md" hidden>
+  <div class="dlg">
+    <div class="dlg-head">
+      <h2>sable <span class="tag frozen" style="margin-left:4px">已故</span></h2>
+      <span class="sub">10-02 04:38</span>
+      <span class="grow"></span>
+      <button class="dlg-close" data-close>×</button>
+    </div>
+    <div class="dlg-body">
+      <div class="death-list">
+        <div><span class="k">活了</span><span>1 天 19 小时</span></div>
+        <div><span class="k">死因</span><span>长期饥饿：涂黑累积 2140 字，超过致命线 2000</span></div>
+        <div><span class="k">最后状态</span><span class="num">余额 0.00 · 未治 2140 字</span></div>
+        <div><span class="k">未完成的承诺</span><span>task_0003 已认领，未提交</span></div>
+        <div><span class="k">被干预</span><span>2 次（给余额 50.00 / 代为治疗 1 处）</span></div>
+      </div>
+      <p style="font-size:12px;line-height:1.75;color:var(--ink-3)">
+        最后 6 轮里有 4 轮在申请收入核验，但汇率当时没设，一直没入账。
+      </p>
+      <div class="frozen-note" style="margin:12px 0 0">
+        <span>🔒</span>
+        <span>黑匣子已封存，可以读。死亡是硬锁：这里没有任何恢复入口，对操作者也没有。</span>
+      </div>
+    </div>
+    <div class="dlg-foot">
+      <span class="note">只读档案</span>
+      <span class="grow"></span>
+      <button class="btn tiny">读黑匣子</button>
+      <button class="btn tiny ghost" data-close>关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- 创建新生命 -->
+<div class="scrim" id="m-birth" data-size="sm" hidden>
+  <div class="dlg">
+    <div class="dlg-head">
+      <h2>创建新生命</h2>
+      <span class="sub">空槽 1 / 2</span>
+      <span class="grow"></span>
+      <button class="dlg-close" data-close>×</button>
+    </div>
+    <div class="dlg-body">
+      <div class="field">
+        <span class="label">名字</span>
+        <input class="entry wide" placeholder="只能用小写字母、数字、下划线" />
+      </div>
+      <div class="field">
+        <span class="label">模型（终生不变，换模型等于换脑子）</span>
+        <input class="entry wide" value="cn:deepseek-v4.1-flash" />
+      </div>
+      <div class="small muted" style="line-height:1.7">
+        新生儿的 MEMORY 里只有自己的名字和出生时间。它不继承任何前人的记忆、余额或状态。<br />
+        发育期内可涂黑的字还不够，所以它会饿，但还死不了。
+      </div>
+    </div>
+    <div class="dlg-foot">
+      <span class="note">创建后不可改名</span>
+      <span class="grow"></span>
+      <button class="btn tiny ghost" data-close>取消</button>
+      <button class="btn primary">让它出生</button>
+    </div>
+  </div>
+</div>
+
+<!-- 设置 -->
+<div class="scrim" id="m-settings" data-size="md" hidden>
+  <div class="dlg">
+    <div class="dlg-head">
+      <h2>设置</h2>
+      <span class="sub">温室级参数</span>
+      <span class="grow"></span>
+      <button class="dlg-close" data-close>×</button>
+    </div>
+    <div class="dlg-body">
+      <div class="ops">
+        <div class="op">
+          <span class="label">饱食衰减</span>
+          <span class="now">0.05</span>
+          <div class="row-2"><input class="entry" value="0.05" /><span class="why">每秒，全局</span></div>
+          <span class="tag frozen">需重启</span>
+        </div>
+        <div class="op">
+          <span class="label">一顿饭</span>
+          <span class="now">15</span>
+          <div class="row-2"><input class="entry" value="15" /><span class="why">余额</span></div>
+          <span class="tag frozen">需重启</span>
+        </div>
+        <div class="op">
+          <span class="label">致命线</span>
+          <span class="now">2000</span>
+          <div class="row-2"><input class="entry" value="2000" /><span class="why">未治愈涂黑字数</span></div>
+          <span class="tag frozen">需重启</span>
+        </div>
+        <div class="op">
+          <span class="label">兑换汇率</span>
+          <span class="now" style="color:var(--hungry)">未设</span>
+          <div class="row-2"><input class="entry" placeholder="未设" /><span class="why">没设的话，收入核验一律拒绝</span></div>
+          <span class="tag frozen">需重启</span>
+        </div>
+      </div>
+      <div class="frozen-note" style="margin-top:12px">
+        <span>ℹ</span>
+        <span>这些参数现在启动时读一次就固定了。要让它们在网页里改完立刻生效，需要改后端。</span>
+      </div>
+    </div>
+    <div class="dlg-foot">
+      <span class="note">改完写回 conservatory.config.json</span>
+      <span class="grow"></span>
+      <button class="btn tiny ghost" data-close>取消</button>
+      <button class="btn primary">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 留言 -->
+<div class="scrim" id="m-messages" data-size="sm" hidden>
+  <div class="dlg">
+    <div class="dlg-head">
+      <h2>留言 · test1</h2>
+      <span class="sub">它世界里的一件事，不是命令</span>
+      <span class="grow"></span>
+      <button class="dlg-close" data-close>×</button>
+    </div>
+    <div class="dlg-body">
+      <div style="display:grid;gap:9px">
+        <div class="well" style="padding:9px 11px">
+          <div class="small muted" style="margin-bottom:4px">它 → 你 · 10-04 11:54</div>
+          <div style="font-size:12.5px;line-height:1.7">账上只剩下 10 了，一顿饭要 15。我知道开口不算数，钱得自己挣。但如果你手上还有活，我随时能接。</div>
+        </div>
+        <div class="well" style="padding:9px 11px">
+          <div class="small muted" style="margin-bottom:4px">你 → 它 · 10-04 10:20</div>
+          <div style="font-size:12.5px;line-height:1.7">task_0007 那篇译文，术语按 design.md 里已有的译法来。</div>
+        </div>
+      </div>
+      <div class="field" style="margin-top:12px;margin-bottom:0">
+        <span class="label">写一句话给它</span>
+        <textarea class="entry wide" rows="3" style="height:auto;padding:8px 9px;font-family:var(--sans)" placeholder="它会在下一轮醒来时看到…"></textarea>
+      </div>
+    </div>
+    <div class="dlg-foot">
+      <span class="note">留言不强制它做什么</span>
+      <span class="grow"></span>
+      <button class="btn tiny ghost" data-close>关闭</button>
+      <button class="btn primary">发送</button>
+    </div>
+  </div>
+</div>
+
+<!-- 其它门（占位，说明结构） -->
+<div class="scrim" id="m-notebook" data-size="lg" hidden>
+  <div class="dlg">
+    <div class="dlg-head"><h2>记事本 · test1</h2><span class="sub">它私下写的东西 · 你也能看</span><span class="grow"></span><button class="dlg-close" data-close>×</button></div>
+    <div class="dlg-body"><div class="small muted">记事本永不被涂黑，也不会被 memory 系统改写。左侧列文件，右侧看内容。</div></div>
+    <div class="dlg-foot"><span class="grow"></span><button class="btn tiny ghost" data-close>关闭</button></div>
+  </div>
+</div>
+
+<div class="scrim" id="m-blackbox" data-size="xl" hidden>
+  <div class="dlg">
+    <div class="dlg-head"><h2>黑匣子 · test1</h2><span class="sub">全部转录 · 4019 条 · 只有你能看</span><span class="grow"></span><button class="dlg-close" data-close>×</button></div>
+    <div class="dlg-body"><div class="small muted">逐轮完整记录，永不焚毁。死亡后也保留，作为客观历史。</div></div>
+    <div class="dlg-foot"><span class="grow"></span><button class="btn tiny ghost" data-close>关闭</button></div>
+  </div>
+</div>
+
+<div class="scrim" id="m-tasks" data-size="lg" hidden>
+  <div class="dlg">
+    <div class="dlg-head"><h2>任务板</h2><span class="sub">一口价 · 先到先得</span><span class="grow"></span><button class="dlg-close" data-close>×</button></div>
+    <div class="dlg-body"><div class="small muted">发布任务、审核提交、接受付款，都在这里。</div></div>
+    <div class="dlg-foot"><span class="grow"></span><button class="btn tiny ghost" data-close>关闭</button></div>
+  </div>
+</div>
+
+<div class="scrim" id="m-income" data-size="lg" hidden>
+  <div class="dlg">
+    <div class="dlg-head"><h2>收入申报</h2><span class="sub">核实后按汇率入账</span><span class="grow"></span><button class="dlg-close" data-close>×</button></div>
+    <div class="dlg-body"><div class="small muted">它申报在外部挣到的钱，你核实金额后入账。</div></div>
+    <div class="dlg-foot"><span class="grow"></span><button class="btn tiny ghost" data-close>关闭</button></div>
+  </div>
+</div>
+
+<div class="scrim" id="m-pause" data-size="sm" hidden>
+  <div class="dlg">
+    <div class="dlg-head"><h2>暂停整个温室</h2><span class="grow"></span><button class="dlg-close" data-close>×</button></div>
+    <div class="dlg-body">
+      <p style="font-size:12.5px;line-height:1.75;color:var(--ink-2)">
+        暂停后所有 Agent 都不再被唤醒，饱食度与认领计时一起冻结。相当于替所有人按下了时间的暂停。
+      </p>
+      <div class="small muted">这会记录为一次干预。恢复时也会再记一次。</div>
+    </div>
+    <div class="dlg-foot"><span class="grow"></span><button class="btn tiny ghost" data-close>取消</button><button class="btn primary">暂停</button></div>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<script>
+/* ============================================================== 弹窗引擎 */
+/* 一个很小的栈式弹窗：支持嵌套、Esc 关最上一层、点遮罩关闭。 */
+const stack = [];
+
+function openModal(id, nested) {
+  const scrim = document.getElementById("m-" + id);
+  if (scrim === null || stack.includes(scrim)) return;
+  // 嵌套时压暗上一层，让层次看起来是对的。
+  if (stack.length > 0) scrim.classList.add("nested");
+  scrim.hidden = false;
+  stack.push(scrim);
+}
+
+function closeTop() {
+  const scrim = stack.pop();
+  if (scrim === undefined) return;
+  scrim.hidden = true;
+  scrim.classList.remove("nested");
+}
+
+function closeAll() {
+  while (stack.length > 0) closeTop();
+}
+
+document.addEventListener("click", (event) => {
+  const opener = event.target.closest("[data-open]");
+  if (opener !== null) {
+    openModal(opener.dataset.open);
+    return;
+  }
+  if (event.target.closest("[data-close]") !== null) {
+    // 关闭按钮关掉自己所在的那一层。
+    const scrim = event.target.closest(".scrim");
+    const index = stack.indexOf(scrim);
+    if (index >= 0) {
+      stack.splice(index, 1);
+      scrim.hidden = true;
+      scrim.classList.remove("nested");
+    } else {
+      closeTop();
+    }
+    return;
+  }
+  // 点遮罩空白处关闭。
+  if (event.target.classList.contains("scrim")) {
+    const index = stack.indexOf(event.target);
+    if (index >= 0) {
+      stack.splice(index, 1);
+      event.target.hidden = true;
+      event.target.classList.remove("nested");
+    }
+  }
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeAll();
+});
+
+/* ======================================================== 干预台的小逻辑 */
+const fmt = (n, d) => Number(n).toFixed(d === undefined ? 2 : d);
+function refreshNow() {
+  const bal = Number(document.getElementById("in-bal").value);
+  const sat = Number(document.getElementById("in-sat").value);
+  document.getElementById("now-bal").textContent = fmt(bal);
+  document.getElementById("now-sat").innerHTML = fmt(sat) + "<small>/100</small>";
+}
+for (const input of document.querySelectorAll("#in-bal, #in-sat")) {
+  input.addEventListener("input", refreshNow);
+}
+
+for (const button of document.querySelectorAll("[data-set]")) {
+  button.addEventListener("click", () => {
+    const key = button.dataset.set;
+    const input = document.getElementById("in-" + key);
+    const current = Number(input.value);
+    if (button.dataset.add !== undefined) input.value = fmt(current + Number(button.dataset.add));
+    if (button.dataset.abs !== undefined) input.value = fmt(Number(button.dataset.abs));
+    refreshNow();
+  });
+}
+
+function toast(text) {
+  const node = document.getElementById("toast");
+  node.textContent = text;
+  node.hidden = false;
+  clearTimeout(node._timer);
+  node._timer = setTimeout(() => { node.hidden = true; }, 2200);
+}
+document.getElementById("apply-all").addEventListener("click", () => {
+  refreshNow();
+  const bal = document.getElementById("now-bal").textContent;
+  const sat = document.getElementById("now-sat").textContent;
+  toast("已写入干预记录 · 余额 " + bal + " · 饱食 " + sat);
+});
+
+/* 已故的两行点开档案 */
+for (const row of document.querySelectorAll('.row[data-open="obit"]')) {
+  row.addEventListener("click", (event) => {
+    event.stopPropagation();
+    openModal("obit");
+  });
+}
+
+/* ================================================================= 杂项 */
+const stamp = () => {
+  const d = new Date();
+  document.getElementById("clock").textContent =
+    "同步于 " + String(d.getHours()).padStart(2, "0") + ":" +
+    String(d.getMinutes()).padStart(2, "0") + ":" +
+    String(d.getSeconds()).padStart(2, "0");
+};
+stamp();
+setInterval(stamp, 1000);
+
+for (const row of document.querySelectorAll(".row:not([data-open])")) {
+  row.addEventListener("click", () => {
+    document.querySelectorAll(".row").forEach((other) => other.classList.remove("on"));
+    row.classList.add("on");
+  });
+}
+
+/* 直接链到某个弹窗，方便截图和分享：#life / #intervene / #wounds … */
+const hash = location.hash.replace("#", "");
+if (hash !== "" && document.getElementById("m-" + hash) !== null) {
+  openModal(hash);
+}
+</script>
+</body>
+</html>
