@@ -402,6 +402,25 @@ describe('the death line is the only mechanism that can kill by hunger', () => {
     }
   });
 
+  it('rejects a delete-then-reinsert resurrection of a dead agent', () => {
+    const h = createHarness();
+    try {
+      birthAgent(h, 'ada');
+      // A row must exist for a BEFORE DELETE trigger to fire at all.
+      die(depsFor(h, []), 'ada', 'redaction_death_line', h.clock.now());
+
+      const raw = new DatabaseSync(h.paths.ledgerPath);
+      try {
+        expect(() => raw.exec("DELETE FROM agents WHERE name = 'ada'")).toThrow(/append-only/);
+      } finally {
+        raw.close();
+      }
+      expect(h.ledger.getAgent('ada')?.status).toBe('dead');
+    } finally {
+      h.cleanup();
+    }
+  });
+
   it('refuses a wound that tries to walk backwards', () => {
     const h = createHarness();
     try {

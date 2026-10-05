@@ -87,6 +87,43 @@ describe('treating a wound', () => {
     }
   });
 
+  it('treating with price 0 succeeds as a free treatment', () => {
+    const h = createHarness({ values: { ordinaryTreatmentPrice: 0, completeTreatmentPrice: 0 } });
+    try {
+      birthAgent(h, 'ada');
+
+      // Ordinary at price 0: a scar, no debit, and a recorded treatment.
+      const ordinary = woundFor(h, 'The code is 4471.', 12, 4);
+      writeMemoryAtomic(h.paths, 'ada', `${HEADER}\nThe code is ${PLACEHOLDER.repeat(4)}.`);
+      const ordinaryOutcome = treat(depsFor(h), 'ada', ordinary.woundId, 'ordinary', 'agent');
+      expect(ordinaryOutcome.ok).toBe(true);
+      if (!ordinaryOutcome.ok) {
+        return;
+      }
+      expect(ordinaryOutcome.wound.status).toBe('scarred');
+      expect(ordinaryOutcome.price).toBe(0);
+      expect(h.ledger.getBalance('ada')).toBe(100);
+      expect(h.ledger.listTreatments('ada').length).toBe(1);
+      expect(h.ledger.listTreatments('ada')[0].price).toBe(0);
+      expect(h.ledger.listBalanceEvents('ada').filter((row) => row.reason === 'treatment')).toEqual([]);
+
+      // Complete at price 0: healed, still no debit.
+      const complete = woundFor(h, 'The vault code is 4471 and it matters.', 18, 4);
+      const completeOutcome = treat(depsFor(h), 'ada', complete.woundId, 'complete', 'agent');
+      expect(completeOutcome.ok).toBe(true);
+      if (!completeOutcome.ok) {
+        return;
+      }
+      expect(completeOutcome.wound.status).toBe('healed');
+      expect(completeOutcome.price).toBe(0);
+      expect(h.ledger.getBalance('ada')).toBe(100);
+      expect(h.ledger.listTreatments('ada').length).toBe(2);
+      expect(h.ledger.listTreatments('ada').map((row) => row.price)).toEqual([0, 0]);
+    } finally {
+      h.cleanup();
+    }
+  });
+
   it('complete treatment upgrades a scar and charges the full complete price', () => {
     const h = createHarness({ values: { initialBalance: 300 } });
     try {

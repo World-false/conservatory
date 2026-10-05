@@ -8,6 +8,7 @@ import { MEMORY_SYSTEM_PROMPT } from '../src/organs/memory';
 import { createPauseOrgan } from '../src/organs/pause';
 import { RoundRegistry } from '../src/organs/population';
 import {
+  DEFAULT_SYSTEM_CONTEXT_TEMPLATE,
   DEFAULT_USER_CONTEXT_TEMPLATE,
   type PromptLibrary,
   type PromptStatus,
@@ -19,7 +20,8 @@ import {
   type SandboxPolicyConfig,
   type SandboxPolicyStore,
 } from '../src/organs/sandbox/policy';
-import { birthAgent, createHarness, testPrompts, writePrompts, type Harness } from './helpers';
+import type { ModelConfigStore } from '../src/organs/models/store';
+import { birthAgent, createHarness, testModelStore, testPrompts, twoProviderModels, writePrompts, type Harness } from './helpers';
 
 interface RunningConsole {
   server: http.Server;
@@ -67,6 +69,14 @@ afterEach(async () => {
   harnesses.splice(0).forEach((h) => h.cleanup());
 });
 
+/** One recorded model switch, so a test can prove what reached the supervisor. */
+interface SwitchCall {
+  name: string;
+  providerId: string;
+  model: string;
+}
+
+
 async function startConsole(
   h: Harness,
   created: string[],
@@ -75,6 +85,9 @@ async function startConsole(
   terminated: string[] = [],
   registry: RoundRegistry = new RoundRegistry(),
   sandboxPolicy: SandboxPolicyStore = testSandboxPolicy(h).policy,
+  modelStore: ModelConfigStore = testModelStore(h).store,
+  switches: SwitchCall[] = [],
+  erased: { agent: string; confirmName: string }[] = [],
 ): Promise<RunningConsole> {
   // The real pause organ, wired to the harness ledger, so the console tests
   // exercise the same freeze/resume path the supervisor uses.
@@ -98,6 +111,7 @@ async function startConsole(
     registry,
     prompts,
     sandboxPolicy,
+    modelStore,
     indexHtmlPath: path.join(process.cwd(), 'src', 'console', 'public', 'index.html'),
     now: h.clock.now,
     getRuntime: () => ({
@@ -107,9 +121,19 @@ async function startConsole(
       lastRoundEndReason: null,
       lastError: null,
     }),
-    createAgent: async (name) => {
-      created.push(name);
+    createAgent: async (name, providerId, model) => {
+      created.push(providerId === undefined && model === undefined ? name : `${name}:${providerId}/${model}`);
       return { ok: true };
+    },
+    switchAgentModel: (name, providerId, model) => {
+      switches.push({ name, providerId, model });
+      return registry.isBusy(name)
+        ? {
+            ok: true,
+            deferred: true,
+            message: '模型修改已保存。当前正在执行任务，将在本轮运行完成后下一次唤醒时生效。',
+          }
+        : { ok: true, deferred: false, message: '模型修改已保存，将在下次唤醒时生效。' };
     },
     wakeAgent: async () => ({ ok: true, woken: false, reason: '该 agent 正在一轮中，本次唤醒已跳过' }),
     setPaused: (paused) => ({
@@ -127,6 +151,13 @@ async function startConsole(
         return { ok: false, error: 'confirm_name_mismatch' };
       }
       terminated.push(agent);
+      return { ok: true };
+    },
+    eraseAgent: (agent, confirmName) => {
+      if (confirmName !== agent) {
+        return { ok: false, error: 'confirm_name_mismatch' };
+      }
+      erased.push({ agent, confirmName });
       return { ok: true };
     },
     getNotices: () => [],
@@ -181,6 +212,15 @@ describe('the operator console', () => {
     const create = await postJson(console.base, '/api/agents', { name: 'bob' });
     expect(create.status).toBe(200);
     expect(created).toEqual(['bob']);
+
+    // The operator may also name the provider and model at birth.
+    const picked = await postJson(console.base, '/api/agents', {
+      name: 'cleo',
+      providerId: 'main',
+      model: 'agent-model',
+    });
+    expect(picked.status).toBe(200);
+    expect(created).toEqual(['bob', 'cleo:main/agent-model']);
   });
 
   it('posts a task, reviews it, and pays on acceptance', async () => {
@@ -361,6 +401,49 @@ describe('the operator console', () => {
     expect(missing.status).toBe(400);
   });
 
+  it('erases an agent only when the confirmation name matches', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    const erased: { agent: string; confirmName: string }[] = [];
+    const console = await startConsole(h, [], testPrompts(h), [], [], new RoundRegistry(), testSandboxPolicy(h).policy, testModelStore(h).store, [], erased);
+
+    const empty = await postJson(console.base, '/api/agents/ada/erase', {});
+    expect(empty.status).toBe(400);
+    expect(erased).toEqual([]);
+
+    const wrong = await postJson(console.base, '/api/agents/ada/erase', { confirmName: 'bob' });
+    expect(wrong.status).toBe(400);
+    expect(erased).toEqual([]);
+
+    const right = await postJson(console.base, '/api/agents/ada/erase', { confirmName: 'ada' });
+    expect(right.status).toBe(200);
+    expect(right.body['ok']).toBe(true);
+    expect(erased).toEqual([{ agent: 'ada', confirmName: 'ada' }]);
+
+    // A stranger is a 404 on the shared agent lookup, never a call through to
+    // the supervisor.
+    const missing = await postJson(console.base, '/api/agents/nobody/erase', { confirmName: 'nobody' });
+    expect(missing.status).toBe(404);
+    expect(erased).toHaveLength(1);
+  });
+
+  it('offers erasure for a dead agent too, unlike termination', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    h.ledger.markAgentDead('ada');
+    const erased: { agent: string; confirmName: string }[] = [];
+    const console = await startConsole(h, [], testPrompts(h), [], [], new RoundRegistry(), testSandboxPolicy(h).policy, testModelStore(h).store, [], erased);
+
+    // Termination refuses a dead agent; erasure must not, or a grave made by
+    // accident could never be removed.
+    const terminate = await postJson(console.base, '/api/agents/ada/terminate', { confirmName: 'ada' });
+    expect(terminate.status).toBe(400);
+
+    const erase = await postJson(console.base, '/api/agents/ada/erase', { confirmName: 'ada' });
+    expect(erase.status).toBe(200);
+    expect(erased).toEqual([{ agent: 'ada', confirmName: 'ada' }]);
+  });
+
   it('refuses every operator action on a dead agent and shows the certificate', async () => {
     const h = createHarness();
     birthAgent(h, 'ada');
@@ -449,6 +532,243 @@ describe('the operator console', () => {
   });
 });
 
+describe('the model roster in the console', () => {
+  it('reports the roster on its own route and inside the polled state', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    const fixture = testModelStore(h, { data: twoProviderModels() });
+    const console = await startConsole(
+      h,
+      [],
+      testPrompts(h),
+      [],
+      [],
+      new RoundRegistry(),
+      testSandboxPolicy(h).policy,
+      fixture.store,
+    );
+
+    const response = await getJson(console.base, '/api/models/config');
+    expect(response.status).toBe(200);
+    expect(response.body['ok']).toBe(true);
+    const models = response.body['models'] as Record<string, unknown>;
+    expect(Object.keys(models).sort()).toEqual([
+      'defaultAgentModel',
+      'defaultAgentProviderId',
+      'defaultMemoryModel',
+      'defaultMemoryProviderId',
+      'providers',
+    ]);
+    expect(models['defaultAgentModel']).toBe('gpt-4o');
+    expect(models['providers']).toHaveLength(2);
+
+    // The page paints its pickers from the poll, so the same view travels there.
+    const state = await getJson(console.base, '/api/state');
+    expect(state.body['models']).toEqual(response.body['models']);
+  });
+
+  it('persists a partial roster update and answers with the stored view', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    const fixture = testModelStore(h, { data: twoProviderModels() });
+    const console = await startConsole(
+      h,
+      [],
+      testPrompts(h),
+      [],
+      [],
+      new RoundRegistry(),
+      testSandboxPolicy(h).policy,
+      fixture.store,
+    );
+
+    const posted = await postJson(console.base, '/api/models/config', {
+      defaultAgentProviderId: 'deepseek',
+      defaultAgentModel: 'deepseek-chat',
+    });
+    expect(posted.status).toBe(200);
+    expect(posted.body['ok']).toBe(true);
+    const models = posted.body['models'] as Record<string, unknown>;
+    expect(models['defaultAgentProviderId']).toBe('deepseek');
+    expect(models['defaultAgentModel']).toBe('deepseek-chat');
+    // A partial patch leaves every field it did not carry alone.
+    expect(models['providers']).toHaveLength(2);
+
+    // The update reached persistence, not just the answered view.
+    expect(fixture.written.length).toBe(1);
+    expect(fixture.written[0].defaultAgentModel).toBe('deepseek-chat');
+
+    const after = await getJson(console.base, '/api/models/config');
+    expect((after.body['models'] as Record<string, unknown>)['defaultAgentModel']).toBe('deepseek-chat');
+  });
+
+  it('refuses a bad roster patch in Chinese and changes nothing', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    const fixture = testModelStore(h, { data: twoProviderModels() });
+    const console = await startConsole(
+      h,
+      [],
+      testPrompts(h),
+      [],
+      [],
+      new RoundRegistry(),
+      testSandboxPolicy(h).policy,
+      fixture.store,
+    );
+
+    const badDefaults = await postJson(console.base, '/api/models/config', {
+      defaultAgentProviderId: 'deepseek',
+      defaultAgentModel: 'gpt-4o',
+    });
+    expect(badDefaults.status).toBe(400);
+    expect(String(badDefaults.body['error'])).toContain('必须属于选中的提供商');
+
+    const empty = await postJson(console.base, '/api/models/config', {});
+    expect(empty.status).toBe(400);
+    expect(String(empty.body['error'])).toContain('没有需要更新的模型配置字段');
+
+    const noProviders = await postJson(console.base, '/api/models/config', { providers: [] });
+    expect(noProviders.status).toBe(400);
+    expect(String(noProviders.body['error'])).toContain('至少要保留一个模型提供商');
+
+    // Every refused call left the roster and the file exactly where they were.
+    expect(fixture.written).toEqual([]);
+    const after = await getJson(console.base, '/api/models/config');
+    expect((after.body['models'] as Record<string, unknown>)['defaultAgentModel']).toBe('gpt-4o');
+  });
+
+  it('names the agents that block deleting a provider they are bound to', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    const fixture = testModelStore(h, {
+      data: twoProviderModels(),
+      listBoundAgents: () => [{ agent: 'ada', providerId: 'deepseek' }],
+    });
+    const console = await startConsole(
+      h,
+      [],
+      testPrompts(h),
+      [],
+      [],
+      new RoundRegistry(),
+      testSandboxPolicy(h).policy,
+      fixture.store,
+    );
+
+    const refused = await postJson(console.base, '/api/models/config', {
+      providers: [(twoProviderModels().providers as unknown[])[0]],
+      defaultMemoryProviderId: 'openai',
+      defaultMemoryModel: 'gpt-4o',
+    });
+    expect(refused.status).toBe(400);
+    expect(String(refused.body['error'])).toContain('仍有存活的 Agent 在用');
+    expect(String(refused.body['error'])).toContain('ada');
+    expect(refused.body['agents']).toEqual(['ada']);
+    expect(fixture.written).toEqual([]);
+  });
+
+  it('switches an idle agent model and reports it as not deferred', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    const switches: SwitchCall[] = [];
+    const console = await startConsole(
+      h,
+      [],
+      testPrompts(h),
+      [],
+      [],
+      new RoundRegistry(),
+      testSandboxPolicy(h).policy,
+      testModelStore(h, { data: twoProviderModels() }).store,
+      switches,
+    );
+
+    const response = await postJson(console.base, '/api/agents/ada/model', {
+      providerId: 'deepseek',
+      model: 'deepseek-chat',
+    });
+    expect(response.status).toBe(200);
+    expect(response.body['ok']).toBe(true);
+    expect(response.body['deferred']).toBe(false);
+    expect(String(response.body['message'])).toBe('模型修改已保存，将在下次唤醒时生效。');
+    expect(switches).toEqual([{ name: 'ada', providerId: 'deepseek', model: 'deepseek-chat' }]);
+  });
+
+  it('saves a busy agent model and answers with the deferred notice', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    const registry = new RoundRegistry();
+    registry.markStarted('ada');
+    const switches: SwitchCall[] = [];
+    const console = await startConsole(
+      h,
+      [],
+      testPrompts(h),
+      [],
+      [],
+      registry,
+      testSandboxPolicy(h).policy,
+      testModelStore(h, { data: twoProviderModels() }).store,
+      switches,
+    );
+
+    const response = await postJson(console.base, '/api/agents/ada/model', {
+      providerId: 'deepseek',
+      model: 'deepseek-chat',
+    });
+    expect(response.status).toBe(200);
+    expect(response.body['ok']).toBe(true);
+    expect(response.body['deferred']).toBe(true);
+    expect(String(response.body['message'])).toBe(
+      '模型修改已保存。当前正在执行任务，将在本轮运行完成后下一次唤醒时生效。',
+    );
+    // The switch reached the supervisor even though the agent is mid-round.
+    expect(switches).toEqual([{ name: 'ada', providerId: 'deepseek', model: 'deepseek-chat' }]);
+  });
+
+  it('refuses a model switch with a missing pair, on a dead agent, and on a stranger', async () => {
+    const h = createHarness({ values: { maxSlots: 2 } });
+    birthAgent(h, 'ada');
+    birthAgent(h, 'bob');
+    h.ledger.markAgentDead('bob');
+    const switches: SwitchCall[] = [];
+    const console = await startConsole(
+      h,
+      [],
+      testPrompts(h),
+      [],
+      [],
+      new RoundRegistry(),
+      testSandboxPolicy(h).policy,
+      testModelStore(h, { data: twoProviderModels() }).store,
+      switches,
+    );
+
+    const noModel = await postJson(console.base, '/api/agents/ada/model', { providerId: 'deepseek' });
+    expect(noModel.status).toBe(400);
+    expect(String(noModel.body['error'])).toContain('请选择提供商与模型');
+
+    const noProvider = await postJson(console.base, '/api/agents/ada/model', { model: 'deepseek-chat' });
+    expect(noProvider.status).toBe(400);
+
+    const dead = await postJson(console.base, '/api/agents/bob/model', {
+      providerId: 'deepseek',
+      model: 'deepseek-chat',
+    });
+    expect(dead.status).toBe(400);
+    expect(String(dead.body['error'])).toContain('死亡');
+
+    const missing = await postJson(console.base, '/api/agents/nobody/model', {
+      providerId: 'deepseek',
+      model: 'deepseek-chat',
+    });
+    expect(missing.status).toBe(404);
+
+    expect(switches).toEqual([]);
+  });
+});
+
 describe('the conservatory-wide pause switch', () => {
   it('reports the pause in the state, freezes satiety, and records one intervention per real change', async () => {
     const h = createHarness();
@@ -529,6 +849,7 @@ describe('the prompt templates in the console', () => {
     birthAgent(h, 'ada');
     writePrompts(h, {
       'manual.md': BODY_MANUAL,
+      'system_context.md': DEFAULT_SYSTEM_CONTEXT_TEMPLATE,
       'memory_system.md': MEMORY_SYSTEM_PROMPT,
       'user_context.md': DEFAULT_USER_CONTEXT_TEMPLATE,
     });
@@ -543,6 +864,7 @@ describe('the prompt templates in the console', () => {
     expect(prompts.dir).toBe(h.paths.promptsDir);
     expect(prompts.templates.map((template) => template.file)).toEqual([
       'manual.md',
+      'system_context.md',
       'user_context.md',
       'memory_system.md',
     ]);
@@ -573,7 +895,8 @@ describe('the prompt templates in the console', () => {
     writePrompts(h, {
       'manual.md': BODY_MANUAL,
       'memory_system.md': MEMORY_SYSTEM_PROMPT,
-      'user_context.md': '# MEMORY\n(no placeholder at all)\n',
+      'system_context.md': '# MEMORY\n(no placeholder at all)\n',
+      'user_context.md': DEFAULT_USER_CONTEXT_TEMPLATE,
     });
     const console = await startConsole(h, []);
 
@@ -581,9 +904,9 @@ describe('the prompt templates in the console', () => {
     const prompts = response.body['prompts'] as unknown as PromptStatus;
     expect(prompts.healthy).toBe(false);
     expect(prompts.warnings).toEqual(['提示词模板缺少 {{memory}} 占位符，已降级使用安全模板']);
-    const userContext = prompts.templates.find((template) => template.file === 'user_context.md');
-    expect(userContext?.fromFile).toBe(false);
-    expect(userContext?.warning).toBe('提示词模板缺少 {{memory}} 占位符，已降级使用安全模板');
+    const systemContext = prompts.templates.find((template) => template.file === 'system_context.md');
+    expect(systemContext?.fromFile).toBe(false);
+    expect(systemContext?.warning).toBe('提示词模板缺少 {{memory}} 占位符，已降级使用安全模板');
 
     const wrong = await postJson(console.base, '/api/prompts/mode', { mode: 'sometimes' });
     expect(wrong.status).toBe(400);

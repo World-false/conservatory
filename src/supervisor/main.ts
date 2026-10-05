@@ -15,6 +15,7 @@ import { OpenAICompatibleClient, type ModelClient } from '../model/client';
 import { Blackbox } from '../organs/blackbox';
 import { treat } from '../organs/clinic';
 import { checkDeathLine, die, terminateByOperator, type DeathOutcome } from '../organs/death';
+import { eraseAgent, type EraseOutcome } from '../organs/erasure';
 import { Heartbeat } from '../organs/heartbeat';
 import {
   Ledger,
@@ -25,6 +26,15 @@ import {
 } from '../organs/ledger';
 import { readMemoryFile, writeMemoryAtomic } from '../organs/memory';
 import { grantSatiety, readSatiety } from '../organs/metabolism';
+import { readModelBinding, writeModelBinding } from '../organs/models/binding';
+import { switchAgentModel, type SwitchModelOutcome } from '../organs/models/switch';
+import { shouldRetireProcess } from '../organs/models/reconcile';
+import {
+  createModelConfigStore,
+  resolveAgentModel,
+  type ModelConfigStore,
+  type ResolvedAgentModel,
+} from '../organs/models/store';
 import {
   createPauseOrgan,
   formatPauseDuration,
@@ -165,7 +175,12 @@ interface AgentProcessDeps {
   workerPath: string;
   loaderUrl: string;
   homeDir: string;
-  model: ModelSettings;
+  /**
+   * Resolves the brain at the moment the process starts. It is a callback, not
+   * a value, because an operator may switch an agent's model between two
+   * wake-ups and the next process must come up on the new one.
+   */
+  resolveModel(): { settings: ModelSettings; modelName: string };
   roundContextCapTokens: number;
   maxToolCallsPerRound: number;
   modelRequestTimeoutSeconds: number;
@@ -177,23 +192,34 @@ interface AgentProcessDeps {
  * and it is only ever asked to run the model loop; every tool call comes back
  * over IPC for the supervisor to execute.
  */
-class AgentProcess implements WorkerTransport {
+export class AgentProcess implements WorkerTransport {
   private readonly deps: AgentProcessDeps;
   private readonly agent: string;
   private child: ChildProcess | null = null;
   private handler: ((message: ChildToParentMessage) => void) | null = null;
   private readyResolve: (() => void) | null = null;
   private activeRoundId: number | null = null;
+  /** The model name this process was started with; null before it starts. */
+  private startedModel: string | null = null;
 
   constructor(agent: string, deps: AgentProcessDeps) {
     this.agent = agent;
     this.deps = deps;
   }
 
+  /**
+   * The model this process is actually running on. The supervisor compares it
+   * with the ledger after every round to notice a switch that arrived mid-round.
+   */
+  currentModel(): string | null {
+    return this.startedModel;
+  }
+
   async ensureStarted(): Promise<void> {
     if (this.child !== null) {
       return;
     }
+    const resolved = this.deps.resolveModel();
     const child = fork(this.deps.workerPath, [], {
       cwd: this.deps.homeDir,
       execArgv: ['--import', this.deps.loaderUrl],
@@ -201,15 +227,22 @@ class AgentProcess implements WorkerTransport {
       env: process.env,
     });
     this.child = child;
+    this.startedModel = resolved.modelName;
     child.on('message', (raw: unknown) => {
       this.route(raw);
     });
     child.on('error', (error: Error) => {
       this.deps.onProblem(this.agent, `agent process error: ${error.message}`);
+      this.settleFailedStart(child);
+    });
+    // A fork that never produced a process emits 'error' and then 'close', but
+    // not 'exit'. This second guard exists so the ready wait below settles
+    // whichever way the failure is reported.
+    child.on('close', () => {
+      this.settleFailedStart(child);
     });
     child.on('exit', (code, signal) => {
       this.child = null;
-      this.handler = null;
       const resolve = this.readyResolve;
       this.readyResolve = null;
       if (resolve !== null) {
@@ -219,11 +252,25 @@ class AgentProcess implements WorkerTransport {
       if (this.activeRoundId !== null) {
         const lost = this.activeRoundId;
         this.activeRoundId = null;
-        this.deps.onProblem(
-          this.agent,
-          `the agent process exited during round ${lost} (code ${String(code)}, signal ${String(signal)})`,
-        );
+        const detail = `the agent process exited during round ${lost} (code ${String(code)}, signal ${String(signal)})`;
+        this.deps.onProblem(this.agent, detail);
+        // A round the process died inside must be settled here: otherwise
+        // run() waits on a promise nobody will ever resolve, the round row
+        // stays open, and the agent is busy forever. The handler is captured
+        // before it is cleared, and the message is delivered synchronously.
+        const handler = this.handler;
+        if (handler !== null) {
+          handler({
+            type: 'round_end',
+            roundId: lost,
+            endReason: 'model_error',
+            finalReply: null,
+            error: detail,
+          });
+        }
       }
+      this.handler = null;
+      this.startedModel = null;
     });
 
     await new Promise<void>((resolve) => {
@@ -231,7 +278,7 @@ class AgentProcess implements WorkerTransport {
     });
     this.send({
       type: 'init',
-      model: this.deps.model,
+      model: resolved.settings,
       roundContextCapTokens: this.deps.roundContextCapTokens,
       maxToolCallsPerRound: this.deps.maxToolCallsPerRound,
       modelRequestTimeoutSeconds: this.deps.modelRequestTimeoutSeconds,
@@ -262,6 +309,25 @@ class AgentProcess implements WorkerTransport {
 
   onMessage(handler: (message: ChildToParentMessage) => void): void {
     this.handler = handler;
+  }
+
+  /**
+   * The process failed to come up. 'error' and 'close' can both arrive, and
+   * an 'exit' may follow, so this is written to be idempotent: only the first
+   * call for a still-unready child resolves the wait, and the rest do nothing.
+   */
+  private settleFailedStart(child: ChildProcess): void {
+    if (this.readyResolve === null && this.child !== child) {
+      return;
+    }
+    this.child = null;
+    this.startedModel = null;
+    const resolve = this.readyResolve;
+    this.readyResolve = null;
+    if (resolve !== null) {
+      this.deps.onProblem(this.agent, 'the agent process exited before it was ready');
+      resolve();
+    }
   }
 
   stop(): void {
@@ -332,6 +398,26 @@ function main(): void {
   const ledger = new Ledger(paths.ledgerPath);
   const blackbox = new Blackbox(paths.blackboxDir);
   const registry = new RoundRegistry();
+  // The operator's model roster. A config file written before this feature has
+  // no `"models"` block; the store then seeds one from .env and writes it back,
+  // so an existing deployment comes up unchanged.
+  const modelStore: ModelConfigStore = createModelConfigStore({
+    configPath: paths.configPath,
+    env: { agent: models.agent, memory: models.memory },
+    listBoundAgents: () =>
+      ledger
+        .listAgents()
+        .filter((agent) => agent.status === 'alive')
+        .map((agent) => ({
+          agent: agent.name,
+          providerId: resolveAgentModel({
+            binding: readModelBinding(paths, agent.name),
+            store: modelStore,
+            ledgerModel: agent.model,
+            fallback: models.agent,
+          }).providerId,
+        })),
+  });
   const memoryModel: ModelClient = new OpenAICompatibleClient(
     models.memory,
     values.modelRequestTimeoutSeconds * 1000,
@@ -410,6 +496,21 @@ function main(): void {
     return created;
   }
 
+  /**
+   * The brain one agent runs on, resolved in the order that protects it best:
+   * its own frozen binding first, then the ledger's model name matched against
+   * the roster, then the `.env` default. See `resolveAgentModel`.
+   */
+  function resolveModelFor(name: string): ResolvedAgentModel {
+    const record = ledger.getAgent(name);
+    return resolveAgentModel({
+      binding: readModelBinding(paths, name),
+      store: modelStore,
+      ledgerModel: record === null ? models.agent.model : record.model,
+      fallback: models.agent,
+    });
+  }
+
   function processOf(agent: string): AgentProcess {
     const existing = state.processes.get(agent);
     if (existing !== undefined) {
@@ -419,7 +520,12 @@ function main(): void {
       workerPath,
       loaderUrl,
       homeDir: path.join(paths.agentsDir, agent),
-      model: models.agent,
+      // Read at start, not at construction: an operator switch between two
+      // wake-ups must reach the next process, and this object is cached.
+      resolveModel: () => {
+        const resolved = resolveModelFor(agent);
+        return { settings: resolved.settings, modelName: resolved.settings.model };
+      },
       roundContextCapTokens: values.roundContextCapTokens,
       maxToolCallsPerRound: values.maxToolCallsPerRound,
       modelRequestTimeoutSeconds: values.modelRequestTimeoutSeconds,
@@ -452,6 +558,9 @@ function main(): void {
     registry.markStarted(name);
     runtime.lastWakeAt = now();
     try {
+      // Before the process starts, so a legacy agent is frozen on the brain it
+      // is about to run with rather than on whatever the roster says later.
+      ensureBindingFrozen(name);
       const agentProcess = processOf(name);
       await agentProcess.ensureStarted();
       const outcome = await state.coordinator.run(agent, agentProcess);
@@ -463,6 +572,11 @@ function main(): void {
       } else {
         runtime.lastError = null;
       }
+      // A switch that arrived while this round was running was written to the
+      // ledger and the binding but could not touch the live process. Retire it
+      // now, so the next wake-up forks a process on the new brain. Doing this
+      // outside the round is what keeps a switch from cutting a round in half.
+      retireProcessIfModelChanged(name);
     } catch (error) {
       const message = messageOf(error);
       runtime.lastError = message;
@@ -508,6 +622,94 @@ function main(): void {
     state.processes.delete(name);
     registry.markEnded(name);
     running.stop();
+  }
+
+  /**
+   * The running process is carrying an old brain: the model it started with is
+   * no longer what the binding and roster resolve to. Stopping it here means
+   * the next wake-up forks a fresh process on the new model.
+   */
+  function retireProcessIfModelChanged(name: string): boolean {
+    const running = state.processes.get(name);
+    if (running === undefined) {
+      return false;
+    }
+    const outdated = shouldRetireProcess({
+      startedModel: running.currentModel(),
+      resolvedModel: resolveModelFor(name).settings.model,
+    });
+    if (!outdated) {
+      return false;
+    }
+    stopAgentProcess(name);
+    return true;
+  }
+
+  /**
+   * An agent born before the roster existed has no binding of its own, so it
+   * would otherwise follow the operator's later edits — the exact silent change
+   * of brain this design exists to prevent. The first wake-up freezes what it
+   * is already running on into its own home, and after that it is like any
+   * other agent. A failure here is a notice, never a refusal to wake.
+   */
+  function ensureBindingFrozen(name: string): void {
+    if (readModelBinding(paths, name) !== null) {
+      return;
+    }
+    const resolved = resolveModelFor(name);
+    if (resolved.providerId === '') {
+      // Nothing in the roster describes this model; `.env` is all there is, and
+      // there is no provider id to freeze. Leave it on the environment.
+      return;
+    }
+    try {
+      writeModelBinding(paths, name, {
+        providerId: resolved.providerId,
+        providerName: resolved.providerName,
+        baseUrl: resolved.settings.baseUrl,
+        apiKey: resolved.settings.apiKey,
+        model: resolved.settings.model,
+        boundAt: now(),
+      });
+      addNotice(
+        state,
+        name,
+        `${name} 出生时还没有模型清单，已把它当前使用的模型（${resolved.settings.model}）冻结到自己文件夹的 MODEL.json。`,
+        now(),
+      );
+    } catch (error) {
+      addNotice(state, name, `模型绑定文件冻结失败：${messageOf(error)}`, now());
+    }
+  }
+
+  /**
+   * The operator switches one living agent's brain. The decision, the record
+   * and the deferred-vs-immediate answer all live in the organ; this only hands
+   * it the live process map and the notice channel.
+   */
+  function switchModel(name: string, providerId: string, model: string): SwitchModelOutcome {
+    // Checked here as well so an unknown agent answers with a code the console
+    // has a translation for, rather than a bare string it would echo raw.
+    if (ledger.getAgent(name) === null) {
+      return { ok: false, error: 'agent_not_found' };
+    }
+    return switchAgentModel(
+      {
+        ledger,
+        paths,
+        blackbox,
+        store: modelStore,
+        now,
+        isBusy: (agent) => registry.isBusy(agent),
+        retireProcess: stopAgentProcess,
+        onNotice: (agent, message, at) => {
+          addNotice(state, agent, message, at);
+        },
+      },
+      name,
+      providerId,
+      model,
+    );
   }
 
   /** The operator treats a wound on the agent's behalf: a recorded intervention. */
@@ -566,6 +768,54 @@ function main(): void {
       confirmName,
     );
     return result.ok ? { ok: true } : { ok: false, error: result.error };
+  }
+
+  /**
+   * Total erasure, on the operator's explicit confirmation. Unlike termination
+   * this leaves nothing behind: the process, the ledger rows, the home and the
+   * black box all go. The supervisor's own per-agent maps are cleared too, so a
+   * later agent may take the same name without inheriting a stale runtime or a
+   * cached process.
+   *
+   * This is refused while the agent is mid-round rather than killing a round in
+   * flight: `eraseAgent` stops the process, so the guard is about not pulling
+   * the ground out from under an in-flight write.
+   */
+  function eraseOne(
+    agent: string,
+    confirmName: string,
+  ): { ok: true } | { ok: false; error: string } {
+    const record = ledger.getAgent(agent);
+    if (record === null) {
+      return { ok: false, error: 'agent_not_found' };
+    }
+    if (confirmName !== agent) {
+      return { ok: false, error: 'confirm_name_mismatch' };
+    }
+    if (registry.isBusy(agent)) {
+      return { ok: false, error: 'agent_busy_try_later' };
+    }
+    const outcome: EraseOutcome = eraseAgent(
+      {
+        ledger,
+        blackbox,
+        paths,
+        now,
+        stopProcess: stopAgentProcess,
+        onNotice: (name, message) => {
+          addNotice(state, name, message, now());
+        },
+      },
+      agent,
+    );
+    if (!outcome.ok) {
+      return { ok: false, error: outcome.error };
+    }
+    // Nothing may reference a name that is gone. The ledger rows are already
+    // deleted, so these maps are the last trace left in this process.
+    state.runtimes.delete(agent);
+    state.processes.delete(agent);
+    return { ok: true };
   }
 
   /**
@@ -694,6 +944,7 @@ function main(): void {
     values,
     paths,
     sandboxPolicy: sandbox,
+    modelStore,
     ledger,
     blackbox,
     registry,
@@ -710,10 +961,39 @@ function main(): void {
         lastError: runtime.lastError,
       };
     },
-    createAgent: async (name) => {
+    createAgent: async (name, providerId, model) => {
+      // A new agent's brain: the operator's choice when they made one, else the
+      // configured default. Either way it is resolved to a concrete endpoint
+      // before birth, and frozen into the agent's home.
+      let resolved: ResolvedAgentModel;
+      if (providerId !== undefined || model !== undefined) {
+        const wantedProvider = providerId ?? modelStore.defaultAgentSelection().providerId;
+        const provider = modelStore.getProvider(wantedProvider);
+        if (provider === null) {
+          return { ok: false, error: 'unknown_provider' };
+        }
+        const wantedModel = model ?? modelStore.defaultAgentSelection().model;
+        if (!provider.models.includes(wantedModel)) {
+          return { ok: false, error: 'unknown_model' };
+        }
+        resolved = {
+          settings: { baseUrl: provider.baseUrl, apiKey: provider.apiKey, model: wantedModel },
+          providerId: provider.id,
+          providerName: provider.name,
+          source: 'roster',
+        };
+      } else {
+        const fallback = resolveAgentModel({
+          binding: null,
+          store: modelStore,
+          ledgerModel: '',
+          fallback: models.agent,
+        });
+        resolved = fallback;
+      }
       const result = createAgent({
         name,
-        model: models.agent.model,
+        model: resolved.settings.model,
         now: now(),
         ledger,
         values,
@@ -722,11 +1002,31 @@ function main(): void {
       if (!result.ok) {
         return { ok: false, error: result.code };
       }
-      blackbox.append(name, 'agent_created', now(), null, { model: models.agent.model });
+      const at = now();
+      try {
+        writeModelBinding(paths, name, {
+          providerId: resolved.providerId,
+          providerName: resolved.providerName,
+          baseUrl: resolved.settings.baseUrl,
+          apiKey: resolved.settings.apiKey,
+          model: resolved.settings.model,
+          boundAt: at,
+        });
+      } catch (error) {
+        // The agent exists and its ledger row is correct; a home that cannot
+        // hold the binding file is worth a notice, not a half-created agent.
+        addNotice(state, name, `模型绑定文件写入失败：${messageOf(error)}`, at);
+      }
+      blackbox.append(name, 'agent_created', at, null, {
+        model: resolved.settings.model,
+        providerId: resolved.providerId,
+        bindingSource: resolved.source,
+      });
       runtimeOf(name);
       return { ok: true };
     },
     wakeAgent,
+    switchAgentModel: switchModel,
     setPaused: (paused) => {
       const outcome = state.pause.set(paused, now());
       state.paused = outcome.paused;
@@ -770,6 +1070,7 @@ function main(): void {
     },
     treatWound: treatAsOperator,
     terminateAgent,
+    eraseAgent: eraseOne,
     getNotices: () => state.notices.slice(-20),
   });
 

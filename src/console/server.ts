@@ -15,6 +15,7 @@ import type {
 } from '../organs/ledger';
 import { readSatiety } from '../organs/metabolism';
 import { readMemoryFile } from '../organs/memory';
+import type { ModelConfigStore } from '../organs/models/store';
 import { NotebookError, listNotebook, readNotebookFile } from '../organs/notebook';
 import type { PromptLibrary } from '../organs/prompts';
 import { renderSentence } from '../organs/redaction';
@@ -50,10 +51,28 @@ export interface ConsoleDeps {
    * persistence; the console only carries the operator's edits to it and back.
    */
   sandboxPolicy: SandboxPolicyStore;
+  /**
+   * The model roster: the providers and models the operator may choose from.
+   * Binding one to an agent is the supervisor's job, not the console's.
+   */
+  modelStore: ModelConfigStore;
   indexHtmlPath: string;
   now(): number;
   getRuntime(name: string): RuntimeInfo;
-  createAgent(name: string): Promise<{ ok: true } | { ok: false; error: string }>;
+  createAgent(
+    name: string,
+    providerId?: string,
+    model?: string,
+  ): Promise<{ ok: true } | { ok: false; error: string }>;
+  /**
+   * Rebinds one living agent's brain. `deferred` means the agent is mid-round,
+   * so the new model lands on its next wake-up instead of now.
+   */
+  switchAgentModel(
+    name: string,
+    providerId: string,
+    model: string,
+  ): { ok: true; deferred: boolean; message: string } | { ok: false; error: string; agents?: string[] };
   wakeAgent(
     name: string,
   ): Promise<{ ok: true; woken: boolean; reason: string | null } | { ok: false; error: string }>;
@@ -73,6 +92,11 @@ export interface ConsoleDeps {
   treatWound(agent: string, woundId: number, tier: TreatmentTier): { ok: true } | { ok: false; error: string };
   /** The operator's forced termination. There is no way back from it. */
   terminateAgent(agent: string, confirmName: string): { ok: true } | { ok: false; error: string };
+  /**
+   * Total erasure: the agent and every record naming it are destroyed, as if it
+   * had never existed. The confirmation name must match; this cannot be undone.
+   */
+  eraseAgent(agent: string, confirmName: string): { ok: true } | { ok: false; error: string };
   getNotices(): ConsoleNotice[];
 }
 
@@ -108,10 +132,13 @@ const MESSAGES: Record<string, string> = {
   agent_busy: '该 agent 正在一轮中，本次唤醒已跳过',
   agent_busy_try_later: '该 agent 正在一轮中，请稍后再试',
   agent_dead: '这个 agent 已经死亡，任何操作都无法撤销这件事',
+  claimant_not_alive: '该任务的认领 agent 已经死亡，无法付款',
+  reporter_not_alive: '该收入申报的 agent 已经死亡，无法入账',
   wound_not_found: '没有这个伤口',
   wound_not_treatable: '这个伤口不能用这一档治疗（普通治疗只能治未治疗伤口，完全治疗可以治疤痕）',
   insufficient_balance: '该 agent 的余额不足以支付这档治疗',
   confirm_name_mismatch: '确认名字与 agent 名不一致，已取消',
+  erase_name_mismatch: '确认名字与 agent 名不一致，已取消删除',
   invalid_tier: 'tier 必须是 ordinary 或 complete',
   invalid_wound_id: '伤口编号不合法',
   invalid_amount_intervention: '干预数量必须是不小于 0 的数字',
@@ -123,6 +150,24 @@ const MESSAGES: Record<string, string> = {
   invalid_max_output: '输出上限必须是大于 0 的整数（字符）',
   empty_sandbox_patch: '没有需要更新的沙箱字段',
   sandbox_config_write_failed: '沙箱策略未能写回配置文件',
+  // Models
+  invalid_providers: 'providers 必须是一个数组',
+  no_providers: '至少要保留一个模型提供商',
+  invalid_provider: '提供商的名称、Base URL 或 API Key 不合法',
+  invalid_provider_id: '提供商 ID 只能包含字母、数字、下划线和短横线',
+  invalid_provider_models: '提供商的 models 必须是一个数组',
+  empty_provider_models: '每个提供商至少要有一个模型名',
+  duplicate_provider_id: '提供商 ID 不能重复',
+  invalid_models_patch: '模型配置字段不合法',
+  empty_models_patch: '没有需要更新的模型配置字段',
+  unknown_default_agent_model: '默认 Agent 模型必须属于选中的提供商',
+  unknown_default_memory_model: '默认 Memory 模型必须属于选中的提供商',
+  models_config_write_failed: '模型配置未能写回配置文件',
+  provider_in_use: '这个提供商仍有存活的 Agent 在用，请先把这些 Agent 切到别的提供商',
+  unknown_provider: '没有这个模型提供商',
+  unknown_model: '这个提供商下没有这个模型',
+  provider_removed: '这个提供商已经被删除，请重新选择',
+  invalid_model_selection: '请选择提供商与模型',
 };
 
 function messageFor(code: string): string {
@@ -343,6 +388,9 @@ function buildState(deps: ConsoleDeps): Record<string, unknown> {
     paused: pause.paused,
     pausedSince: pause.pausedSince,
     prompts: deps.prompts.status(),
+    // The roster the page paints its model pickers from. It is only a menu:
+    // which brain an agent actually runs on is in its own frozen binding.
+    models: deps.modelStore.view(),
     config: {
       satietyMax: values.satietyMax,
       satietyDecayPerSecond: values.satietyDecayPerSecond,
@@ -423,13 +471,45 @@ async function route(
       sendJson(response, 400, { ok: false, error: '请填写名字' });
       return;
     }
-    const result = await deps.createAgent(name.trim());
+    // The operator may pick a provider and a model, or leave both out and take
+    // the configured defaults; the supervisor refuses a pair it cannot resolve.
+    const providerId = readString(body, 'providerId');
+    const model = readString(body, 'model');
+    const result = await deps.createAgent(
+      name.trim(),
+      providerId === null ? undefined : providerId.trim(),
+      model === null ? undefined : model.trim(),
+    );
     if (!result.ok) {
       sendJson(response, 400, { ok: false, error: messageFor(result.error) });
       return;
     }
     sendJson(response, 200, { ok: true });
     return;
+  }
+
+  // GET/POST /api/models/config
+  if (segments.length === 3 && segments[1] === 'models' && segments[2] === 'config') {
+    if (method === 'GET') {
+      sendJson(response, 200, { ok: true, models: deps.modelStore.view() });
+      return;
+    }
+    if (method === 'POST') {
+      // The store owns validation and persistence; the console hands the whole
+      // body over and reports what came back, exactly like the sandbox panel.
+      const body = await readJsonBody(request);
+      const result = deps.modelStore.update(body);
+      if (!result.ok) {
+        const detail =
+          result.error === 'provider_in_use' && result.agents !== undefined && result.agents.length > 0
+            ? `${messageFor(result.error)}：${result.agents.join('、')}`
+            : messageFor(result.error);
+        sendJson(response, 400, { ok: false, error: detail, agents: result.agents ?? [] });
+        return;
+      }
+      sendJson(response, 200, { ok: true, models: result.data });
+      return;
+    }
   }
 
   // /api/agents/:name/...
@@ -474,6 +554,31 @@ async function route(
       return;
     }
 
+    // POST /api/agents/:name/model
+    if (resource === 'model' && segments.length === 4 && method === 'POST') {
+      if (dead) {
+        sendJson(response, 400, { ok: false, error: messageFor('agent_dead') });
+        return;
+      }
+      const body = await readJsonBody(request);
+      const providerId = readString(body, 'providerId');
+      const model = readString(body, 'model');
+      if (providerId === null || providerId.trim() === '' || model === null || model.trim() === '') {
+        sendJson(response, 400, { ok: false, error: messageFor('invalid_model_selection') });
+        return;
+      }
+      // A model change is an operator intervention, so it is allowed while the
+      // agent is mid-round: the ledger and the binding are written now and the
+      // running process picks the new brain up on its next wake-up.
+      const result = deps.switchAgentModel(agentName, providerId.trim(), model.trim());
+      if (!result.ok) {
+        sendJson(response, 400, { ok: false, error: messageFor(result.error) });
+        return;
+      }
+      sendJson(response, 200, { ok: true, deferred: result.deferred, message: result.message });
+      return;
+    }
+
     // POST /api/agents/:name/terminate
     if (resource === 'terminate' && segments.length === 4 && method === 'POST') {
       if (dead) {
@@ -487,6 +592,27 @@ async function route(
         return;
       }
       const result = deps.terminateAgent(agentName, confirmName.trim());
+      if (!result.ok) {
+        sendJson(response, 400, { ok: false, error: messageFor(result.error) });
+        return;
+      }
+      sendJson(response, 200, { ok: true });
+      return;
+    }
+
+    // POST /api/agents/:name/erase
+    // The only route that destroys history, so it asks for more than the
+    // termination route does: a matching typed name, and never a live round.
+    // It works on a dead agent too, which is the point — a grave someone made
+    // by accident has to be removable.
+    if (resource === 'erase' && segments.length === 4 && method === 'POST') {
+      const body = await readJsonBody(request);
+      const confirmName = readString(body, 'confirmName');
+      if (confirmName === null || confirmName.trim() === '') {
+        sendJson(response, 400, { ok: false, error: messageFor('erase_name_mismatch') });
+        return;
+      }
+      const result = deps.eraseAgent(agentName, confirmName.trim());
       if (!result.ok) {
         sendJson(response, 400, { ok: false, error: messageFor(result.error) });
         return;

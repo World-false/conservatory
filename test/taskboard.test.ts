@@ -120,6 +120,30 @@ describe('the task board state machine', () => {
     }
   });
 
+  it('refuses to pay a dead claimant and leaves the task submitted', () => {
+    const h = createHarness();
+    try {
+      birthAgent(h, 'ada');
+      createTask(h.ledger, { id: 'task_0001', title: 'Work', description: 'Do it.', price: 30, at: h.clock.now() });
+      claimTask(h.ledger, 'ada', 'task_0001', h.clock.now());
+      submitTask(h.ledger, 'ada', 'task_0001', 'done', h.clock.now());
+      const balanceBefore = h.ledger.getBalance('ada');
+      expect(h.ledger.markAgentDead('ada')).toBe(true);
+
+      const result = reviewTask(h.ledger, 'task_0001', 'accept', h.clock.now());
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        return;
+      }
+      expect(result.code).toBe('claimant_not_alive');
+      expect(h.ledger.getTask('task_0001')?.status).toBe('submitted');
+      expect(h.ledger.getBalance('ada')).toBe(balanceBefore);
+      expect(paymentEvents(h)).toBe(0);
+    } finally {
+      h.cleanup();
+    }
+  });
+
   it('pays nothing on rejection and closes the task', () => {
     const h = createHarness();
     try {

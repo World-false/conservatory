@@ -5,6 +5,7 @@ export type TaskErrorCode =
   | 'task_not_open'
   | 'task_not_claimed_by_you'
   | 'task_not_submitted'
+  | 'claimant_not_alive'
   | 'invalid_title'
   | 'invalid_price'
   | 'invalid_deliverable';
@@ -142,6 +143,18 @@ export function reviewTask(
   }
   if (existing.status !== 'submitted') {
     return { ok: false, code: 'task_not_submitted', status: existing.status };
+  }
+  if (decision === 'accept') {
+    const payer = existing.claimedBy;
+    if (payer === null) {
+      throw new Error(`task ${taskId} was accepted without a claiming agent`);
+    }
+    // Paying a dead agent would credit a balance the death certificate already
+    // recorded as final, and the certificate is append-only. Refuse instead.
+    const claimant = ledger.getAgent(payer);
+    if (claimant === null || claimant.status !== 'alive') {
+      return { ok: false, code: 'claimant_not_alive', status: existing.status };
+    }
   }
 
   const changed = ledger.transaction(() => {

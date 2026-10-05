@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import path from 'node:path';
 
 export class BlackboxError extends Error {
@@ -56,6 +56,14 @@ export class Blackbox {
     return path.join(this.rootDir, agent, `${day}.jsonl`);
   }
 
+  /** The directory holding every day file of one agent. */
+  dirOf(agent: string): string {
+    if (!SAFE_AGENT_NAME.test(agent)) {
+      throw new BlackboxError(`unsafe agent name for a black box path: ${agent}`);
+    }
+    return path.join(this.rootDir, agent);
+  }
+
   /** Day ids present for this agent, oldest first, without the file extension. */
   listDays(agent: string): string[] {
     const dir = path.join(this.rootDir, agent);
@@ -74,6 +82,22 @@ export class Blackbox {
       return [];
     }
     return parseLines(readFileSync(file, 'utf8'), file);
+  }
+
+  /**
+   * Removes every day file this agent ever wrote. The black box is append-only
+   * while an agent exists, and the one caller is total erasure: an agent that
+   * never existed has no transcript. The name is validated first, because the
+   * path is derived from it.
+   */
+  erase(agent: string): void {
+    if (!SAFE_AGENT_NAME.test(agent)) {
+      throw new BlackboxError(`unsafe agent name for a black box path: ${agent}`);
+    }
+    const dir = this.dirOf(agent);
+    if (existsSync(dir)) {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+    }
   }
 
   /** The most recent rounds, oldest first, for the operator's viewer. */

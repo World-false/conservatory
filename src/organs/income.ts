@@ -3,6 +3,7 @@ import type { IncomeReportRecord, Ledger } from './ledger';
 export type IncomeErrorCode =
   | 'report_not_found'
   | 'report_not_pending'
+  | 'reporter_not_alive'
   | 'exchange_rate_unset'
   | 'invalid_amount'
   | 'invalid_field';
@@ -69,6 +70,12 @@ export function verifyIncome(
   }
   if (existing.status !== 'pending') {
     return { ok: false, code: 'report_not_pending' };
+  }
+  // Crediting a dead agent would move a balance the death certificate already
+  // recorded as final, and the certificate is append-only. Refuse instead.
+  const reporter = ledger.getAgent(existing.agent);
+  if (reporter === null || reporter.status !== 'alive') {
+    return { ok: false, code: 'reporter_not_alive' };
   }
   const credited = verifiedAmount * exchangeRate;
   const changed = ledger.transaction(() => {

@@ -7,3 +7,6 @@
 *.env
 /AGENTS/
 /SUPERVISOR/
+# The model roster carries provider API keys, exactly like .env does, so it is
+# never committed. conservatory.config.json holds no secrets and stays tracked.
+/conservatory.models.json

@@ -226,6 +226,18 @@ function readValues(source: Record<string, unknown>, errors: string[]): Conserva
   if (values.memoryCapChars <= values.deathLineChars) {
     errors.push('"memoryCapChars" must be greater than "deathLineChars"');
   }
+  // A full MEMORY has to fit in one round's budget, with room for the tool
+  // round trips that round will make. About four characters per token, so
+  // memoryCapChars / 4 is the memory's token count; without the headroom a
+  // grown MEMORY would exceed the cap every round and the agent could never
+  // wake up again.
+  const memoryTokens = Math.ceil(values.memoryCapChars / 4);
+  const minimumContextTokens = memoryTokens + 150000;
+  if (values.roundContextCapTokens < minimumContextTokens) {
+    errors.push(
+      `"roundContextCapTokens" must be at least ${minimumContextTokens} (ceil("memoryCapChars" / 4) + 150000)`,
+    );
+  }
   return values;
 }
 

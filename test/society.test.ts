@@ -101,6 +101,13 @@ function outsideRoundKinds(h: Harness, agent: string): string[] {
 }
 
 /**
+ * The headings the round context writes around its blocks. MEMORY now carries
+ * headings of its own (`# WHO I AM`, `# RECENT ROUNDS`), so a block is bounded
+ * by the next heading the context itself writes, not by any `#` line.
+ */
+const CONTEXT_HEADINGS = ['# MEMORY', '# BODY STATE', '# SYSTEM REMINDERS', '# MESSAGES'];
+
+/**
  * One `# HEADING` block of the injected context, so a test can assert on that
  * block's own contents rather than on a lucky substring of the whole page.
  */
@@ -110,7 +117,16 @@ function section(user: string, heading: string): string {
     throw new Error(`the wake context has no ${heading} block`);
   }
   const rest = user.slice(start + heading.length);
-  const next = rest.indexOf('\n# ');
+  let next = -1;
+  for (const marker of CONTEXT_HEADINGS) {
+    if (marker === heading) {
+      continue;
+    }
+    const at = rest.indexOf(`\n${marker}`);
+    if (at !== -1 && (next === -1 || at < next)) {
+      next = at;
+    }
+  }
   return (next === -1 ? rest : rest.slice(0, next)).trim();
 }
 
@@ -217,8 +233,8 @@ describe('a multi-agent society', () => {
       const bobWake = wakeOf(bobFirst.worker);
       expect(section(bobWake.user, '# SYSTEM REMINDERS')).toBe(TRANSFER_REMINDER);
       expect(section(bobWake.user, '# MESSAGES')).toContain(`[from ada]: ${ADA_MESSAGE}`);
-      expect(section(bobWake.user, '# BODY STATE')).toContain('balance: 125');
-      expect(section(bobWake.user, '# BODY STATE')).toContain('satiety: 70 / 100');
+      expect(section(bobWake.system, '# BODY STATE')).toContain('balance: 125');
+      expect(section(bobWake.system, '# BODY STATE')).toContain('satiety: 70 / 100');
       expect(bobWake.system).toContain('You are an agent in the Conservatory');
 
       const bobResults = toolResults(bobFirst.worker);
@@ -256,10 +272,10 @@ describe('a multi-agent society', () => {
       const adaWake = wakeOf(adaSecond.worker);
       expect(section(adaWake.user, '# SYSTEM REMINDERS')).toBe('(none)');
       expect(section(adaWake.user, '# MESSAGES')).toContain(`[from bob]: ${BOB_REPLY}`);
-      expect(section(adaWake.user, '# BODY STATE')).toContain('balance: 75');
+      expect(section(adaWake.system, '# BODY STATE')).toContain('balance: 75');
       // Her own earlier message is Bob's, not hers: it is never read back to her.
       expect(section(adaWake.user, '# MESSAGES')).not.toContain(ADA_MESSAGE);
-      expect(section(adaWake.user, '# MEMORY')).toContain('I sent bob 25 balance and a message.');
+      expect(section(adaWake.system, '# MEMORY')).toContain('I sent bob 25 balance and a message.');
 
       expect(h.ledger.getBalance('ada')).toBe(75);
       expect(h.ledger.listUnreadMessages('ada')).toEqual([]);

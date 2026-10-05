@@ -116,6 +116,35 @@ describe('income reports', () => {
     }
   });
 
+  it('refuses to credit a report whose agent has died', () => {
+    const h = createHarness({ values: { exchangeRate: 2 } });
+    try {
+      const agent = birthAgent(h);
+      const reported = reportIncome(
+        h.ledger,
+        agent.name,
+        { where: 'upwork', work: 'translated a page', amount: 20, currency: 'USD' },
+        h.clock.now(),
+      );
+      if (!reported.ok) {
+        throw new Error('the report should have been accepted');
+      }
+      const balanceBefore = h.ledger.getBalance(agent.name);
+      expect(h.ledger.markAgentDead(agent.name)).toBe(true);
+
+      const result = verifyIncome(h.ledger, reported.report.id, 10, 2, h.clock.now());
+      expect(result.ok).toBe(false);
+      if (result.ok) {
+        return;
+      }
+      expect(result.code).toBe('reporter_not_alive');
+      expect(h.ledger.getBalance(agent.name)).toBe(balanceBefore);
+      expect(h.ledger.getIncomeReport(reported.report.id)?.status).toBe('pending');
+    } finally {
+      h.cleanup();
+    }
+  });
+
   it('refuses a negative verified amount', () => {
     const h = createHarness({ values: { exchangeRate: 2 } });
     try {

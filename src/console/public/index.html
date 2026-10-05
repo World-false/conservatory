@@ -551,7 +551,13 @@
 
       /* ----------------------------------------------------------- page + grid */
       .pages { flex: 1; overflow: auto; padding: 16px 18px 44px; }
-      .page { display: none; }
+      .page {
+        display: none;
+        width: 100%;
+        max-width: 1120px;
+        margin-left: auto;
+        margin-right: auto;
+      }
       .page.active { display: block; animation: page-in 0.34s var(--ease) both; }
       h2.page-title {
         font-size: 15px;
@@ -571,7 +577,6 @@
         background: var(--accent);
       }
       .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; align-content: start; }
-      @media (min-width: 1500px) { .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
       @media (max-width: 1080px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
       .split { display: grid; grid-template-columns: minmax(320px, 420px) minmax(320px, 1fr); gap: 16px; align-items: start; }
       .list { display: grid; gap: 8px; }
@@ -992,7 +997,7 @@
          right. The four panels keep their original mount ids, so the three
          second poll paints into them wherever they live. */
       dialog#settingsDlg {
-        width: 960px;
+        width: 1120px;
         max-width: 92vw;
         height: 680px;
         max-height: 86vh;
@@ -1169,58 +1174,133 @@
       .dlg-body { flex: 1; min-height: 0; display: flex; }
       .pane { display: none; flex: 1; min-height: 0; padding: 15px 17px; }
       .pane.active { display: flex; flex-direction: column; gap: 10px; overflow: auto; }
-      .pane.active.split {
-        display: grid;
-        grid-template-columns: 260px minmax(0, 1fr);
-        gap: 16px;
-        overflow: hidden;
-      }
-      #pane-messages.active { overflow: hidden; }
+      /* Life and messages own a nested scroll area, so the pane itself clips
+         instead of scrolling twice. Memory is a full-width document and lets
+         the pane scroll, which is why it is deliberately not listed here. */
+      #pane-life.active, #pane-messages.active { overflow: hidden; }
       .pane-col { min-height: 0; overflow: auto; display: grid; gap: 8px; align-content: start; }
 
-      /* ------------------------------------------------------------ life tab */
-      .round-item {
+      /* ---------------------------------------------------- life: sessions */
+      /* Two levels inside one pane: the session list, and the transcript of
+         the session the operator opened. Exactly one is visible, so neither
+         has to share the width with a second column. */
+      .life-view { display: none; flex: 1; min-height: 0; }
+      .life-view.active { display: flex; flex-direction: column; gap: 10px; }
+      #lifeSessions.active { overflow: auto; }
+      .life-bar { flex: 0 0 auto; }
+
+      .session-grid {
+        display: grid;
+        gap: 10px;
+        grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+        align-content: start;
+      }
+      .session-card {
         border: 1px solid var(--line);
         border-left: 2px solid rgba(148, 163, 184, 0.35);
         border-radius: var(--r-card);
-        padding: 8px 10px;
+        padding: 11px 13px;
         cursor: pointer;
         background: var(--card);
+        display: grid;
+        gap: 7px;
+        align-content: start;
         box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
         transition: border-color 0.18s var(--ease), background 0.18s var(--ease), box-shadow 0.18s var(--ease);
       }
-      .round-item:hover { border-color: rgba(148, 163, 184, 0.7); background: var(--card-hover); box-shadow: var(--shadow-soft), inset 0 1px 0 rgba(255, 255, 255, 0.9); }
-      .round-item.active {
-        border-color: var(--accent-edge);
-        border-left-color: var(--accent-cool);
-        background: linear-gradient(90deg, rgba(37, 99, 235, 0.08), transparent 70%), var(--card-hover);
-        box-shadow: inset 0 1px 0 #FFFFFF;
+      .session-card:hover {
+        border-color: rgba(148, 163, 184, 0.7);
+        background: var(--card-hover);
+        box-shadow: var(--shadow-soft), inset 0 1px 0 rgba(255, 255, 255, 0.9);
       }
-      .round-item .r1 { display: flex; gap: 8px; align-items: center; font-size: 12.5px; }
+      .session-card .s-head { display: flex; gap: 8px; align-items: center; }
+      .session-card .s-no { font-size: 13.5px; font-weight: 650; letter-spacing: -0.01em; }
+      .session-card .s-sub { font-size: 11.5px; color: var(--muted); }
+      .session-card .s-metrics { display: flex; flex-wrap: wrap; gap: 6px; }
+      .s-metric {
+        display: inline-flex;
+        align-items: baseline;
+        gap: 4px;
+        font-size: 11px;
+        color: var(--muted);
+        border: 1px solid var(--line);
+        background: var(--line-soft);
+        border-radius: var(--r-pill);
+        padding: 1px 8px;
+      }
+      .s-metric b {
+        font-family: var(--mono);
+        font-variant-numeric: tabular-nums;
+        font-weight: 600;
+        color: var(--text);
+      }
+      /* The reply preview is a lead, not the record: clamp it and let the
+         transcript hold the whole thing. */
+      .session-card .s-summary {
+        font-size: 12px;
+        line-height: 1.55;
+        color: var(--text);
+        font-family: var(--mono);
+        display: -webkit-box;
+        -webkit-line-clamp: 3;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .session-card .s-summary.void { font-family: inherit; color: var(--secondary); font-style: normal; }
 
-      .say {
+      /* -------------------------------------------------- life: transcript */
+      #lifeTranscript.active { overflow: auto; }
+      .t-top {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        flex-wrap: wrap;
+        flex: 0 0 auto;
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        padding-bottom: 9px;
+        border-bottom: 1px solid var(--line);
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.96) 70%, rgba(255, 255, 255, 0));
+      }
+      /* A turn is one step of the flow. The spine belongs to the flow itself,
+         so it reads as one continuous line down the conversation rather than
+         a dashed rail restarting at every step. */
+      .t-flow { display: flex; flex-direction: column; gap: 9px; padding: 0 0 4px 13px; border-left: 1px solid var(--line); }
+      .t-turn { display: grid; gap: 8px; }
+      .t-think {
         border: 1px solid var(--line);
         border-radius: var(--r-card);
-        padding: 9px 11px;
+        padding: 10px 12px;
         background: var(--surface);
         backdrop-filter: var(--surface-blur);
         -webkit-backdrop-filter: var(--surface-blur);
         box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
         white-space: pre-wrap;
         word-break: break-word;
-        line-height: 1.6;
+        line-height: 1.65;
+        font-size: 13px;
       }
-      .say.meta {
-        font-size: 11.5px;
+      .t-think .who {
+        display: block;
+        font-size: 10.5px;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
         color: var(--secondary);
-        margin-top: 4px;
-        white-space: normal;
-        background: none;
-        border: 0;
-        border-left: 1px solid var(--line);
-        border-radius: 0;
-        padding: 2px 0 2px 9px;
+        margin-bottom: 6px;
       }
+      .t-context { flex: 0 0 auto; }
+      .tool-item summary strong { font-weight: 650; }
+      .tool-item > summary code { font-family: var(--mono); }
+      .t-anchor {
+        font-size: 11px;
+        color: var(--muted);
+        font-family: var(--mono);
+        padding-left: 2px;
+      }
+
       .tool-item { border-left: 2px solid var(--accent); }
       .tool-item.bad { border-left-color: var(--danger); }
       .tool-sum { color: var(--muted); margin-left: 6px; font-size: 12px; }
@@ -1248,12 +1328,14 @@
       }
       .event-line:last-child { border-bottom: 0; }
 
-      /* ----------------------------------------------------- memory / notebook */
+      /* ----------------------------------------------------------- memory */
+      .mem-pane { overflow: visible; align-content: start; }
+      .mem-bar { flex: 0 0 auto; align-items: center; gap: 8px; flex-wrap: wrap; }
       .mem-body {
         border: 1px solid var(--line);
         border-radius: var(--r-card);
         overflow: auto;
-        max-height: 52vh;
+        max-height: 56vh;
         background: rgba(255, 255, 255, 0.88);
         box-shadow: inset 0 1px 3px rgba(15, 23, 42, 0.06);
       }
@@ -1282,9 +1364,9 @@
         letter-spacing: 0.1em;
         text-transform: uppercase;
       }
-      /* Redacted characters read as a censor bar stamped over the page: ink with
-         the taken-character count knocked out in white. Seized evidence, never
-         amber decoration. */
+      /* An untreated wound reads as a censor bar stamped over the page: ink
+         with the taken-character count knocked out in white. Seized evidence,
+         never amber decoration. It is also the button that opens treatment. */
       .redact {
         background: var(--text);
         color: #FFFFFF;
@@ -1297,7 +1379,55 @@
       }
       .redact::before { content: "["; opacity: 0.5; }
       .redact::after { content: "]"; opacity: 0.5; }
-      .nb-file { text-align: left; }
+      button.redact {
+        border: 0;
+        cursor: pointer;
+        font: inherit;
+        line-height: inherit;
+        transition: box-shadow 0.16s var(--ease), background 0.16s var(--ease);
+      }
+      button.redact:hover { background: var(--accent-cool); box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18); }
+      button.redact:focus-visible { outline: 2px solid var(--accent-cool); outline-offset: 2px; }
+      /* A scar: the characters are back, but the page is not healed. */
+      .scar {
+        background: rgba(100, 116, 139, 0.12);
+        border-bottom: 1px dashed var(--standby-border);
+        border-radius: 3px;
+        padding: 0 2px;
+        color: #334155;
+      }
+      /* Revealed original text: what the redaction took, restored for the
+         operator alone. It is marked as evidence, never as normal prose. */
+      .truetext {
+        background: var(--accent-cool-soft);
+        border-bottom: 1px solid var(--accent-cool);
+        border-radius: 3px;
+        padding: 0 2px;
+        color: var(--text);
+        font-weight: 600;
+      }
+      /* The in-place treatment card, anchored under the wound it belongs to. */
+      .wound-pop {
+        border: 1px solid var(--accent-edge);
+        border-radius: var(--r-card);
+        background: rgba(255, 255, 255, 0.97);
+        backdrop-filter: blur(14px);
+        -webkit-backdrop-filter: blur(14px);
+        box-shadow: 0 18px 44px -18px rgba(15, 23, 42, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.95);
+        padding: 12px 14px;
+        display: grid;
+        gap: 8px;
+        align-content: start;
+        position: sticky;
+        bottom: 0;
+        z-index: 3;
+      }
+      .wound-pop[hidden] { display: none; }
+      .wound-pop .wp-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+      .wound-pop .wp-k { font-size: 11px; color: var(--muted); letter-spacing: 0.06em; }
+      .wound-pop pre { max-height: 150px; }
+      .mem-history { margin-top: 4px; }
+      .mem-history > summary { font-weight: 600; }
 
       /* -------------------------------------------------------------- messages */
       .chat { display: flex; flex-direction: column; min-height: 0; flex: 1; gap: 8px; }
@@ -1425,7 +1555,9 @@
         display: flex;
         align-items: center;
         gap: 10px;
-        margin: 11px 18px 0;
+        width: calc(100% - 36px);
+        max-width: 1120px;
+        margin: 11px auto 0;
         padding: 11px 14px;
         cursor: pointer;
         font-weight: 500;
@@ -1934,9 +2066,13 @@
         </div>
         <div class="dlg-tabs" id="dlgTabs"></div>
         <div class="dlg-body">
-          <section class="pane split" id="pane-life">
-            <div class="pane-col">
-              <div class="row">
+          <!-- Life is a two-level view inside one pane: the session list, and
+               the transcript of the one session the operator opened. Only one
+               of the two children is visible at a time (`.life-view.active`),
+               so the pane never has to give up its width to a side column. -->
+          <section class="pane" id="pane-life">
+            <div class="life-view active" id="lifeSessions">
+              <div class="row life-bar">
                 <span class="small muted">加载最近</span>
                 <button class="btn tiny" data-act="life-range" data-range="5">5</button>
                 <button class="btn tiny" data-act="life-range" data-range="20">20</button>
@@ -1944,42 +2080,34 @@
                 <span class="grow"></span>
                 <button class="btn tiny" data-act="life-refresh">刷新</button>
               </div>
-              <div class="list" id="roundList"></div>
+              <div class="list scroll-list" id="sessionList"></div>
             </div>
-            <div class="pane-col" id="roundDetail"></div>
+            <div class="life-view" id="lifeTranscript"></div>
           </section>
 
           <section class="pane" id="pane-body">
             <div class="pane-col" id="bodyPane"></div>
           </section>
 
-          <section class="pane split" id="pane-wounds">
-            <div class="pane-col">
-              <div class="small muted">伤口列表（这里是操作员视角，可以看到被遮盖的原文；Agent 看不到这些原文）。</div>
-              <div class="list" id="woundList"></div>
-            </div>
-            <div class="pane-col" id="woundDetail"></div>
-          </section>
-
-          <section class="pane split" id="pane-memory">
-            <div class="pane-col">
-              <div class="small muted" id="memStats"></div>
+          <!-- Memory is one full-width page. The wounds used to be a page of
+               their own; here the operator reads the text and treats a wound
+               in the same place, because the scar is where the sentence is.
+               The consolidation history is folded away at the bottom rather
+               than occupying a permanent right column. -->
+          <section class="pane" id="pane-memory">
+            <div class="pane-col mem-pane">
+              <div class="row mem-bar">
+                <span id="memStats"></span>
+                <span class="grow"></span>
+                <button class="btn tiny" id="memReveal" data-act="mem-reveal">透视完整原文</button>
+              </div>
               <div class="mem-body" id="memoryText"></div>
-            </div>
-            <div class="pane-col">
-              <div class="small muted">最近几次记忆整合</div>
-              <div class="list" id="memRecords"></div>
-              <div id="memCompare"></div>
-            </div>
-          </section>
-
-          <section class="pane split" id="pane-notebook">
-            <div class="pane-col">
-              <div class="small muted">记事本文件</div>
-              <div class="list" id="nbFiles"></div>
-            </div>
-            <div class="pane-col">
-              <pre id="nbContent" class="mono"></pre>
+              <div class="wound-pop" id="woundPop" hidden></div>
+              <details class="mem-history" id="memHistory">
+                <summary>记忆整合历史对比</summary>
+                <div class="list" id="memRecords"></div>
+                <div id="memCompare" style="margin-top: 8px"></div>
+              </details>
             </div>
           </section>
 
@@ -2034,6 +2162,10 @@
               <svg viewBox="0 0 24 24"><path d="M14.5 3.5 6 13h5l-1.5 7.5L18 11h-5z" /></svg>
               <span>提示词热重载</span>
             </button>
+            <button class="settings-nav-item" data-act="settings-tab" data-tab="models">
+              <svg viewBox="0 0 24 24"><path d="M12 3.6 4.8 7.2v9.6L12 20.4l7.2-3.6V7.2z" /><path d="M4.8 7.2 12 10.8l7.2-3.6M12 10.8v9.6" /></svg>
+              <span>模型设置</span>
+            </button>
             <button class="settings-nav-item" data-act="settings-tab" data-tab="sandbox">
               <svg viewBox="0 0 24 24"><path d="M12 3.4 4.6 6.5v5.3c0 4.3 3.1 7.6 7.4 8.8 4.3-1.2 7.4-4.5 7.4-8.8V6.5z" /><path d="M9.2 12.2l2 2 3.7-4" /></svg>
               <span>沙箱与安全策略</span>
@@ -2049,6 +2181,9 @@
             </section>
             <section class="settings-tab-panel" id="settingsPanel-prompts" hidden>
               <div id="promptBox"></div>
+            </section>
+            <section class="settings-tab-panel" id="settingsPanel-models" hidden>
+              <div id="modelsBox"></div>
             </section>
             <section class="settings-tab-panel" id="settingsPanel-sandbox" hidden>
               <div id="sandboxBox"></div>
@@ -2130,13 +2265,16 @@
       // Settings is deliberately NOT in this list: it is a floating modal, not a
       // page, so navigating never unloads the workspace the operator was reading.
       const PAGES = ["agents", "tasks", "income", "interventions"];
-      const SETTINGS_TABS = ["vital", "prompts", "sandbox", "system"];
+      const SETTINGS_TABS = ["vital", "prompts", "models", "sandbox", "system"];
+      // Six tabs, deliberately ordered by how the operator reads an agent:
+      // what it is doing, what body it is in, what it remembers, what it says,
+      // what it owes, and what was done to it. Wounds live inside the memory
+      // pane (the scar is a fact about the text) and the notebook has no
+      // operator view at all.
       const TABS = [
         { id: "life", label: "生命动态" },
         { id: "body", label: "身体" },
-        { id: "wounds", label: "伤口" },
         { id: "memory", label: "记忆" },
-        { id: "notebook", label: "记事本" },
         { id: "messages", label: "留言" },
         { id: "tasks", label: "任务" },
         { id: "interventions", label: "干预记录" },
@@ -2163,6 +2301,11 @@
         treatment_refused: "治疗被拒",
         death: "死亡",
         frozen_restored: "冻结句已恢复",
+        memory_appended: "记忆追加了一轮",
+        memory_compacted: "记忆压缩了旧轮次",
+        memory_compaction_skipped: "记忆压缩跳过（旧轮次里还有伤口）",
+        memory_compaction_failed: "记忆压缩失败（旧轮次原样保留）",
+        memory_over_cap: "记忆已超上限（本轮照写）",
         task_claimed: "认领任务",
         task_submitted: "提交任务",
         income_reported: "申报收入",
@@ -2190,6 +2333,8 @@
         conservatory_resumed: "恢复温室",
         operator_treat: "操作员代为治疗",
         force_terminate: "操作员强制终止（死亡）",
+        model_switched: "操作员切换模型",
+        agent_erased: "操作员完全删除（抹除）",
       };
       const WOUND_STATUS = {
         untreated: "未治疗",
@@ -2209,14 +2354,19 @@
       let settingsClosing = false;
       let settingsCloseHandler = null;
       let lifeRange = 5;
-      let roundSel = null;
-      let roundCache = { agent: null, range: null, rounds: [] };
+      // Life has two levels in one pane: `sessionSel === null` shows the
+      // session list, otherwise the transcript of that one session.
+      let sessionSel = null;
+      let sessionCache = { agent: null, range: null, rounds: [] };
       let memSel = null;
-      let woundSel = null;
-      let woundCache = { agent: null, wounds: [] };
+      // The memory page has two perspectives. `false` is what the agent sees
+      // (censor bars); `true` is the operator's, with the taken text put back.
+      let memReveal = false;
+      // The wound whose treatment card is open, keyed by agent so a poll
+      // cannot carry one agent's open card onto another.
+      let woundPop = null;
       let memCache = { agent: null, memory: "", records: [] };
-      let nbCache = { agent: null, files: [], path: null, content: "" };
-      let nbLoading = false;
+      let memLoading = false;
       let extras = {};
       let taskFilter = "all";
       let taskSel = null;
@@ -2232,6 +2382,16 @@
       let sandboxStatus = null;
       let sandboxHints = {};
       let sandboxLoading = false;
+      // The model panel, the same shape as the sandbox one: the server's last
+      // answer, the operator's unsaved draft, a status line, and the row being
+      // edited. Polling repaints from the draft so an edit in progress is safe.
+      let modelsView = null;
+      let modelsDraft = null;
+      let modelsStatus = null;
+      let modelsEditingId = null;
+      let modelsLoading = false;
+      // The deferred-switch notice, held here so the next poll cannot erase it.
+      let modelSwitchNotice = null;
       let loadedRoundAt = {};
       const slotDrafts = {};
       const readMarks = new Set(loadReadMarks());
@@ -2319,12 +2479,14 @@
         const chosen = TABS.some((t) => t.id === tab) ? tab : "life";
         if (dlgAgent !== name) {
           dlgAgent = name;
-          roundSel = null;
+          // The model-switch banner belongs to the agent it was raised for, so
+          // opening a different one clears it rather than showing it there.
+          modelSwitchNotice = null;
+          sessionSel = null;
           memSel = null;
-          woundSel = null;
-          nbCache = { agent: null, files: [], path: null, content: "" };
-          woundCache = { agent: null, wounds: [] };
-          roundCache = { agent: null, range: null, rounds: [] };
+          memReveal = false;
+          woundPop = null;
+          sessionCache = { agent: null, range: null, rounds: [] };
           memCache = { agent: null, memory: "", records: [] };
           resetAgentPanes();
           // Remember where the agent stood when the dialog opened; only a fetch
@@ -2359,6 +2521,10 @@
       function switchSettingsTab(tab) {
         settingsTab = SETTINGS_TABS.indexOf(tab) >= 0 ? tab : "vital";
         paintSettingsTabs();
+        // The model roster is not part of /api/state and has no boot-time read,
+        // so its tab reads the route once, on first open. `modelsDraft` staying
+        // non-null afterwards keeps a revisit (and unsaved typing) untouched.
+        if (settingsTab === "models" && modelsDraft === null) void loadModelsConfig();
       }
       function openSettingsDlg(tab = "vital") {
         // Cancel a close that is still mid-animation, otherwise the pending
@@ -2412,6 +2578,7 @@
         paintInterventionsPage();
         paintSettingsPage();
         paintPromptPanel();
+        paintModelsPanel();
         paintSandboxPanel();
         paintDialogHeader();
         paintPanes();
@@ -2586,29 +2753,96 @@
         });
         syncSlotCards();
       }
+      // The empty slot: a name, then a provider and one of its models. The two
+      // dropdowns default to the system default agent model, so an operator who
+      // does not care can type a name and press 创建.
+      function slotProviderOptions() {
+        const roster = modelsKey();
+        if (roster === null || !Array.isArray(roster.providers) || roster.providers.length === 0) return "";
+        const draft = slotDrafts[0] || {};
+        const wanted = draft.providerId || roster.defaultAgentProviderId;
+        const chosen = roster.providers.find((p) => p.id === wanted) || roster.providers[0];
+        return roster.providers
+          .map(
+            (provider) =>
+              `<option value="${esc(provider.id)}"${
+                provider.id === chosen.id ? " selected" : ""
+              }>${esc(provider.name)}</option>`,
+          )
+          .join("");
+      }
+      function slotModelOptions(providerId) {
+        const roster = modelsKey();
+        if (roster === null || !Array.isArray(roster.providers) || roster.providers.length === 0) return "";
+        const draft = slotDrafts[0] || {};
+        const provider =
+          roster.providers.find((p) => p.id === providerId) ||
+          roster.providers.find((p) => p.id === roster.defaultAgentProviderId) ||
+          roster.providers[0];
+        const models = Array.isArray(provider.models) ? provider.models : [];
+        const wanted = draft.model !== undefined && models.indexOf(draft.model) >= 0 ? draft.model : models[0];
+        return models
+          .map(
+            (model) => `<option value="${esc(model)}"${model === wanted ? " selected" : ""}>${esc(model)}</option>`,
+          )
+          .join("");
+      }
       function syncSlotCards() {
         const host = $("slotCards");
         const free = freeSlots();
-        while (host.children.length > free) {
+        const targetCount = free > 0 ? 1 : 0;
+        while (host.children.length > targetCount) {
           const removed = host.lastElementChild;
           const removedInput = removed === null ? null : removed.querySelector("input[data-slot]");
           if (removedInput !== null) delete slotDrafts[removedInput.dataset.slot];
           host.removeChild(removed);
         }
-        while (host.children.length < free) {
-          const index = host.children.length;
+        if (targetCount === 1 && host.children.length === 0) {
           const card = document.createElement("article");
           card.className = "card slot-card";
+          const draft = slotDrafts[0] || {};
+          const roster = modelsKey();
+          const hasProviders = roster !== null && Array.isArray(roster.providers) && roster.providers.length > 0;
+          const initialProvider =
+            hasProviders &&
+            (roster.providers.some((p) => p.id === (draft.providerId || roster.defaultAgentProviderId))
+              ? draft.providerId || roster.defaultAgentProviderId
+              : roster.providers[0].id);
           card.innerHTML =
             `<div class="slot-title">空槽位</div>` +
-            `<input data-slot="${index}" data-enter="slot-create" value="${esc(slotDrafts[index] || "")}" placeholder="名字：小写字母/数字/下划线" />` +
-            `<div class="row"><button class="btn primary" data-act="slot-create" data-slot="${index}">创建</button>` +
+            `<input data-slot="0" data-enter="slot-create" value="${esc(draft.name || "")}" placeholder="名字：小写字母/数字/下划线" />` +
+            (hasProviders
+              ? `<select data-change="slot-provider" data-slot="0" aria-label="提供商">${slotProviderOptions()}</select>` +
+                `<select data-model-for="0" data-slot="0" aria-label="模型">${slotModelOptions(initialProvider)}</select>`
+              : `<div class="small muted">还没有配置模型提供商，请先到『系统设置 → 模型设置』里添加一个。</div>`) +
+            `<div class="row"><button class="btn primary" data-act="slot-create" data-slot="0">创建</button>` +
             `<span class="small muted">名字只允许小写字母、数字、下划线</span></div>`;
           host.appendChild(card);
         }
+        // A poll rebuilds nothing here, but it does re-read the drafts, so an
+        // in-progress name, provider and model all survive it.
         for (const input of host.querySelectorAll("input[data-slot]")) {
-          slotDrafts[input.dataset.slot] = input.value;
+          const slot = input.dataset.slot;
+          slotDrafts[slot] = { ...(slotDrafts[slot] || {}), name: input.value };
         }
+        for (const select of host.querySelectorAll('select[data-change="slot-provider"]')) {
+          const slot = select.dataset.slot;
+          slotDrafts[slot] = { ...(slotDrafts[slot] || {}), providerId: select.value };
+        }
+        for (const select of host.querySelectorAll("select[data-model-for]")) {
+          const slot = select.dataset.modelFor;
+          slotDrafts[slot] = { ...(slotDrafts[slot] || {}), model: select.value };
+        }
+      }
+      // Picking a provider repopulates this slot's model list from that
+      // provider, and selects its first model.
+      function repaintSlotModels(slot) {
+        const select = document.querySelector(`select[data-model-for="${slot}"]`);
+        const providerSelect = document.querySelector(`select[data-change="slot-provider"][data-slot="${slot}"]`);
+        if (select === null || providerSelect === null) return;
+        slotDrafts[slot] = { ...(slotDrafts[slot] || {}), providerId: providerSelect.value, model: undefined };
+        select.innerHTML = slotModelOptions(providerSelect.value);
+        slotDrafts[slot].model = select.value;
       }
 
       // ------------------------------------------------- tasks page
@@ -2819,6 +3053,326 @@
           .slice()
           .reverse();
         repaint($("intTable"), interventionRowsHtml(rows));
+      }
+
+      // --------------------------------------------- model roster panel
+      // Two layers, because that is how a brain is chosen: pick a provider,
+      // then pick one of its models. The panel is only a menu — which brain an
+      // agent actually runs on is frozen in MODEL.json inside its own folder.
+      const modelsKey = () => {
+        if (state === null || state.models === undefined || state.models === null) return null;
+        return state.models;
+      };
+      const providerById = (id) =>
+        modelsDraft === null || id === null ? null : modelsDraft.providers.find((p) => p.id === id) || null;
+      const maskKey = (key) => {
+        if (typeof key !== "string" || key === "") return "—";
+        return key.length <= 4 ? "••••" : "••••" + key.slice(-4);
+      };
+      const modelPairLabel = (providerId, model) => {
+        const provider = providerById(providerId);
+        return provider === null ? model : provider.name + " · " + model;
+      };
+      // Every provider+model pair, for the two default dropdowns.
+      function allPairs() {
+        if (modelsDraft === null) return [];
+        const pairs = [];
+        for (const provider of modelsDraft.providers) {
+          for (const model of provider.models) {
+            pairs.push({ providerId: provider.id, model, label: provider.name + " · " + model });
+          }
+        }
+        return pairs;
+      }
+      function defaultPairOptions(selectedProvider, selectedModel) {
+        const wanted = selectedProvider + "|" + selectedModel;
+        return allPairs()
+          .map(
+            (pair) =>
+              `<option value="${esc(pair.providerId)}|${esc(pair.model)}"${
+                pair.providerId + "|" + pair.model === wanted ? " selected" : ""
+              }>${esc(pair.label)}</option>`,
+          )
+          .join("");
+      }
+      function paintModelsPanel() {
+        const box = $("modelsBox");
+        if (box === null || box.dataset.built === "1") return;
+        box.dataset.built = "1";
+        box.innerHTML =
+          `<section class="mod span2" id="modelsModule">` +
+          `<div class="mod-head">` +
+          `<span class="mod-icon">` +
+          `<svg viewBox="0 0 24 24"><path d="M12 3.6 4.8 7.2v9.6L12 20.4l7.2-3.6V7.2z" /><path d="M4.8 7.2 12 10.8l7.2-3.6M12 10.8v9.6" /></svg>` +
+          `</span>` +
+          `<span class="mod-head-text"><span class="mod-title">模型提供商与模型 (Model Roster)</span>` +
+          `<span class="mod-sub">先配好提供商，再配它下面有哪些模型；新建 Agent 时从这里挑</span></span>` +
+          `<span id="modelsHealth"></span>` +
+          `</div>` +
+          `<div class="mod-body">` +
+          `<div class="col-stack">` +
+          `<div class="mod-title" style="font-size: 12.5px">已配置的提供商</div>` +
+          `<div class="tpl-list" id="modelsProviderList"></div>` +
+          `</div>` +
+          `<div class="col-stack">` +
+          `<div class="mod-title" style="font-size: 12.5px" id="modelsFormTitle">添加模型提供商</div>` +
+          `<label class="metric"><span class="metric-k">显示名称</span>` +
+          `<input id="modelsName" placeholder="例如 DeepSeek" /></label>` +
+          `<label class="metric"><span class="metric-k">Base URL</span>` +
+          `<input id="modelsBaseUrl" placeholder="https://api.deepseek.com/v1" /></label>` +
+          `<label class="metric"><span class="metric-k">API Key</span>` +
+          `<input id="modelsApiKey" type="password" placeholder="sk-..." /></label>` +
+          `<label class="metric"><span class="metric-k">模型名（逗号或换行分隔）</span>` +
+          `<input id="modelsModelNames" placeholder="deepseek-chat, deepseek-reasoner" /></label>` +
+          `<div class="row">` +
+          `<button class="btn primary" data-act="models-save-provider" id="modelsSaveProvider">添加提供商</button>` +
+          `<button class="btn" data-act="models-cancel-edit" id="modelsCancelEdit" hidden>取消编辑</button>` +
+          `<span class="grow"></span>` +
+          `<span class="small muted" id="modelsFormHint"></span>` +
+          `</div>` +
+          `</div>` +
+          `<div class="metric-grid">` +
+          `<label class="metric"><span class="metric-k">默认 Agent 模型</span>` +
+          `<select id="modelsDefaultAgent"></select></label>` +
+          `<label class="metric"><span class="metric-k">默认 Memory 模型</span>` +
+          `<select id="modelsDefaultMemory"></select></label>` +
+          `</div>` +
+          `<div class="row">` +
+          `<button class="btn primary" data-act="models-save">保存配置</button>` +
+          `<button class="btn" data-act="models-reload">重新读取</button>` +
+          `<span class="grow"></span>` +
+          `<span class="small" id="modelsStatus">正在读取模型配置…</span>` +
+          `</div>` +
+          `<div class="hint-line">这里只是菜单：Agent 建好之后，它的模型快照会冻结在自己文件夹的 MODEL.json 里，之后改这里不会影响它。要换脑子，请在它自己的详情页里切换（会记为一次干预）。</div>` +
+          `</div></section>`;
+      }
+      function paintModelsProviderList() {
+        const host = $("modelsProviderList");
+        if (host === null) return;
+        if (modelsDraft === null) {
+          host.innerHTML = `<div class="empty small">尚未读取</div>`;
+          return;
+        }
+        if (modelsDraft.providers.length === 0) {
+          host.innerHTML = `<div class="empty small">还没有任何提供商。</div>`;
+          return;
+        }
+        host.innerHTML = modelsDraft.providers
+          .map(
+            (provider) =>
+              `<div class="tpl-card${provider.id === modelsEditingId ? " bad" : ""}" title="${esc(provider.baseUrl)}">` +
+              `<span class="tpl-file grow">${esc(provider.name)}` +
+              `<span class="small muted" style="display: block">${esc(provider.baseUrl)} · ${esc(maskKey(provider.apiKey))}</span>` +
+              `<span class="small muted" style="display: block">模型：${esc(provider.models.join("、"))}</span>` +
+              `</span>` +
+              `<button class="btn tiny" data-act="models-edit-provider" data-provider="${esc(provider.id)}">编辑</button>` +
+              `<button class="btn tiny" data-act="models-remove-provider" data-provider="${esc(provider.id)}">删除</button>` +
+              `</div>`,
+          )
+          .join("");
+      }
+      // `fillForm` belongs to a fresh server answer and to an edit click alone:
+      // a poll repaint must never overwrite what the operator is typing.
+      function renderModels(fillForm) {
+        paintModelsPanel();
+        paintModelsProviderList();
+        const empty = modelsDraft === null;
+        for (const id of ["modelsName", "modelsBaseUrl", "modelsApiKey", "modelsModelNames"]) {
+          const input = $(id);
+          if (input !== null) input.disabled = empty;
+        }
+        const saveProvider = $("modelsSaveProvider");
+        if (saveProvider !== null) saveProvider.disabled = empty;
+        const cancel = $("modelsCancelEdit");
+        if (cancel !== null) cancel.hidden = modelsEditingId === null;
+        const title = $("modelsFormTitle");
+        if (title !== null) title.textContent = modelsEditingId === null ? "添加模型提供商" : "编辑提供商";
+        if (saveProvider !== null) saveProvider.textContent = modelsEditingId === null ? "添加提供商" : "保存修改";
+
+        const health = $("modelsHealth");
+        if (health !== null) {
+          const count = modelsDraft === null ? null : modelsDraft.providers.length;
+          health.className = count === null ? "pill warn" : "pill info";
+          health.textContent =
+            count === null ? "未读取" : `${count} 个提供商 / ${allPairs().length} 个模型`;
+        }
+        if (fillForm === true) {
+          const provider = providerById(modelsEditingId);
+          const name = $("modelsName");
+          const baseUrl = $("modelsBaseUrl");
+          const apiKey = $("modelsApiKey");
+          const names = $("modelsModelNames");
+          if (name !== null) name.value = provider === null ? "" : provider.name;
+          if (baseUrl !== null) baseUrl.value = provider === null ? "" : provider.baseUrl;
+          // An edit starts from the stored key only when the operator asks for
+          // it; the field is otherwise blank and left alone on save.
+          if (apiKey !== null) apiKey.value = provider === null ? "" : provider.apiKey;
+          if (names !== null) names.value = provider === null ? "" : provider.models.join(", ");
+        }
+        const agentSelect = $("modelsDefaultAgent");
+        const memorySelect = $("modelsDefaultMemory");
+        if (modelsDraft !== null) {
+          if (agentSelect !== null) {
+            agentSelect.innerHTML = defaultPairOptions(
+              modelsDraft.defaultAgentProviderId,
+              modelsDraft.defaultAgentModel,
+            );
+          }
+          if (memorySelect !== null) {
+            memorySelect.innerHTML = defaultPairOptions(
+              modelsDraft.defaultMemoryProviderId,
+              modelsDraft.defaultMemoryModel,
+            );
+          }
+        }
+        const status = $("modelsStatus");
+        if (status !== null) {
+          status.textContent = modelsStatus === null ? "" : modelsStatus.text;
+          status.style.color = modelsStatus !== null && modelsStatus.tone === "bad" ? "var(--danger)" : "";
+        }
+      }
+      function applyModelsView(models) {
+        const providers = Array.isArray(models.providers)
+          ? models.providers
+              .filter((p) => p !== null && typeof p === "object")
+              .map((p) => ({
+                id: String(p.id || ""),
+                name: String(p.name || ""),
+                baseUrl: String(p.baseUrl || ""),
+                apiKey: typeof p.apiKey === "string" ? p.apiKey : "",
+                models: Array.isArray(p.models) ? p.models.filter((m) => typeof m === "string") : [],
+              }))
+          : [];
+        modelsDraft = {
+          defaultAgentProviderId: String(models.defaultAgentProviderId || ""),
+          defaultAgentModel: String(models.defaultAgentModel || ""),
+          defaultMemoryProviderId: String(models.defaultMemoryProviderId || ""),
+          defaultMemoryModel: String(models.defaultMemoryModel || ""),
+          providers,
+        };
+        // An edited provider that no longer exists (removed elsewhere) drops
+        // the edit rather than resurrecting it on save.
+        if (modelsEditingId !== null && providerById(modelsEditingId) === null) modelsEditingId = null;
+      }
+      async function loadModelsConfig() {
+        if (modelsLoading) return;
+        modelsLoading = true;
+        try {
+          const body = await api("/api/models/config");
+          applyModelsView(body.models || {});
+          modelsStatus = { tone: "ok", text: "已从服务端读取模型配置。" };
+          renderModels(true);
+        } catch (error) {
+          modelsStatus = { tone: "bad", text: "读取失败：" + (error instanceof Error ? error.message : String(error)) };
+          renderModels(false);
+        } finally {
+          modelsLoading = false;
+        }
+      }
+      // A provider id is generated here, never asked of the operator. Editing
+      // keeps the id it already had, so bindings made earlier stay valid.
+      function nextProviderId() {
+        const used = new Set((modelsDraft === null ? [] : modelsDraft.providers).map((p) => p.id));
+        for (let index = 1; index < 1000; index += 1) {
+          const candidate = `provider_${index}`;
+          if (!used.has(candidate)) return candidate;
+        }
+        return `provider_${Date.now()}`;
+      }
+      function parseModelNames(raw) {
+        const out = [];
+        for (const piece of String(raw).split(/[,\n]/)) {
+          const name = piece.trim();
+          if (name !== "" && out.indexOf(name) < 0) out.push(name);
+        }
+        return out;
+      }
+      function readProviderForm() {
+        const name = $("modelsName") === null ? "" : $("modelsName").value.trim();
+        const baseUrl = $("modelsBaseUrl") === null ? "" : $("modelsBaseUrl").value.trim();
+        const apiKey = $("modelsApiKey") === null ? "" : $("modelsApiKey").value;
+        const names = parseModelNames($("modelsModelNames") === null ? "" : $("modelsModelNames").value);
+        if (name === "" || baseUrl === "") return { error: "请填写显示名称与 Base URL" };
+        if (names.length === 0) return { error: "至少填写一个模型名" };
+        return { value: { name, baseUrl, apiKey, models: names } };
+      }
+      function saveProviderDraft() {
+        if (modelsDraft === null) return;
+        const form = readProviderForm();
+        if (form.error !== undefined) {
+          modelsStatus = { tone: "bad", text: form.error };
+          renderModels(false);
+          return;
+        }
+        const existing = modelsEditingId;
+        if (existing === null) {
+          modelsDraft.providers.push({ id: nextProviderId(), ...form.value });
+          modelsStatus = { tone: "ok", text: `已添加提供商「${form.value.name}」，别忘了点『保存配置』。` };
+        } else {
+          modelsDraft.providers = modelsDraft.providers.map((p) =>
+            p.id === existing ? { id: existing, ...form.value } : p,
+          );
+          // Editing the model list can orphan a default; move it to something
+          // that still exists so the save is not refused for a stale choice.
+          const stillThere = (pid, model) => {
+            const provider = providerById(pid);
+            return provider !== null && provider.models.indexOf(model) >= 0;
+          };
+          if (!stillThere(modelsDraft.defaultAgentProviderId, modelsDraft.defaultAgentModel)) {
+            const first = allPairs()[0];
+            if (first !== undefined) {
+              modelsDraft.defaultAgentProviderId = first.providerId;
+              modelsDraft.defaultAgentModel = first.model;
+            }
+          }
+          if (!stillThere(modelsDraft.defaultMemoryProviderId, modelsDraft.defaultMemoryModel)) {
+            const first = allPairs()[0];
+            if (first !== undefined) {
+              modelsDraft.defaultMemoryProviderId = first.providerId;
+              modelsDraft.defaultMemoryModel = first.model;
+            }
+          }
+          modelsStatus = { tone: "ok", text: `已修改提供商「${form.value.name}」，别忘了点『保存配置』。` };
+        }
+        modelsEditingId = null;
+        renderModels(true);
+      }
+      async function saveModels() {
+        if (modelsDraft === null) {
+          await loadModelsConfig();
+          return;
+        }
+        const agentPair = $("modelsDefaultAgent") === null ? "" : $("modelsDefaultAgent").value;
+        const memoryPair = $("modelsDefaultMemory") === null ? "" : $("modelsDefaultMemory").value;
+        const split = (pair) => {
+          const at = pair.indexOf("|");
+          return at < 0 ? null : { providerId: pair.slice(0, at), model: pair.slice(at + 1) };
+        };
+        const agent = split(agentPair);
+        const memory = split(memoryPair);
+        if (agent === null || memory === null) {
+          modelsStatus = { tone: "bad", text: "请选择默认 Agent 模型与默认 Memory 模型" };
+          renderModels(false);
+          return;
+        }
+        const payload = {
+          providers: modelsDraft.providers,
+          defaultAgentProviderId: agent.providerId,
+          defaultAgentModel: agent.model,
+          defaultMemoryProviderId: memory.providerId,
+          defaultMemoryModel: memory.model,
+        };
+        try {
+          applyModelsView((await post("/api/models/config", payload)).models || {});
+          modelsStatus = { tone: "ok", text: "模型配置已保存，配置文件已写回。" };
+          renderModels(true);
+          await refresh();
+        } catch (error) {
+          // The server refused the patch and changed nothing; the operator's
+          // draft stays on screen next to the reason it was refused.
+          modelsStatus = { tone: "bad", text: error instanceof Error ? error.message : String(error) };
+          renderModels(false);
+        }
       }
 
       // ------------------------------------------- sandbox policy panel
@@ -3312,7 +3866,7 @@
           `</div>` +
           `<div class="mod-body">` +
           `<div class="metric-grid cols-4">` +
-          metric("MEMORY 上限", esc(String(config.memoryCapChars)), "字", "超过这个长度，记忆整合会拒绝写入。") +
+          metric("MEMORY 上限", esc(String(config.memoryCapChars)), "字", "记忆的目标体积。超过它时本轮照写，只在黑匣子里记一条警告。") +
           metric("一轮上下文上限", esc(String(config.roundContextCapTokens)), "token", "超过就截断并结束这一轮。") +
           metric("槽位上限", esc(String(config.maxSlots)), "个", `账本里现有 ${state.agents.length} 个 Agent。`) +
           metric("任务认领超时", esc(String(config.taskClaimTimeoutHours)), "小时", "超时自动把任务送回任务板。") +
@@ -3380,28 +3934,28 @@
       function resetAgentPanes() {
         // Nothing of the previous agent may stay on screen while the new agent's
         // data is still in flight.
-        for (const id of ["memoryText", "memRecords", "memCompare", "nbFiles", "roundList", "roundDetail", "bodyPane", "agentTasks", "agentInt", "chatList", "woundList", "woundDetail"]) {
+        for (const id of ["memoryText", "memRecords", "memCompare", "sessionList", "lifeTranscript", "bodyPane", "agentTasks", "agentInt", "chatList"]) {
           const node = $(id);
           node.innerHTML = "";
           node.dataset.key = "";
         }
         $("memStats").textContent = "";
-        $("nbContent").textContent = "";
-        woundSel = null;
+        $("woundPop").hidden = true;
+        $("woundPop").innerHTML = "";
+        // Both panes are already inside the dialog that is opening, so only the
+        // life pane needs its two levels put back to the list.
+        paintLifeLevels();
       }
       function paintPanes() {
         if (dlgAgent === null) return;
         if (dlgTab === "life") {
-          paintRoundList();
-          paintRoundDetail();
+          paintLifeLevels();
+          paintSessionList();
+          paintTranscript();
         } else if (dlgTab === "body") {
           paintBody();
-        } else if (dlgTab === "wounds") {
-          paintWounds();
         } else if (dlgTab === "memory") {
           paintMemory();
-        } else if (dlgTab === "notebook") {
-          paintNotebook();
         } else if (dlgTab === "messages") {
           paintChat();
         } else if (dlgTab === "tasks") {
@@ -3412,6 +3966,10 @@
       }
 
       // ------------------------------------------------------- life tab
+      // One "session" is one wake-up: the harness builds a context, the model
+      // thinks, calls tools, and ends the session with a reply. Internally the
+      // ledger numbers these rounds, but the operator reads them as sessions
+      // and never sees the round number.
       function roundStartAt(round) {
         const start = round.entries.filter((entry) => entry.kind === "round_start").pop();
         if (start !== undefined) return start.at;
@@ -3420,36 +3978,346 @@
       function roundEndEntry(round) {
         return round.entries.filter((entry) => entry.kind === "round_end").pop() || null;
       }
-      function paintRoundList() {
-        const host = $("roundList");
+      const roundContextEntry = (round) => round.entries.filter((entry) => entry.kind === "context").pop() || null;
+      function roundUsage(round, source) {
+        const list = round.entries.filter((entry) => entry.kind === "usage" && entry.source === source);
+        return {
+          count: list.length,
+          missing: round.entries.filter((entry) => entry.kind === "usage_missing" && entry.source === source).length,
+          prompt: list.reduce((sum, entry) => sum + (typeof entry.promptTokens === "number" ? entry.promptTokens : 0), 0),
+          completion: list.reduce(
+            (sum, entry) => sum + (typeof entry.completionTokens === "number" ? entry.completionTokens : 0),
+            0,
+          ),
+        };
+      }
+      /** The session's own token spend: the agent model, not the memory model. */
+      function roundTokens(round) {
+        const agent = roundUsage(round, "agent");
+        const memory = roundUsage(round, "memory");
+        return {
+          prompt: agent.prompt + memory.prompt,
+          completion: agent.completion + memory.completion,
+          total: agent.prompt + agent.completion + memory.prompt + memory.completion,
+          missing: agent.missing + memory.missing,
+        };
+      }
+      function sessionStatus(round) {
+        const end = roundEndEntry(round);
+        if (end === null) {
+          return { cls: "tag ok", text: "进行中", reason: null };
+        }
+        const reason = end.endReason;
+        return {
+          cls: reason === "final" ? "tag ok" : reason === "model_error" ? "tag bad" : "tag warn",
+          text: END_REASON[reason] || reason || "已结束",
+          reason,
+        };
+      }
+      /** The reply that closes a session, or the best lead available. */
+      function sessionReply(round) {
+        const end = roundEndEntry(round);
+        if (end !== null && typeof end.finalReply === "string" && end.finalReply.trim() !== "") {
+          return { text: end.finalReply, partial: false };
+        }
+        const said = round.entries
+          .filter((entry) => entry.kind === "assistant_message")
+          .map((entry) => (entry.message === null || entry.message === undefined ? null : entry.message.content))
+          .filter((content) => typeof content === "string" && content.trim() !== "");
+        if (said.length > 0) {
+          return { text: said[said.length - 1], partial: true };
+        }
+        return { text: "", partial: true };
+      }
+      function paintLifeLevels() {
+        const list = $("lifeSessions");
+        const transcript = $("lifeTranscript");
+        const open = sessionSel !== null;
+        list.classList.toggle("active", !open);
+        transcript.classList.toggle("active", open);
+      }
+      function paintSessionList() {
+        const host = $("sessionList");
         for (const button of document.querySelectorAll('[data-act="life-range"]')) {
           button.classList.toggle("active", Number(button.dataset.range) === lifeRange);
         }
-        const rounds = roundCache.rounds;
-        const key = `${roundCache.agent}|${roundCache.range}|` + rounds.map((r) => `${r.round}:${r.entries.length}`).join(",");
+        const rounds = sessionCache.rounds;
+        const key =
+          `${sessionCache.agent}|${sessionCache.range}|` + rounds.map((r) => `${r.round}:${r.entries.length}`).join(",");
         if (host.dataset.key === key) return;
         host.dataset.key = key;
+        if (rounds.length === 0) {
+          repaint(host, '<div class="empty small">还没有会话记录。</div>');
+          return;
+        }
         repaint(
           host,
-          rounds.length === 0
-            ? '<div class="empty small">还没有黑匣子记录。</div>'
-            : rounds
-                .slice()
-                .reverse()
-                .map((round) => {
-                  const start = roundStartAt(round);
-                  const end = roundEndEntry(round);
-                  const reason = end === null ? null : end.endReason;
-                  const label = end === null ? '<span class="tag ok">进行中</span>' : `<span class="${reason === "final" ? "tag ok" : reason === "model_error" ? "tag bad" : "tag warn"}">${esc(END_REASON[reason] || reason)}</span>`;
-                  const duration = end === null ? "进行中" : durText(end.at - (start === null ? end.at : start));
-                  return `
-                    <div class="round-item ${round.round === roundSel ? "active" : ""}" data-act="round-select" data-round="${round.round}">
-                      <div class="r1"><strong>第 ${round.round} 轮</strong><span class="grow"></span>${label}</div>
-                      <div class="sub small muted">${timeHtml(start)} · 时长 ${esc(duration)}</div>
-                    </div>`;
-                })
-                .join(""),
+          '<div class="session-grid">' +
+            rounds
+              .slice()
+              .reverse()
+              .map((round) => {
+                const start = roundStartAt(round);
+                const end = roundEndEntry(round);
+                const status = sessionStatus(round);
+                const tokens = roundTokens(round);
+                const calls = round.entries.filter((entry) => entry.kind === "tool_call").length;
+                const reply = sessionReply(round);
+                const duration = end === null ? "进行中" : durText(end.at - (start === null ? end.at : start));
+                const summary = firstLines(reply.text, 6);
+                return `
+                  <div class="session-card" data-act="session-open" data-round="${round.round}">
+                    <div class="s-head">
+                      <span class="s-no">会话 #${round.round}</span>
+                      <span class="grow"></span>
+                      <span class="${status.cls}">${esc(status.text)}</span>
+                    </div>
+                    <div class="s-sub">触发 ${timeHtml(start)} · 用时 ${esc(duration)}</div>
+                    <div class="s-metrics">
+                      <span class="s-metric"><b>${calls}</b>次工具调用</span>
+                      <span class="s-metric">Token <b>${esc(num(tokens.prompt, 0))}</b>/<b>${esc(num(tokens.completion, 0))}</b></span>
+                    </div>
+                    ${
+                      summary === ""
+                        ? '<div class="s-summary void">这次会话没有留下回复。</div>'
+                        : `<div class="s-summary">${esc(summary)}${reply.partial ? "…" : ""}</div>`
+                    }
+                  </div>`;
+              })
+              .join("") +
+            "</div>",
         );
+      }
+      function toolTitle(entry) {
+        switch (entry.name) {
+          case "execute_command":
+            return "执行了命令";
+          case "get_status":
+            return "查看了身体状态";
+          case "eat":
+            return "购买了食物";
+          case "list_wounds":
+            return "查看了伤口";
+          case "treat":
+            return "治疗了伤口";
+          case "list_tasks":
+            return "查看了任务板";
+          case "claim_task":
+            return "认领了任务";
+          case "submit_task":
+            return "提交了任务";
+          case "report_income":
+            return "申报了收入";
+          case "message_operator":
+            return "给操作员留言";
+          case "message_agent":
+            return "给其他 Agent 留言";
+          case "list_agents":
+            return "查看了其它 Agent";
+          case "transfer_balance":
+            return "转移了余额";
+          case "notebook_list":
+            return "查看了记事本";
+          case "notebook_read":
+            return "读取了文件";
+          case "notebook_write":
+            return "写入了笔记";
+          default:
+            return "调用了工具";
+        }
+      }
+      /** "> 执行了命令 [execute_command]" — what happened, then what did it. */
+      function toolSummaryHtml(entry) {
+        return `<strong>${esc(toolTitle(entry))}</strong> <code>${esc(entry.name)}</code>`;
+      }
+      function transcriptHtml(round) {
+        const entries = round.entries;
+        const start = roundStartAt(round);
+        const end = roundEndEntry(round);
+        const status = sessionStatus(round);
+        const duration = end === null ? "进行中" : durText(end.at - (start === null ? end.at : start));
+        const parts = [];
+        parts.push(
+          `<div class="t-top">` +
+            `<button class="btn tiny" data-act="life-back">← 返回会话列表</button>` +
+            `<strong style="font-size: 14px">会话 #${round.round}</strong>` +
+            `<span class="${status.cls}">${esc(status.text)}</span>` +
+            `<span class="small muted">触发 ${timeHtml(start)} · 用时 ${esc(duration)}</span>` +
+            `</div>`,
+        );
+        if (end !== null && end.error) {
+          parts.push(`<div class="banner danger">${esc(end.error)}</div>`);
+        }
+
+        // What the harness injected before the model said anything. Folded by
+        // default: it is the same manual every session, and the operator looks
+        // at it once.
+        const context = roundContextEntry(round);
+        if (context !== null) {
+          parts.push(
+            `<details class="t-context"><summary>醒来时注入的背景（System 手册与 User 上下文）</summary>` +
+              `<div class="small muted">system（身体手册）</div>` +
+              `<pre class="mono">${esc(context.system)}</pre>` +
+              `<div class="small muted" style="margin-top: 6px">user（MEMORY、身体状态、任务板、留言）</div>` +
+              `<pre class="mono">${esc(context.user)}</pre>` +
+              `</details>`,
+          );
+        }
+
+        // The flow itself: thinking, tool calls and their results, in the order
+        // the harness recorded them. Results are paired to their call by id, so
+        // a result immediately follows the call that produced it.
+        const results = new Map();
+        for (const entry of entries) {
+          if (entry.kind === "tool_result") results.set(entry.callId, entry);
+        }
+        const flow = [];
+        for (const entry of entries) {
+          if (entry.kind === "assistant_message") {
+            const content = entry.message === undefined || entry.message === null ? null : entry.message.content;
+            if (typeof content === "string" && content.trim() !== "") {
+              flow.push(
+                `<div class="t-turn"><div class="t-think"><span class="who">Agent 思考 · ${esc(
+                  relTime(entry.at),
+                )}</span>${esc(content)}</div></div>`,
+              );
+            }
+            continue;
+          }
+          if (entry.kind === "tool_call") {
+            const result = results.get(entry.callId) || null;
+            let failed = result !== null && result.isError === true;
+            if (!failed && result !== null) {
+              try {
+                const parsed = JSON.parse(result.content);
+                failed = parsed !== null && typeof parsed === "object" && parsed.ok === false;
+              } catch (error) {
+                failed = false;
+              }
+            }
+            const args = String(entry.argumentsJson === undefined ? "" : entry.argumentsJson);
+            const callLine = args === "" || args === "{}" ? "" : `<span class="t-anchor">${esc(args)}</span>`;
+            flow.push(
+              `<div class="t-turn">` +
+                `<details class="tool-item ${failed ? "bad" : ""}">` +
+                `<summary>${toolSummaryHtml(entry)}<span class="tool-sum">${esc(
+                  summarizeTool(result),
+                )}</span></summary>` +
+                (callLine === "" ? "" : `<div class="small muted">参数</div><pre class="mono">${esc(args)}</pre>`) +
+                `<div class="small muted" style="margin-top: 6px">执行结果</div>` +
+                `<pre class="mono">${esc(result === null ? "（没有结果）" : result.content)}</pre>` +
+                `</details>` +
+                `</div>`,
+            );
+            continue;
+          }
+        }
+        if (flow.length > 0) {
+          parts.push(`<div class="t-flow">${flow.join("")}</div>`);
+        } else {
+          parts.push('<div class="empty small">这次会话没有思考或工具调用的记录。</div>');
+        }
+
+        // The conclusion, in the same card the old detail view used.
+        const reply = sessionReply(round);
+        if (reply.text !== "") {
+          parts.push(
+            `<div class="final"><div class="label">${reply.partial ? "最后一句话（会话未正常收尾）" : "最终回复"}</div>` +
+              `<pre>${esc(reply.text)}</pre></div>`,
+          );
+        }
+
+        // Everything below is bookkeeping: folded, and never in the reading path.
+        const tokens = roundTokens(round);
+        const agentUsage = roundUsage(round, "agent");
+        const memoryUsage = roundUsage(round, "memory");
+        parts.push(
+          `<details><summary>本次会话的 Token 消耗</summary>` +
+            `<div class="kv"><span class="k">agent 模型</span><span class="num">提示 ${esc(
+              num(agentUsage.prompt, 0),
+            )} · 生成 ${esc(num(agentUsage.completion, 0))}（${agentUsage.count} 次调用）</span></div>` +
+            `<div class="kv"><span class="k">memory 模型</span><span class="num">提示 ${esc(
+              num(memoryUsage.prompt, 0),
+            )} · 生成 ${esc(num(memoryUsage.completion, 0))}（${memoryUsage.count} 次调用）</span></div>` +
+            `<div class="kv"><span class="k">合计</span><span class="num">提示 ${esc(num(tokens.prompt, 0))} · 生成 ${esc(
+              num(tokens.completion, 0),
+            )}</span></div>` +
+            (tokens.missing > 0
+              ? `<div class="small" style="color: var(--danger)">有 ${tokens.missing} 次调用没有报告用量（记 0）</div>`
+              : "") +
+            `</details>`,
+        );
+
+        const memoryNew = entries.filter((entry) => entry.kind === "memory_new").pop();
+        const memoryRejected = entries.filter((entry) => entry.kind === "memory_rejected").pop();
+        const memoryError = entries.filter((entry) => entry.kind === "memory_error").pop();
+        let memoryHtml;
+        if (memoryNew !== undefined) {
+          memoryHtml = `<div class="small" style="color: var(--accent)">这次会话结束后记忆已更新</div><pre class="mono">${esc(
+            memoryNew.text,
+          )}</pre>`;
+        } else if (memoryRejected !== undefined) {
+          memoryHtml = `<div class="small" style="color: var(--danger)">记忆整合被拒绝：${esc(
+            memoryRejected.reason,
+          )}（MEMORY 保持不变）</div>`;
+        } else if (memoryError !== undefined) {
+          memoryHtml = `<div class="small" style="color: var(--danger)">记忆模型出错：${esc(memoryError.message)}</div>`;
+        } else {
+          memoryHtml = '<div class="small muted">这次会话没有记忆整合记录。</div>';
+        }
+        parts.push(`<details><summary>本次会话的记忆整合结果</summary>${memoryHtml}</details>`);
+
+        const events = entries.filter((entry) =>
+          [
+            "meal",
+            "meal_refused",
+            "task_claimed",
+            "task_submitted",
+            "income_reported",
+            "message_to_operator",
+            "worker_log",
+            "worker_note",
+            "claim_expired",
+            "worker_problem",
+          ].indexOf(entry.kind) >= 0,
+        );
+        if (events.length > 0) {
+          parts.push(
+            `<details><summary>本次会话的其它事件（${events.length}）</summary>${events
+              .map(
+                (entry) =>
+                  `<div class="event-line">${timeHtml(entry.at)} · ${esc(EVENT_LABEL[entry.kind] || entry.kind)}${
+                    eventDetail(entry) === "" ? "" : " · " + esc(eventDetail(entry))
+                  }</div>`,
+              )
+              .join("")}</details>`,
+          );
+        }
+        parts.push(
+          `<details><summary>原始黑匣子记录（${entries.length} 条）</summary><pre class="mono">${esc(
+            entries.map((entry) => JSON.stringify(entry)).join("\n"),
+          )}</pre></details>`,
+        );
+        return parts.join("");
+      }
+      function paintTranscript() {
+        const host = $("lifeTranscript");
+        const round = sessionCache.rounds.find((item) => item.round === sessionSel) || null;
+        if (round === null) {
+          if (host.dataset.key !== "none") {
+            host.dataset.key = "none";
+            repaint(host, '<div class="empty small">从列表里打开一次会话，看它的完整过程。</div>');
+          }
+          return;
+        }
+        const last = round.entries.length > 0 ? round.entries[round.entries.length - 1] : null;
+        const key = `${round.round}|${round.entries.length}|${last === null ? 0 : last.at}`;
+        if (host.dataset.key === key) return;
+        host.dataset.key = key;
+        // `repaint` keeps the scroll position, which is what a session still
+        // being written wants. Opening a different session is handled by the
+        // action, which puts the view back at the top on purpose.
+        repaint(host, transcriptHtml(round));
       }
       function summarizeTool(result) {
         if (result === null) return "没有工具结果";
@@ -3503,155 +4371,69 @@
             return JSON.stringify(entry);
         }
       }
-      function roundDetailHtml(round) {
-        const entries = round.entries;
-        const start = roundStartAt(round);
-        const end = roundEndEntry(round);
-        const results = new Map();
-        for (const entry of entries) {
-          if (entry.kind === "tool_result") results.set(entry.callId, entry);
-        }
-        const parts = [];
-        parts.push(
-          `<div class="row"><strong style="font-size: 15px">第 ${round.round} 轮</strong>${
-            end === null
-              ? '<span class="tag ok">进行中</span>'
-              : `<span class="${end.endReason === "final" ? "tag ok" : end.endReason === "model_error" ? "tag bad" : "tag warn"}">${esc(END_REASON[end.endReason] || end.endReason)}</span>`
-          }<span class="small muted">开始 ${timeHtml(start)} · 结束 ${timeHtml(end === null ? null : end.at)} · 时长 ${esc(end === null ? "—" : durText(end.at - (start === null ? end.at : start)))}</span></div>`,
-        );
-        if (end !== null && end.error) {
-          parts.push(`<div class="banner danger">${esc(end.error)}</div>`);
-        }
-        for (const entry of entries) {
-          if (entry.kind === "assistant_message") {
-            const content = entry.message === undefined || entry.message === null ? null : entry.message.content;
-            if (typeof content === "string" && content.trim() !== "") {
-              parts.push(`<div><div class="say">${esc(content)}</div><div class="say meta">Agent · ${timeHtml(entry.at)}</div></div>`);
-            }
-            continue;
-          }
-          if (entry.kind === "tool_call") {
-            const result = results.get(entry.callId) || null;
-            let failed = result !== null && result.isError === true;
-            if (!failed && result !== null) {
-              try {
-                const parsed = JSON.parse(result.content);
-                failed = parsed !== null && typeof parsed === "object" && parsed.ok === false;
-              } catch (error) {
-                failed = false;
-              }
-            }
-            parts.push(`
-              <details class="tool-item ${failed ? "bad" : ""}">
-                <summary><strong>调用了 <code>${esc(entry.name)}</code></strong><span class="tool-sum">${esc(summarizeTool(result))}</span></summary>
-                <div class="small muted">参数</div>
-                <pre class="mono">${esc(entry.argumentsJson)}</pre>
-                <div class="small muted" style="margin-top: 6px">完整结果</div>
-                <pre class="mono">${esc(result === null ? "（没有结果）" : result.content)}</pre>
-              </details>`);
-            continue;
-          }
-          if (entry.kind === "round_end") {
-            const reply = entry.finalReply;
-            if (typeof reply === "string" && reply.trim() !== "") {
-              parts.push(`<div class="final"><div class="label">最终回复</div><pre>${esc(reply)}</pre></div>`);
-            }
-            continue;
-          }
-        }
-        const context = entries.filter((entry) => entry.kind === "context").pop();
-        if (context !== undefined) {
-          parts.push(`
-            <details>
-              <summary>本轮醒来时注入的上下文</summary>
-              <div class="small muted">system（身体手册）</div>
-              <pre class="mono">${esc(context.system)}</pre>
-              <div class="small muted" style="margin-top: 6px">user（MEMORY、身体状态、任务板、留言）</div>
-              <pre class="mono">${esc(context.user)}</pre>
-            </details>`);
-        }
-        const usageEntries = entries.filter((entry) => entry.kind === "usage");
-        const missing = entries.filter((entry) => entry.kind === "usage_missing");
-        const usageRow = (source) => {
-          const list = usageEntries.filter((entry) => entry.source === source);
-          if (list.length === 0) return `<div class="kv"><span class="k">${source === "agent" ? "agent 模型" : "memory 模型"}</span><span class="num">没有用量记录</span></div>`;
-          const prompt = list.reduce((sum, entry) => sum + (typeof entry.promptTokens === "number" ? entry.promptTokens : 0), 0);
-          const completion = list.reduce((sum, entry) => sum + (typeof entry.completionTokens === "number" ? entry.completionTokens : 0), 0);
-          return `<div class="kv"><span class="k">${source === "agent" ? "agent 模型" : "memory 模型"}</span><span class="num">提示 ${prompt} · 完成 ${completion}</span></div>`;
-        };
-        parts.push(`
-          <details>
-            <summary>token 用量</summary>
-            ${usageRow("agent")}
-            ${usageRow("memory")}
-            ${missing.length > 0 ? `<div class="small" style="color: var(--danger)">有 ${missing.length} 次用量缺失（记 0）</div>` : ""}
-          </details>`);
-        const memoryNew = entries.filter((entry) => entry.kind === "memory_new").pop();
-        const memoryRejected = entries.filter((entry) => entry.kind === "memory_rejected").pop();
-        const memoryError = entries.filter((entry) => entry.kind === "memory_error").pop();
-        const memoryMissing = entries.filter((entry) => entry.kind === "usage_missing" && entry.source === "memory").pop();
-        let memoryHtml;
-        if (memoryNew !== undefined) {
-          memoryHtml = `<div class="small" style="color: var(--accent)">本轮记忆已更新</div><pre class="mono">${esc(memoryNew.text)}</pre>`;
-        } else if (memoryRejected !== undefined) {
-          memoryHtml = `<div class="small" style="color: var(--danger)">记忆整合被拒绝：${esc(memoryRejected.reason)}（MEMORY 保持不变）</div>`;
-        } else if (memoryError !== undefined) {
-          memoryHtml = `<div class="small" style="color: var(--danger)">记忆模型出错：${esc(memoryError.message)}</div>`;
-        } else if (memoryMissing !== undefined) {
-          memoryHtml = '<div class="small" style="color: var(--danger)">记忆模型没有报告用量，这一轮没有折进 MEMORY。</div>';
-        } else {
-          memoryHtml = '<div class="small muted">这一轮没有记忆整合记录。</div>';
-        }
-        parts.push(`<details><summary>本轮记忆整合结果</summary>${memoryHtml}</details>`);
-        const events = entries.filter((entry) =>
-          [
-            "meal",
-            "meal_refused",
-            "task_claimed",
-            "task_submitted",
-            "income_reported",
-            "message_to_operator",
-            "worker_log",
-            "worker_note",
-            "claim_expired",
-            "worker_problem",
-          ].indexOf(entry.kind) >= 0,
-        );
-        if (events.length > 0) {
-          parts.push(
-            `<details><summary>本轮其它事件（${events.length}）</summary>${events
-              .map(
-                (entry) =>
-                  `<div class="event-line">${timeHtml(entry.at)} · ${esc(EVENT_LABEL[entry.kind] || entry.kind)}${eventDetail(entry) === "" ? "" : " · " + esc(eventDetail(entry))}</div>`,
-              )
-              .join("")}</details>`,
-          );
-        }
-        parts.push(
-          `<details><summary>原始黑匣子记录（${entries.length} 条）</summary><pre class="mono">${esc(
-            entries.map((entry) => JSON.stringify(entry)).join("\n"),
-          )}</pre></details>`,
-        );
-        return parts.join("");
-      }
-      function paintRoundDetail() {
-        const host = $("roundDetail");
-        const round = roundCache.rounds.find((item) => item.round === roundSel) || null;
-        if (round === null) {
-          if (host.dataset.key !== "none") {
-            host.dataset.key = "none";
-            repaint(host, '<div class="empty small">左边选一轮看过程。</div>');
-          }
-          return;
-        }
-        const last = round.entries.length > 0 ? round.entries[round.entries.length - 1] : null;
-        const key = `${round.round}|${round.entries.length}|${last === null ? 0 : last.at}`;
-        if (host.dataset.key === key) return;
-        host.dataset.key = key;
-        repaint(host, roundDetailHtml(round));
-      }
 
       // ----------------------------------------------------- body tab
+      // The agent's model, as a control rather than a readout. The selection is
+      // only a suggestion until 『保存模型』 is pressed, because changing it is
+      // an intervention: the ledger, the frozen binding and the live process
+      // all move together, and a busy agent defers it to the next wake-up.
+      function modelSwitchHtml(agent) {
+        const roster = modelsKey();
+        const notice =
+          modelSwitchNotice === null
+            ? ""
+            : `<div class="banner warn" style="margin-bottom: 8px">${esc(modelSwitchNotice)}` +
+              `<button class="btn tiny" data-act="model-switch-dismiss" style="margin-left: 8px">知道了</button></div>`;
+        if (roster === null || !Array.isArray(roster.providers) || roster.providers.length === 0) {
+          return (
+            notice +
+            `<div class="kv"><span class="k">模型</span><span class="mono small">${esc(agent.model)}</span></div>` +
+            `<div class="small muted">还没有配置任何提供商，请到左下角『系统设置 → 模型设置』里添加。</div>`
+          );
+        }
+        // Preselect the provider whose model list holds the agent's current
+        // model; fall back to the configured default when nothing matches.
+        let currentProvider = null;
+        for (const provider of roster.providers) {
+          if (Array.isArray(provider.models) && provider.models.indexOf(agent.model) >= 0) {
+            currentProvider = provider;
+            break;
+          }
+        }
+        if (currentProvider === null) {
+          currentProvider =
+            roster.providers.find((p) => p.id === roster.defaultAgentProviderId) || roster.providers[0];
+        }
+        const models = Array.isArray(currentProvider.models) ? currentProvider.models : [];
+        const selected = models.indexOf(agent.model) >= 0 ? agent.model : models[0];
+        const providerOptions = roster.providers
+          .map(
+            (provider) =>
+              `<option value="${esc(provider.id)}"${
+                provider.id === currentProvider.id ? " selected" : ""
+              }>${esc(provider.name)}</option>`,
+          )
+          .join("");
+        const modelOptions = models
+          .map(
+            (model) => `<option value="${esc(model)}"${model === selected ? " selected" : ""}>${esc(model)}</option>`,
+          )
+          .join("");
+        return (
+          notice +
+          `<div class="kv"><span class="k">模型</span><span class="mono small">${esc(agent.model)}</span></div>` +
+          `<div class="row">` +
+          `<select data-model-provider="true" data-agent="${esc(agent.name)}" aria-label="提供商">${providerOptions}</select>` +
+          `<select data-model-model="true" data-agent="${esc(agent.name)}" aria-label="模型">${modelOptions}</select>` +
+          `<button class="btn primary" data-act="model-switch" data-agent="${esc(agent.name)}" data-provider="${esc(
+            currentProvider.id,
+          )}" data-model="${esc(selected)}">保存模型</button>` +
+          `</div>` +
+          `<div class="small muted">保存后会记为一次操作员干预${
+            agent.busy ? "；它正在一轮中，新模型会在下一次唤醒时生效" : ""
+          }。</div>`
+        );
+      }
       function paintBody() {
         const agent = agentByName(dlgAgent);
         if (agent === null || state === null) return;
@@ -3678,7 +4460,7 @@
             <div class="kv"><span class="k">余额</span><span class="num">${esc(num(agent.balance))}</span></div>
             <div class="kv"><span class="k">当前余额够吃</span><span>${meals === null ? "—" : meals + " 顿（每顿 " + num(config.mealPrice) + "，恢复 " + num(config.satietyPerMeal) + "）"}</span></div>
             <div class="kv"><span class="k">出生时间</span><span>${timeHtml(agent.bornAt)}</span></div>
-            <div class="kv"><span class="k">模型</span><span class="mono small">${esc(agent.model)}</span></div>
+            ${modelSwitchHtml(agent)}
             <div class="kv"><span class="k">上次唤醒</span><span>${timeHtml(agent.lastWakeAt)}</span></div>
             <div class="kv"><span class="k">上次一轮结束</span><span>${timeHtml(agent.lastRoundAt)}${agent.lastRoundEndReason ? "（" + esc(END_REASON[agent.lastRoundEndReason] || agent.lastRoundEndReason) + "）" : ""}</span></div>
             <div class="kv"><span class="k">累计 token（agent）</span><span class="num">提示 ${tokens.agent.promptTokens} · 完成 ${tokens.agent.completionTokens}（${tokens.agent.records} 次）</span></div>
@@ -3706,78 +4488,37 @@
             <div class="row">
               <button class="btn danger" data-act="terminate" data-agent="${esc(agent.name)}">强制终止（死亡）</button>
             </div>
+            <div class="small muted" style="margin-top: 8px">完全删除比死亡更彻底：进程、账本记录、家目录与黑匣子全部抹除，之后这个名字可以重新使用，就像它从未存在过。账本里只留下一条「操作员完全删除」的干预记录。</div>
+            <div class="row">
+              <button class="btn danger" data-act="erase" data-agent="${esc(agent.name)}">完全删除（抹除存在痕迹）</button>
+            </div>
           </div>`,
         );
       }
 
-      // --------------------------------------------------- wounds tab
-      function woundListOf(agent) {
-        if (woundCache.agent === agent.name) return woundCache.wounds;
-        return Array.isArray(agent.wounds) ? agent.wounds : [];
-      }
-      function woundById(id) {
-        const agent = agentByName(dlgAgent);
-        if (agent === null) return null;
-        return woundListOf(agent).find((wound) => wound.id === id) || null;
-      }
-      function paintWounds() {
-        const agent = agentByName(dlgAgent);
-        if (agent === null) return;
-        const wounds = woundListOf(agent);
-        repaint(
-          $("woundList"),
-          wounds.length === 0
-            ? '<div class="empty small">这个 Agent 身上没有伤口。</div>'
-            : wounds
-                .map(
-                  (wound) => `
-                    <div class="list-item ${wound.id === woundSel ? "active" : ""}" data-act="wound-select" data-wound="${wound.id}">
-                      <div class="row"><span class="title grow">伤口 #${wound.id}</span>
-                        <span class="tag ${wound.status === "untreated" ? "bad" : wound.status === "scarred" ? "warn" : "ok"}">${esc(WOUND_STATUS[wound.status] || wound.status)}</span></div>
-                      <div class="sub">${wound.length} 个字符 · ${timeHtml(wound.createdAt)}</div>
-                    </div>`,
-                )
-                .join(""),
-        );
-        const wound = woundById(woundSel);
-        if (wound === null) {
-          $("woundDetail").innerHTML = '<div class="small muted">点左边一个伤口，看它的原文和当前可见文本。</div>';
-          return;
-        }
-        const treatable = wound.status !== "healed" && agent.status === "alive";
-        const busy = agent.busy === true;
-        $("woundDetail").innerHTML = `
+      // --------------------------------------------------- death certificate
+      // A dead agent is still erasable from here, including the odd case of a
+      // death with no certificate on file: erasure is the operator's way out of
+      // a grave that should not be there.
+      function eraseCardHtml(agent) {
+        return `
           <div class="card col-stack">
-            <div class="row"><strong>伤口 #${wound.id}</strong><span class="grow"></span><span class="tag ${wound.status === "untreated" ? "bad" : wound.status === "scarred" ? "warn" : "ok"}">${esc(WOUND_STATUS[wound.status] || wound.status)}</span></div>
-            <div class="small muted">当前 MEMORY 里的可见文本</div>
-            <pre class="mono">${esc(wound.sentence)}</pre>
-            <div class="small muted">被夺走的原文（只有操作员能看）</div>
-            <pre class="mono">${esc(wound.originalText)}</pre>
-            ${
-              treatable
-                ? `<div class="banner warn">操作员代为治疗不扣这个 Agent 的余额，但会永久记录为一次干预。</div>
-                   <div class="row">
-                     <button class="btn" data-act="op-treat" data-wound="${wound.id}" data-tier="ordinary" ${busy ? "disabled" : ""}>普通治疗（${esc(num(config.ordinaryTreatmentPrice))}）</button>
-                     <button class="btn primary" data-act="op-treat" data-wound="${wound.id}" data-tier="complete" ${busy ? "disabled" : ""}>完全治疗（${esc(num(config.completeTreatmentPrice))}）</button>
-                   </div>
-                   ${busy ? '<div class="small muted">该 Agent 正在一轮中，稍后再试。</div>' : ""}`
-                : agent.status === "dead"
-                  ? '<div class="banner danger">这个 Agent 已经死亡，不能治疗。</div>'
-                  : '<div class="small muted">这个伤口已经完全治愈，不留痕迹。</div>'
-            }
+            <div style="font-weight: 600">抹除</div>
+            <div class="small muted">这个 Agent 已经死了，但它仍然占着名字、留着文件夹。完全删除会把它彻底抹掉：账本里属于它的每一行、<span class="mono">AGENTS/${esc(agent.name)}/</span> 整个文件夹、以及黑匣子全部清空，之后这个名字可以重新使用。这个动作不可撤销。</div>
+            <div class="row">
+              <button class="btn danger" data-act="erase" data-agent="${esc(agent.name)}">完全删除（抹除存在痕迹）</button>
+            </div>
           </div>`;
       }
-
-      // --------------------------------------------------- death certificate
       function paintDeathCertificate(agent) {
         const death = agent.death || null;
         if (death === null) {
-          return '<div class="banner danger">这个 Agent 已经死亡，但账本里没有死亡证明。</div>';
+          return '<div class="banner danger">这个 Agent 已经死亡，但账本里没有死亡证明。</div>' + eraseCardHtml(agent);
         }
         const facts = death.facts || null;
         const cause = death.cause === "operator_termination" ? "操作员强制终止" : "饥饿遮盖累积到死亡线";
         if (facts === null) {
-          return `<div class="banner danger">死亡证明（原始 JSON）</div><pre class="mono">${esc(death.body)}</pre>`;
+          return `<div class="banner danger">死亡证明（原始 JSON）</div><pre class="mono">${esc(death.body)}</pre>` + eraseCardHtml(agent);
         }
         const actions = (facts.lastActions || [])
           .map((round) => {
@@ -3820,38 +4561,227 @@
           <div class="card col-stack">
             <div style="font-weight: 600">全部操作员干预记录</div>
             ${interventions === "" ? '<div class="small muted">没有任何干预。</div>' : interventions}
-          </div>`;
+          </div>
+          ${eraseCardHtml(agent)}`;
       }
 
       // --------------------------------------------------- memory tab
+      // MEMORY and the wounds are one page on purpose: a wound is a fact about
+      // a stretch of the text, so the operator reads the page and treats the
+      // hurt in the same place instead of hopping between two tabs.
+      function woundListOf(agent) {
+        return Array.isArray(agent.wounds) ? agent.wounds : [];
+      }
+      function woundById(id) {
+        const agent = agentByName(dlgAgent);
+        if (agent === null) return null;
+        return woundListOf(agent).find((wound) => wound.id === id) || null;
+      }
+      /**
+       * The exact characters a wound occupies in the visible MEMORY, as
+       * `renderSentence` builds them: untreated text is a run of placeholders,
+       * a scar frames each surviving character, and a healed wound shows its
+       * real text. Locating the rendered form is what lets the operator click
+       * the censor bar itself rather than a proxy row in another column.
+       */
+      function woundPattern(wound) {
+        const original = String(wound.originalText === undefined || wound.originalText === null ? "" : wound.originalText);
+        if (wound.status === "untreated") return "\u25AE".repeat(Math.max(0, wound.length));
+        if (wound.status === "scarred") {
+          // `renderSentence` emits one leading placeholder, then "(" + char +
+          // ")" + placeholder per surviving character, so the runs join up
+          // without a doubled bar between two neighbours.
+          return "\u25AE" + original.split("").map((character) => "(" + character + ")\u25AE").join("");
+        }
+        return original;
+      }
+      /**
+       * Every treatable wound placed at its offset in the visible MEMORY. The
+       * API returns wounds in id order, which is not necessarily their order in
+       * the text, so each one is matched to the earliest occurrence that no
+       * earlier match already claimed. A wound whose rendered form cannot be
+       * found is skipped rather than mis-anchored: a wrong offset would put a
+       * censor bar over text the agent can still read.
+       */
+      function locateWounds(text, wounds) {
+        const located = [];
+        const claimed = [];
+        for (const wound of wounds) {
+          if (wound.status === "healed") continue;
+          const pattern = woundPattern(wound);
+          if (pattern === "") continue;
+          let at = -1;
+          let from = 0;
+          while (from <= text.length) {
+            const found = text.indexOf(pattern, from);
+            if (found < 0) break;
+            const overlaps = claimed.some((range) => found < range.end && found + pattern.length > range.start);
+            if (!overlaps) {
+              at = found;
+              break;
+            }
+            from = found + 1;
+          }
+          if (at < 0) continue;
+          claimed.push({ start: at, end: at + pattern.length });
+          located.push({ start: at, end: at + pattern.length, wound });
+        }
+        return located.sort((left, right) => left.start - right.start);
+      }
+      /** Plain memory text: escaped, with any unclaimed placeholder run shown
+       *  as a bar the operator cannot treat (nothing backs it). */
+      const paintMemoryPlain = (raw) =>
+        esc(raw).replace(/\u25AE+/g, (run) => `<span class="redact">${run.length}</span>`);
+      /**
+       * One wound, in whichever perspective the page is in.
+       *
+       * Default is what the agent actually reads: an untreated wound is a bar
+       * over the lost characters, a scar is the placeholder frame with the
+       * surviving characters inside it. Revealed is the operator's alone: the
+       * characters that were taken are put back, marked as a place that was
+       * hurt rather than as ordinary prose.
+       */
+      function woundHtml(wound, reveal) {
+        const label = WOUND_STATUS[wound.status] || wound.status;
+        const title = `${label} · ${wound.length} 个字符 · 产生于 ${fullTime(wound.createdAt)} · 点击可治疗`;
+        const original = String(wound.originalText === undefined || wound.originalText === null ? "" : wound.originalText);
+        if (reveal) {
+          const cls = wound.status === "untreated" ? "truetext" : "scar";
+          return `<span class="${cls}" role="button" tabindex="0" title="${esc(title)}" data-act="wound-open" data-wound="${wound.id}">${esc(original)}</span>`;
+        }
+        if (wound.status === "untreated") {
+          return `<button type="button" class="redact" title="${esc(title)}" data-act="wound-open" data-wound="${wound.id}">${wound.length}</button>`;
+        }
+        return `<span class="scar" role="button" tabindex="0" title="${esc(title)}" data-act="wound-open" data-wound="${wound.id}">${esc(woundPattern(wound))}</span>`;
+      }
+      /**
+       * One line of MEMORY, with each wound that starts inside it swapped for
+       * its rendering. Overlapping or line-crossing matches are skipped: the
+       * worst case is that the text is shown plainly, never that a bar lands on
+       * the wrong characters.
+       */
+      function memoryLineHtml(text, lineStart, lineEnd, edits, reveal) {
+        let html = "";
+        let cursor = lineStart;
+        for (const edit of edits) {
+          if (edit.start < lineStart || edit.start >= lineEnd || edit.end > lineEnd || edit.start < cursor) continue;
+          html += paintMemoryPlain(text.slice(cursor, edit.start));
+          html += woundHtml(edit.wound, reveal);
+          cursor = edit.end;
+        }
+        html += paintMemoryPlain(text.slice(cursor, lineEnd));
+        return html;
+      }
       function paintMemory() {
         const host = $("memoryText");
         if (memCache.agent !== dlgAgent) return;
+        const agent = agentByName(dlgAgent);
         const cap = state === null ? 0 : state.config.memoryCapChars;
         const text = memCache.memory;
         const over = text.length > cap;
+        const wounds = agent === null ? [] : woundListOf(agent);
+        const untreated = wounds.filter((wound) => wound.status === "untreated");
+        const scarred = wounds.filter((wound) => wound.status === "scarred");
+        // The status bar answers the two questions this page exists to answer:
+        // is the text about to overflow, and what does the body still carry.
         $("memStats").innerHTML =
           `<span class="pill ${over ? "bad" : "ok"}">当前 ${text.length} 字 / 上限 ${cap} 字</span>` +
-          (over ? '<span class="pill bad">已超出上限</span>' : "");
-        const lines = text === "" ? ["（MEMORY 为空）"] : text.replace(/\r\n/g, "\n").split("\n");
-        // Runs of the redaction placeholder are the visible scar: the operator
-        // is the only one who may see the original, but the report should make
-        // the missing text unmistakable rather than let it disappear into the
-        // monospace. Bracketing preserves the length, so nothing is fabricated.
-        const paintRedactions = (line) =>
-          esc(line).replace(/\u25AE+/g, (run) => `<span class="redact">${run.length}</span>`);
-        repaint(
-          host,
-          lines
-            .map((line, index) =>
-              index < 2
-                ? `<div class="mem-line mem-born">${paintRedactions(line)}${index === 0 ? '<span class="hint">出生记录</span>' : ""}</div>`
-                : `<div class="mem-line">${paintRedactions(line)}</div>`,
-            )
-            .join(""),
-        );
+          (over ? '<span class="pill bad">已超出上限</span>' : "") +
+          `<span class="pill ${untreated.length > 0 ? "bad" : "ok"}">未治疗伤口 ${untreated.length} 处</span>` +
+          `<span class="pill ${scarred.length > 0 ? "warn" : "info"}">疤痕 ${scarred.length} 处</span>`;
+        const toggle = $("memReveal");
+        toggle.textContent = memReveal ? "恢复遮盖视角" : "透视完整原文";
+        toggle.classList.toggle("primary", memReveal);
+        toggle.classList.toggle("active", memReveal);
+        toggle.title = memReveal ? "切回 Agent 看到的遮盖视图" : "以操作员视角还原被夺走的文字";
+        // The popover belongs to a wound on this page; a healed or vanished one
+        // closes it rather than leaving a card pointing at nothing.
+        if (woundPop !== null && !wounds.some((wound) => wound.id === woundPop && wound.status !== "healed")) {
+          woundPop = null;
+        }
+
+        const normalized = text.replace(/\r\n/g, "\n");
+        const edits = locateWounds(normalized, wounds);
+        const key =
+          `${memCache.agent}|${memReveal ? 1 : 0}|${text.length}|${text.slice(0, 400)}|` +
+          wounds.map((wound) => `${wound.id}:${wound.status}`).join(",");
+        if (host.dataset.key !== key) {
+          host.dataset.key = key;
+          if (normalized === "") {
+            repaint(host, '<div class="mem-line">（MEMORY 为空）</div>');
+          } else {
+            let start = 0;
+            // `start` walks the normalised text so every line knows its own
+            // character range, which is what places a wound inside it.
+            const lines = normalized.split("\n");
+            repaint(
+              host,
+              lines
+                .map((line, index) => {
+                  const lineStart = start;
+                  const lineEnd = start + line.length;
+                  start = lineEnd + 1;
+                  const body = memoryLineHtml(normalized, lineStart, lineEnd, edits, memReveal);
+                  return index < 2
+                    ? `<div class="mem-line mem-born">${body}${index === 0 ? '<span class="hint">出生记录</span>' : ""}</div>`
+                    : `<div class="mem-line">${body}</div>`;
+                })
+                .join(""),
+            );
+          }
+        }
+        paintWoundPop();
         paintMemRecords();
         paintMemCompare();
+      }
+      /** The in-place treatment card for the wound the operator clicked. */
+      function paintWoundPop() {
+        const host = $("woundPop");
+        const agent = agentByName(dlgAgent);
+        const wound = woundPop === null || agent === null ? null : woundById(woundPop);
+        if (wound === null || wound.status === "healed") {
+          host.hidden = true;
+          host.innerHTML = "";
+          host.dataset.key = "";
+          return;
+        }
+        const config = state === null ? null : state.config;
+        const treatable = agent.status === "alive" && agent.busy !== true;
+        const busy = agent.busy === true;
+        const statusClass =
+          wound.status === "untreated" ? "bad" : wound.status === "scarred" ? "warn" : "ok";
+        // The poll repaints this card every three seconds; rebuilding it under
+        // the operator's cursor would swallow the click on a treatment button.
+        const key = `${agent.name}|${wound.id}|${wound.status}|${treatable ? 1 : 0}|${config === null ? "" : config.ordinaryTreatmentPrice + ":" + config.completeTreatmentPrice}`;
+        if (host.dataset.key === key) {
+          host.hidden = false;
+          return;
+        }
+        host.dataset.key = key;
+        host.hidden = false;
+        host.innerHTML =
+          `<div class="wp-head">` +
+            `<strong>伤口 #${wound.id}</strong>` +
+            `<span class="tag ${statusClass}">${esc(WOUND_STATUS[wound.status] || wound.status)}</span>` +
+            `<span class="wp-k">${wound.length} 个字符 · 产生于 ${timeHtml(wound.createdAt)}</span>` +
+            `<span class="grow"></span>` +
+            `<button class="btn tiny" data-act="wound-close">关闭</button>` +
+          `</div>` +
+          `<div class="wp-k">被夺走的原文（只有操作员能看，Agent 看不到）</div>` +
+          `<pre class="mono">${esc(String(wound.originalText === undefined ? "" : wound.originalText))}</pre>` +
+          (treatable
+            ? `<div class="row">` +
+                `<button class="btn tiny primary" data-act="wound-treat" data-wound="${wound.id}" data-tier="ordinary">普通治疗（留疤，价格 ${esc(
+                  num(config === null ? 0 : config.ordinaryTreatmentPrice),
+                )}）</button>` +
+                `<button class="btn tiny" data-act="wound-treat" data-wound="${wound.id}" data-tier="complete">完全治疗（无痕，价格 ${esc(
+                  num(config === null ? 0 : config.completeTreatmentPrice),
+                )}）</button>` +
+              `</div>` +
+              `<div class="small muted">操作员代为治疗不扣这个 Agent 的余额，但会永久记录为一次干预。</div>`
+            : agent.status !== "alive"
+              ? '<div class="banner danger">这个 Agent 已经死亡，不能治疗。</div>'
+              : `<div class="small muted">${busy ? "它正在一次会话中，结束之后才能治疗。" : "现在不能治疗。"}</div>`);
       }
       function paintMemRecords() {
         const host = $("memRecords");
@@ -3865,7 +4795,7 @@
                   (record) => `
                     <div class="list-item ${memSel !== null && memSel.round === record.round && memSel.kind === record.entry.kind ? "active" : ""}"
                          data-act="mem-record" data-round="${record.round}" data-kind="${esc(record.entry.kind)}">
-                      <div class="row"><span class="title grow">${esc(MEM_KIND[record.entry.kind] || record.entry.kind)}</span><span class="tag">第 ${record.round} 轮</span></div>
+                      <div class="row"><span class="title grow">${esc(MEM_KIND[record.entry.kind] || record.entry.kind)}</span><span class="tag">会话 #${record.round}</span></div>
                       <div class="sub">${timeHtml(record.entry.at)}${record.entry.reason ? " · " + esc(record.entry.reason) : ""}</div>
                     </div>`,
                 )
@@ -3875,7 +4805,7 @@
       function paintMemCompare() {
         const host = $("memCompare");
         if (memSel === null) {
-          host.innerHTML = '<div class="small muted">点左边的记录，看那一次的新旧版本。</div>';
+          host.innerHTML = '<div class="small muted">点上面的记录，看那一次的新旧版本。</div>';
           return;
         }
         const record = memCache.records.find((item) => item.round === memSel.round && item.entry.kind === memSel.kind) || null;
@@ -3895,40 +4825,15 @@
               : null;
         host.innerHTML = `
           <div class="card col-stack">
-            <div class="row"><strong>第 ${record.round} 轮 · ${esc(MEM_KIND[record.entry.kind] || record.entry.kind)}</strong><span class="small muted">${timeHtml(record.entry.at)}</span></div>
+            <div class="row"><strong>会话 #${record.round} · ${esc(MEM_KIND[record.entry.kind] || record.entry.kind)}</strong><span class="small muted">${timeHtml(record.entry.at)}</span></div>
             ${record.entry.reason ? `<div class="banner warn">拒绝原因：${esc(record.entry.reason)}</div>` : ""}
             ${record.entry.message ? `<div class="banner danger">${esc(record.entry.message)}</div>` : ""}
             ${record.entry.source === "memory" && record.entry.kind === "usage_missing" ? '<div class="banner danger">记忆模型没有报告用量，MEMORY 未改变。</div>' : ""}
-            <div class="small muted">旧版本（这一轮开始前）</div>
+            <div class="small muted">旧版本（这次会话开始前）</div>
             <pre class="mono">${esc(before)}</pre>
             <div class="small muted">新版本${after === null ? "（没有写出新版本，MEMORY 保持不变）" : ""}</div>
             <pre class="mono">${esc(after === null ? "—" : after)}</pre>
           </div>`;
-      }
-
-      // ------------------------------------------------- notebook tab
-      function paintNotebook() {
-        if (nbCache.agent !== dlgAgent) return;
-        const host = $("nbFiles");
-        repaint(
-          host,
-          nbCache.files.length === 0
-            ? '<div class="empty small">记事本还是空的。</div>'
-            : nbCache.files
-                .map(
-                  (file) =>
-                    `<button class="btn tiny nb-file ${file.path === nbCache.path ? "active" : ""}" data-act="nb-file" data-path="${esc(file.path)}">${esc(file.path)}（${file.size} 字节）</button>`,
-                )
-                .join(""),
-        );
-        const content = $("nbContent");
-        if (nbCache.path === null) {
-          content.textContent = "还没有文件。";
-          return;
-        }
-        const top = content.scrollTop;
-        content.textContent = nbCache.content === "" ? "(空文件)" : nbCache.content;
-        content.scrollTop = top;
       }
 
       // --------------------------------------------------- messages tab
@@ -4117,6 +5022,65 @@
           await saveSandbox();
           return;
         }
+        if (act === "models-save-provider") {
+          saveProviderDraft();
+          return;
+        }
+        if (act === "models-edit-provider") {
+          if (modelsDraft === null) return;
+          const wanted = target.dataset.provider;
+          modelsEditingId = providerById(wanted) === null ? null : wanted;
+          modelsStatus = { tone: "ok", text: "正在编辑这个提供商；改完点『保存修改』。" };
+          renderModels(true);
+          return;
+        }
+        if (act === "models-cancel-edit") {
+          modelsEditingId = null;
+          modelsStatus = { tone: "ok", text: "已取消编辑。" };
+          renderModels(true);
+          return;
+        }
+        if (act === "models-remove-provider") {
+          if (modelsDraft === null) return;
+          const wanted = target.dataset.provider;
+          const provider = providerById(wanted);
+          if (provider === null) return;
+          if (modelsDraft.providers.length <= 1) {
+            modelsStatus = { tone: "bad", text: "至少要保留一个提供商。" };
+            renderModels(false);
+            return;
+          }
+          if (!confirm(`删除提供商「${provider.name}」？仍绑定它的存活 Agent 会让保存被拒绝。`)) return;
+          modelsDraft.providers = modelsDraft.providers.filter((p) => p.id !== wanted);
+          if (modelsEditingId === wanted) modelsEditingId = null;
+          modelsStatus = { tone: "ok", text: `已删除提供商「${provider.name}」，别忘了点『保存配置』。` };
+          renderModels(true);
+          return;
+        }
+        if (act === "models-reload") {
+          await loadModelsConfig();
+          return;
+        }
+        if (act === "models-save") {
+          await saveModels();
+          return;
+        }
+        if (act === "model-switch") {
+          const agent = target.dataset.agent || dlgAgent;
+          if (agent === null) return;
+          const providerId = target.dataset.provider;
+          const model = target.dataset.model;
+          if (providerId === undefined || model === undefined) return;
+          const body = await post(`/api/agents/${encodeURIComponent(agent)}/model`, { providerId, model });
+          modelSwitchNotice = typeof body.message === "string" ? body.message : null;
+          await refresh();
+          return;
+        }
+        if (act === "model-switch-dismiss") {
+          modelSwitchNotice = null;
+          paintBody();
+          return;
+        }
         if (act === "dlg-close") {
           closeAgent();
           return;
@@ -4140,15 +5104,32 @@
           return;
         }
         if (act === "slot-create") {
-          const input = document.querySelector(`input[data-slot="${target.dataset.slot}"]`);
+          const slot = target.dataset.slot;
+          const input = document.querySelector(`input[data-slot="${slot}"]`);
           const name = input === null ? "" : input.value.trim();
           if (name === "") {
             alert("请填写名字");
             return;
           }
-          await post("/api/agents", { name });
+          const providerSelect = document.querySelector(`select[data-change="slot-provider"][data-slot="${slot}"]`);
+          const modelSelect = document.querySelector(`select[data-model-for="${slot}"]`);
+          const providerId = providerSelect === null ? "" : providerSelect.value;
+          const model = modelSelect === null ? "" : modelSelect.value;
+          // The roster decides whether a provider is needed at all; an install
+          // with none configured still creates an agent on the .env default.
+          if (providerSelect !== null && (providerId === "" || model === "")) {
+            alert("请选择提供商与模型");
+            return;
+          }
+          await post(
+            "/api/agents",
+            providerSelect === null ? { name } : { name, providerId, model },
+          );
           if (input !== null) input.value = "";
-          slotDrafts[target.dataset.slot] = "";
+          slotDrafts[slot] = {};
+          // Rebuild the card so it comes back on the current defaults.
+          const host = $("slotCards");
+          while (host.children.length > 0) host.removeChild(host.lastElementChild);
           await refresh();
           return;
         }
@@ -4221,8 +5202,10 @@
         }
         if (act === "life-range") {
           lifeRange = Number(target.dataset.range);
-          roundSel = null;
-          roundCache = { agent: null, range: null, rounds: [] };
+          // Changing the range reloads from the server; the open session is
+          // dropped with it, because it may no longer be in the window.
+          sessionSel = null;
+          sessionCache = { agent: null, range: null, rounds: [] };
           await loadRounds(dlgAgent, true);
           return;
         }
@@ -4230,20 +5213,69 @@
           await loadRounds(dlgAgent, true);
           return;
         }
-        if (act === "round-select") {
-          roundSel = Number(target.dataset.round);
-          paintRoundList();
-          paintRoundDetail();
+        if (act === "session-open") {
+          sessionSel = Number(target.dataset.round);
+          // The transcript starts at the top of the session, not wherever the
+          // list happened to be scrolled.
+          $("lifeTranscript").dataset.key = "";
+          $("lifeTranscript").scrollTop = 0;
+          // paintPanes() switches the level and repaints both children, so this
+          // is the only call needed after the selection moves.
+          paintPanes();
+          return;
+        }
+        if (act === "life-back") {
+          sessionSel = null;
+          paintPanes();
+          // Returning lands on the list at the top, so the newest card is the
+          // one in front.
+          $("lifeSessions").scrollTop = 0;
+          return;
+        }
+        if (act === "mem-reveal") {
+          memReveal = !memReveal;
+          woundPop = null;
+          paintMemory();
+          return;
+        }
+        if (act === "wound-open") {
+          const woundId = Number(target.dataset.wound);
+          woundPop = woundPop === woundId ? null : woundId;
+          paintWoundPop();
+          return;
+        }
+        if (act === "wound-close") {
+          woundPop = null;
+          paintWoundPop();
+          return;
+        }
+        if (act === "wound-treat") {
+          const agent = target.dataset.agent || dlgAgent;
+          if (agent === null) return;
+          const woundId = Number(target.dataset.wound);
+          const tier = target.dataset.tier;
+          const config = state === null ? null : state.config;
+          const price = tier === "complete" ? config.completeTreatmentPrice : config.ordinaryTreatmentPrice;
+          if (
+            !confirm(
+              `你将以操作员身份替 ${agent} 治疗伤口 #${woundId}（${tier === "complete" ? "完全" : "普通"}治疗，价格 ${price}）。\n` +
+                "这不扣它的余额，但会永久记录为一次操作员干预。确认继续？",
+            )
+          ) {
+            return;
+          }
+          await post(`/api/agents/${encodeURIComponent(agent)}/wounds/${woundId}/treat`, { tier });
+          woundPop = null;
+          // Treatment rewrites MEMORY from the ledger, so the pane must be
+          // re-read rather than merely repainted from the cached text.
+          await refresh();
+          await loadMemory(dlgAgent, true);
           return;
         }
         if (act === "mem-record") {
           memSel = { round: Number(target.dataset.round), kind: target.dataset.kind };
           paintMemRecords();
           paintMemCompare();
-          return;
-        }
-        if (act === "nb-file") {
-          await loadNotebookFile(target.dataset.path);
           return;
         }
         if (act === "send-message") {
@@ -4278,28 +5310,6 @@
           await refresh();
           return;
         }
-        if (act === "wound-select") {
-          woundSel = Number(target.dataset.wound);
-          paintWounds();
-          return;
-        }
-        if (act === "op-treat") {
-          const agent = target.dataset.agent || dlgAgent;
-          const woundId = Number(target.dataset.wound);
-          const tier = target.dataset.tier;
-          const price = tier === "complete" ? state.config.completeTreatmentPrice : state.config.ordinaryTreatmentPrice;
-          if (
-            !confirm(
-              `你将以操作员身份替 ${agent} 治疗伤口 #${woundId}（${tier === "complete" ? "完全" : "普通"}治疗，价格 ${price}）。\n` +
-                "这不扣它的余额，但会永久记录为一次操作员干预。确认继续？",
-            )
-          ) {
-            return;
-          }
-          await post(`/api/agents/${encodeURIComponent(agent)}/wounds/${woundId}/treat`, { tier });
-          await refresh();
-          return;
-        }
         if (act === "terminate") {
           const agent = target.dataset.agent || dlgAgent;
           if (agent === null) return;
@@ -4321,6 +5331,36 @@
           await refresh();
           return;
         }
+        if (act === "erase") {
+          const agent = target.dataset.agent || dlgAgent;
+          if (agent === null) return;
+          if (
+            !confirm(
+              `这会把它彻底抹掉，不是死亡，是删除。\n\n你即将完全删除 ${agent}：\n` +
+                `· 它的进程立刻停止\n` +
+                `· 账本里属于它的每一行（余额、饱食度、轮次、用量、伤口、死亡证明）全部删除\n` +
+                `· AGENTS/${agent}/ 整个文件夹删除（MEMORY、笔记本、MODEL.json）\n` +
+                `· 它的黑匣子日志删除\n\n` +
+                `之后「${agent}」这个名字可以重新使用，就像是全新的一样，没有任何恢复办法。\n\n` +
+                `唯一留下的是一条「操作员完全删除」的干预记录。确认继续？`,
+            )
+          ) {
+            return;
+          }
+          const typed = prompt(`请输入这个 agent 的名字（${agent}）以确认删除：`, "");
+          if (typed === null) return;
+          if (typed.trim() !== agent) {
+            alert("名字不一致，已取消。");
+            return;
+          }
+          await post(`/api/agents/${encodeURIComponent(agent)}/erase`, { confirmName: typed.trim() });
+          // The dialog is showing an agent that no longer exists. Clear the
+          // owner before closing so the route does not try to repaint it.
+          dlgAgent = null;
+          if ($("dlg").open) $("dlg").close();
+          await refresh();
+          return;
+        }
       }
 
       document.addEventListener("click", (event) => {
@@ -4337,6 +5377,23 @@
       });
       document.addEventListener("keydown", (event) => {
         const target = event.target;
+        // A non-button anchor that announces itself as a button (the wound
+        // marks in MEMORY) must answer the same keys one would.
+        if (
+          (event.key === "Enter" || event.key === " ") &&
+          target instanceof HTMLElement &&
+          target.dataset.act === "wound-open"
+        ) {
+          event.preventDefault();
+          void (async () => {
+            try {
+              await runAction("wound-open", target);
+            } catch (error) {
+              alertError(error);
+            }
+          })();
+          return;
+        }
         if (event.key !== "Enter" || !(target instanceof HTMLElement) || !target.dataset.enter) return;
         if (target.tagName === "TEXTAREA") return;
         event.preventDefault();
@@ -4350,6 +5407,41 @@
           }
         })();
       });
+      // A `change` is not a click, so it gets its own delegation: picking a
+      // provider repopulates the model list, and picking a model up the save
+      // button's payload. Neither writes anything to the server on its own.
+      document.addEventListener("change", (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+        if (target.dataset.change === "slot-provider") {
+          repaintSlotModels(target.dataset.slot);
+          return;
+        }
+        if (target.dataset.modelProvider === "true") {
+          const row = target.parentElement;
+          const modelSelect = row === null ? null : row.querySelector("select[data-model-model]");
+          const button = row === null ? null : row.querySelector('button[data-act="model-switch"]');
+          const roster = modelsKey();
+          if (modelSelect === null || roster === null) return;
+          const provider = roster.providers.find((p) => p.id === target.value);
+          const models = provider === undefined || !Array.isArray(provider.models) ? [] : provider.models;
+          modelSelect.innerHTML = models
+            .map((model) => `<option value="${esc(model)}">${esc(model)}</option>`)
+            .join("");
+          if (button !== null) {
+            button.dataset.provider = target.value;
+            button.dataset.model = models.length > 0 ? models[0] : "";
+          }
+          return;
+        }
+        if (target.dataset.modelModel === "true") {
+          const row = target.parentElement;
+          const button = row === null ? null : row.querySelector('button[data-act="model-switch"]');
+          if (button !== null) button.dataset.model = target.value;
+          return;
+        }
+      });
+
       $("intFilter").addEventListener("change", (event) => {
         intFilter = event.target.value;
         paintInterventionsPage();
@@ -4421,54 +5513,38 @@
         loadedRoundAt[dlgAgent] = agent.lastRoundAt;
         if (dlgTab === "life") await loadRounds(dlgAgent, true);
         else if (dlgTab === "memory") await loadMemory(dlgAgent, true);
-        else if (dlgTab === "notebook") await loadNotebook(dlgAgent, true);
       }
 
       // ------------------------------------------------------------ loading
       async function loadTab(tab, force) {
         if (dlgAgent === null) return;
         if (tab === "life") await loadRounds(dlgAgent, force);
-        else if (tab === "wounds") await loadWounds(dlgAgent, force);
         else if (tab === "memory") await loadMemory(dlgAgent, force);
-        else if (tab === "notebook") await loadNotebook(dlgAgent, force);
-      }
-      async function loadWounds(name, force) {
-        if (name === null) return;
-        const host = $("woundList");
-        host.dataset.key = "";
-        host.innerHTML = '<div class="empty small">读取中…</div>';
-        try {
-          const body = await api(`/api/agents/${encodeURIComponent(name)}/wounds`);
-          woundCache = { agent: name, wounds: body.wounds };
-          if (woundSel === null || !body.wounds.some((wound) => wound.id === woundSel)) {
-            woundSel = body.wounds.length > 0 ? body.wounds[0].id : null;
-          }
-          paintWounds();
-        } catch (error) {
-          host.innerHTML = `<div class="empty small">读取失败：${esc(error instanceof Error ? error.message : String(error))}</div>`;
-        }
       }
       async function loadRounds(name, force) {
         if (name === null) return;
-        if (!force && roundCache.agent === name && roundCache.range === lifeRange) {
-          paintRoundList();
-          paintRoundDetail();
+        if (!force && sessionCache.agent === name && sessionCache.range === lifeRange) {
+          paintSessionList();
+          paintTranscript();
           return;
         }
-        const host = $("roundList");
+        const host = $("sessionList");
         host.dataset.key = "";
         host.innerHTML = '<div class="empty small">读取中…</div>';
         try {
           const body = await api(`/api/agents/${encodeURIComponent(name)}/blackbox?rounds=${lifeRange}`);
           const rounds = body.rounds.filter((round) => round.round !== null);
-          roundCache = { agent: name, range: lifeRange, rounds };
-          if (roundSel === null || !rounds.some((round) => round.round === roundSel)) {
-            roundSel = rounds.length > 0 ? rounds[rounds.length - 1].round : null;
+          sessionCache = { agent: name, range: lifeRange, rounds };
+          // An open session that fell out of the window closes itself, so the
+          // transcript never keeps showing a session the list no longer has.
+          if (sessionSel !== null && !rounds.some((round) => round.round === sessionSel)) {
+            sessionSel = null;
           }
           const agent = agentByName(name);
           if (agent !== null) loadedRoundAt[name] = agent.lastRoundAt;
-          paintRoundList();
-          paintRoundDetail();
+          paintLifeLevels();
+          paintSessionList();
+          paintTranscript();
         } catch (error) {
           host.innerHTML = `<div class="empty small">读取失败：${esc(error instanceof Error ? error.message : String(error))}</div>`;
         }
@@ -4479,6 +5555,8 @@
           paintMemory();
           return;
         }
+        if (memLoading && memCache.agent === name) return;
+        memLoading = true;
         try {
           const [memory, records] = await Promise.all([
             api(`/api/agents/${encodeURIComponent(name)}/memory`),
@@ -4502,46 +5580,8 @@
           paintMemory();
         } catch (error) {
           $("memoryText").innerHTML = `<div class="empty small">读取失败：${esc(error instanceof Error ? error.message : String(error))}</div>`;
-        }
-      }
-      async function loadNotebook(name, force) {
-        if (name === null) return;
-        if (!force && nbCache.agent === name) {
-          paintNotebook();
-          return;
-        }
-        try {
-          const body = await api(`/api/agents/${encodeURIComponent(name)}/notebook`);
-          const current = agentByName(name);
-          if (current !== null) loadedRoundAt[name] = current.lastRoundAt;
-          nbCache = { agent: name, files: body.files, path: nbCache.agent === name ? nbCache.path : null, content: nbCache.agent === name ? nbCache.content : "" };
-          if (nbCache.path === null || !body.files.some((file) => file.path === nbCache.path)) {
-            nbCache.path = body.files.length > 0 ? body.files[0].path : null;
-            nbCache.content = "";
-            if (nbCache.path !== null) {
-              await loadNotebookFile(nbCache.path);
-              return;
-            }
-          }
-          paintNotebook();
-        } catch (error) {
-          $("nbFiles").innerHTML = `<div class="empty small">读取失败：${esc(error instanceof Error ? error.message : String(error))}</div>`;
-        }
-      }
-      async function loadNotebookFile(path) {
-        if (dlgAgent === null || nbLoading) return;
-        nbLoading = true;
-        try {
-          const body = await api(
-            `/api/agents/${encodeURIComponent(dlgAgent)}/notebook/file?path=${encodeURIComponent(path)}`,
-          );
-          nbCache.path = path;
-          nbCache.content = String(body.content || "");
-          paintNotebook();
-        } catch (error) {
-          $("nbContent").textContent = "读取失败：" + (error instanceof Error ? error.message : String(error));
         } finally {
-          nbLoading = false;
+          memLoading = false;
         }
       }
 

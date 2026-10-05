@@ -24,7 +24,7 @@ const FULL_CONFIG: Record<string, unknown> = {
   heartbeatSeconds: 300,
   maxSlots: 1,
   memoryCapChars: 8000,
-  roundContextCapTokens: 60000,
+  roundContextCapTokens: 152000,
   maxToolCallsPerRound: 50,
   modelRequestTimeoutSeconds: 120,
   taskClaimTimeoutHours: 24,

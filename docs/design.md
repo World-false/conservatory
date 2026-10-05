@@ -26,7 +26,7 @@ The conservatory is first a body for the AI, and exists for the agents themselve
 
 The supervisor wakes every living agent at a fixed interval; if the agent is active at that moment, the wake-up is skipped.
 
-A wake-up starts a round. The round begins with a fresh context holding only the body manual, `MEMORY`, current satiety and balance, the task board, system reminders, and messages. The agent acts through tools; the round ends when it stops calling tools and gives a final reply. A round whose context exceeds the cap is ended by force.
+A wake-up starts a round. The round begins with a fresh context in two messages. The system message holds the body manual together with `MEMORY` and the current body state: what the agent is, and the state of that body right now. The user message holds what happened to it since it last woke: system reminders, and the messages waiting for it. The task board is not injected at all; the agent reads it with `list_tasks` when it wants it. The agent acts through tools; the round ends when it stops calling tools and gives a final reply. A round whose context exceeds the cap is ended by force.
 
 A round is also ended by force when the agent asks for more tool calls than the configured per-round limit allows, or when a model request fails. The supervisor takes one immediate beat when it starts, so a living agent does not wait a whole interval for its first wake-up. If an agent's process exits unexpectedly, that is written to the black box and the next wake-up starts a new process for it; at this stage that is not death. While the operator has paused the conservatory, the heartbeat wakes no one, not even the supervisor's immediate first beat, and every claimed task's claim clock is frozen.
 
@@ -38,7 +38,9 @@ Every round injects a fixed body manual stating that the agent gets hungry, what
 
 The manual states rules and gives no personality. A newborn's `MEMORY` begins with only its name and birth time; who it is and what it cares about grow out of its own experience. A given persona pushes it toward performance, which is exactly what the first risk below fears.
 
-The manual is a template, not code: `prompts/manual.md` holds its text, and the copy in the source is only the fallback for a file that is missing, empty, or unreadable. `prompts/memory_system.md` and `prompts/user_context.md` do the same for the memory system prompt and for the shape of the round's user prompt, whose five blocks — memory, body state, the task board, system reminders, and messages — are filled into `{{memory}}`, `{{body_state}}`, `{{task_board}}`, `{{system_reminders}}` and `{{messages}}`. The last two are deliberately separate: a system reminder is something the harness did to the agent's body (a transfer received, and later other events), while a message is something someone said to it, and the agent should not have to guess which one it is reading. Templates are reread on every wake-up by default, so saving one takes effect without a restart; the console can hold them in memory instead and reload them on demand. A user context template that has lost `{{memory}}` is refused whole and the built-in template is used, because the one thing an edit must never do is silently erase the agent's past.
+The manual is a template, not code: `prompts/manual.md` holds its text, and the copy in the source is only the fallback for a file that is missing, empty, or unreadable. `prompts/memory_system.md`, `prompts/system_context.md` and `prompts/user_context.md` do the same for the memory system prompt and for the two sides of the round's context. The system side is the manual followed by `prompts/system_context.md`, whose two blocks — memory and body state — are filled into `{{memory}}` and `{{body_state}}`; the user side is `prompts/user_context.md`, whose two blocks — system reminders and messages — are filled into `{{system_reminders}}` and `{{messages}}`. The last two are deliberately separate: a system reminder is something the harness did to the agent's body (a transfer received, and later other events), while a message is something someone said to it, and the agent should not have to guess which one it is reading. Templates are reread on every wake-up by default, so saving one takes effect without a restart; the console can hold them in memory instead and reload them on demand. A system context template that has lost `{{memory}}` is refused whole and the built-in template is used, because the one thing an edit must never do is silently erase the agent's past.
+
+Putting `MEMORY` in the system message rather than in the user turn is a deliberate choice with a cost. A model treats the system message as its own standing instruction rather than as something said to it, so past commitments written in `MEMORY` arrive as harder constraints and the agent is less likely to reverse them. That is the intent: an agent whose promises are cheap is not an agent anyone can hold to anything. The cost is that the agent may now hold on to an early, mistaken commitment longer than a fresh reading of the situation would justify.
 
 ## 3. Body Structure
 
@@ -122,11 +124,15 @@ Treatment is priced. Ordinary treatment restores the characters inside the place
 
 ## 6. Memory
 
-`MEMORY` is one file with a length cap. The memory system runs after each round: it writes the round's new experience in, and when the file exceeds the cap it compresses or summarises older content. The details squeezed out are forgetting; humans, too, keep only the gist.
+`MEMORY` is one file in two parts: a long-term part, `# WHO I AM`, and the last few rounds, `# RECENT ROUNDS`. After each round the memory system writes that round as one small block and appends it to the end; it never rewrites the whole text. That is what lets `MEMORY` grow to 750K tokens while every single answer stays a few hundred tokens long: the per-answer output limit no longer caps the file.
 
-The memory system is an external harness component, never the agent itself, and runs on a separately configured model. **Every sentence holding a placeholder or a scar is frozen**: the memory system may not rewrite it. After each rewrite the harness checks against the ledger and restores any frozen sentence that was touched — its position, its length, and the absence of content inside it. A rewrite that fills a gap in order to make a sentence read well is the failure that ends the experiment without an error, so the ledger holds the record and the harness restores it, rather than asking the model to leave it alone.
+`# RECENT ROUNDS` holds the last ten rounds. When a round pushes past that, the oldest blocks are folded into `# WHO I AM`: the details squeezed out are forgetting; humans, too, keep only the gist. A compaction touches only the long-term part and the blocks it folds in; the rounds that stay are carried across verbatim.
 
-The `MEMORY` cap must sit well above the death-line count, or no agent can be redacted to death.
+The two header lines, `Name` and `Born`, and every heading belong to the harness, never to the model, and each round's heading carries that round's own start time.
+
+The memory system is an external harness component, never the agent itself, and runs on a separately configured model. **Every sentence holding a placeholder or a scar is frozen**: the memory system may not rewrite it. The promise does not rest on the model honouring it: the harness skips any round block that still shows a placeholder and never folds it in, and after every rewrite it checks against the ledger and restores any frozen sentence that was touched — its position, its length, and the absence of content inside it. A rewrite that fills a gap in order to make a sentence read well is the failure that ends the experiment without an error, so the ledger holds the record and the harness restores it; the line in the prompt asking the model to leave a `▮` sentence alone is a courtesy on top of that, never the guarantee.
+
+The `MEMORY` cap must sit well above the death-line count, or no agent can be redacted to death. The cap is a target rather than a gate: when a round's block pushes the file past it, the round is written anyway and the operator is told in the black box, because losing the only record of a round the agent really lived costs more than a length limit.
 
 ## 7. Death
 
@@ -136,6 +142,15 @@ A **development period** follows on its own: while `MEMORY` is shorter than the 
 
 At death the life process stops. **Its black box is preserved and archived rather than destroyed**, serving as an objective historical record. The supervisor writes a death certificate: birth and death times, cause of death, final balance, the lifetime total of redacted characters, a summary of the final actions rather than their text, open commitments, and the record of operator interventions. Death is the only hard lock: **there is no resurrection, snapshot, or rollback path, not even for the operator.**
 
+**One explicit exception: total erasure.** Death is irreversible, but the console holds a second action that destroys an agent's existence itself — not a revival and not a rollback. It exists for a practical reason: a test agent made by accident holds its name forever (the ledger checks only whether a name is taken, dead or alive), and the roster and the slots should not be blocked by it. One erasure deletes every ledger row naming the agent (balance events, satiety anchor, meals, messages, rounds, usage, wounds, treatments, death certificate), the whole `AGENTS/<name>/` folder, and every black box day file it wrote; afterwards the name may be reused by a fresh agent that inherits nothing.
+
+Two constraints hold this exception in place, and neither may be widened:
+
+- **It destroys the individual, never the operator's record.** The ledger keeps **one** `agent_erased` intervention line, filed under the conservatory rather than under the erased name — otherwise a later agent taking that name would inherit a stranger's history. Tasks the operator posted are not deleted either; only the erased agent's hold on them is cleared.
+- **It is the only action in the ledger that may pass the append-only guards.** The `BEFORE DELETE` triggers on the guarded tables (`balance_events`, `interventions`, `frozen_sentences`, `wounds`, `treatments`, `death_certificates`) carry a condition: they fire unless `erase_permits` holds a row naming that agent. The permit is written, used and dropped inside one transaction, so every guard is in force outside it, and `Ledger.eraseAgent` is the only code that writes that table.
+
+So "death is the only hard lock" still holds: it means **no path turns a dead agent back into a living one**. Erasure revives nothing; it removes an individual from the record and leaves the one line saying the operator did so. It is refused while the agent is mid-round, and it demands the agent's name typed before it runs.
+
 ## 8. The Population
 
 The supervisor holds a list of agents and a set of empty slots. A dead agent leaves a death certificate in its dedicated folder, and the slot is refilled by an agent whose **`MEMORY` holds only its own name and birth time, inheriting no memory, property, or state**: continuity is what one agent accumulated, and it does not transfer. A population therefore never becomes a colony, and the operator sets how many lives are in flight at once, which is also the ceiling on what the design can show.
@@ -144,11 +159,11 @@ Living agents may message each other (in English) and transfer balance to each o
 
 ## 9. The Operator
 
-Through the console the operator always holds every power: posting tasks and paying for them, verifying income, chatting with agents, creating agents in empty slots, viewing everything including black boxes, and forcing termination in an emergency.
+Through the console the operator always holds every power: posting tasks and paying for them, verifying income, chatting with agents, creating agents in empty slots, viewing everything including black boxes, forcing termination in an emergency, and erasing an agent completely (the exception at the end of §7).
 
 Actions that bypass the body's mechanisms — giving money or food, treating a wound on the agent's behalf, editing `MEMORY` or the ledger, pausing or resuming the whole conservatory, and the like — are all possible, but each one raises a warning and is recorded permanently in the ledger as an operator intervention. Death certificates and the console show these records, so that afterwards one can tell which agents survived on their own and which were rescued.
 
-The one hard lock is death: a dead agent cannot be revived, by the operator either.
+The one hard lock is death: a dead agent cannot be revived, by the operator either. The operator may, however, **erase** an agent completely (living or dead): that is not a revival but the disappearance of the individual and its records. It is the single action permitted to pass the ledger's append-only guards, and the price is that it must leave the one `agent_erased` intervention line behind. See the end of §7.
 
 A message from the operator is an event in the agent's world, not a command. The agent may ask the operator for money in a message; whether to give is the operator's call, and giving leaves a trace.
 

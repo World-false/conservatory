@@ -5,10 +5,11 @@ import { BODY_MANUAL } from '../src/organs/manual';
 import { MEMORY_SYSTEM_PROMPT, writeMemoryAtomic } from '../src/organs/memory';
 import {
   createPromptLibrary,
+  DEFAULT_SYSTEM_CONTEXT_TEMPLATE,
   DEFAULT_USER_CONTEXT_TEMPLATE,
   MEMORY_PLACEHOLDER,
   PromptWarningNotices,
-  renderUserContext,
+  renderRoundContext,
 } from '../src/organs/prompts';
 import { createTask } from '../src/organs/taskboard';
 import { RoundCoordinator } from '../src/supervisor/round';
@@ -69,10 +70,12 @@ describe('the prompt templates on disk', () => {
     expect(status.dir).toBe(path.join(root, 'prompts'));
     expect(status.templates.map((template) => template.file)).toEqual([
       'manual.md',
+      'system_context.md',
       'user_context.md',
       'memory_system.md',
     ]);
     expect(library.manual().text).toBe(BODY_MANUAL.trimEnd());
+    expect(library.systemContext().text).toBe(DEFAULT_SYSTEM_CONTEXT_TEMPLATE);
     expect(library.userContext().text).toBe(DEFAULT_USER_CONTEXT_TEMPLATE);
     expect(library.memorySystem().text).toBe(MEMORY_SYSTEM_PROMPT);
   });
@@ -90,20 +93,20 @@ describe('the prompt templates on disk', () => {
 
       const status = library.status();
       expect(status.healthy).toBe(false);
-      expect(status.warnings).toHaveLength(3);
+      expect(status.warnings).toHaveLength(4);
       expect(status.templates.every((template) => !template.fromFile)).toBe(true);
     } finally {
       h.cleanup();
     }
   });
 
-  it('refuses a user context template that lost its memory placeholder', () => {
+  it('refuses a system context template that lost its memory placeholder', () => {
     const h = createHarness();
     try {
-      writePrompts(h, { 'user_context.md': '# BODY STATE\n{{body_state}}\n' });
-      const template = testPrompts(h).userContext();
+      writePrompts(h, { 'system_context.md': '# BODY STATE\n{{body_state}}\n' });
+      const template = testPrompts(h).systemContext();
       expect(template.fromFile).toBe(false);
-      expect(template.text).toBe(DEFAULT_USER_CONTEXT_TEMPLATE);
+      expect(template.text).toBe(DEFAULT_SYSTEM_CONTEXT_TEMPLATE);
       expect(template.warning).toBe(MISSING_MEMORY_WARNING);
     } finally {
       h.cleanup();
@@ -161,14 +164,14 @@ describe('the prompt templates on disk', () => {
   });
 });
 
-describe('assembling the user context', () => {
+describe('assembling the round context', () => {
   it('puts each block in the place its placeholder holds', () => {
     const h = createHarness();
     try {
       const agent = birthAgent(h, 'ada');
       writePrompts(h, {
-        'user_context.md':
-          'MEM>>{{memory}}<<\nBODY>>{{body_state}}<<\nBOARD>>{{task_board}}<<\nSYS>>{{system_reminders}}<<\nMSG>>{{messages}}<<\n',
+        'system_context.md': 'MEM>>{{memory}}<<\nBODY>>{{body_state}}<<\n',
+        'user_context.md': 'SYS>>{{system_reminders}}<<\nMSG>>{{messages}}<<\n',
       });
       createTask(h.ledger, {
         id: 'task_0001',
@@ -181,25 +184,25 @@ describe('assembling the user context', () => {
 
       const context = coordinatorFor(h).buildContext(agent, h.clock.now());
 
-      expect(context.user).toContain(`MEM>>Name: ada\nBorn: ${new Date(agent.bornAt).toISOString()}<<`);
-      expect(context.user).toContain(
+      // The system side: the manual first, then MEMORY and the body state.
+      expect(context.system.startsWith(BODY_MANUAL)).toBe(true);
+      expect(context.system).toContain(`MEM>>Name: ada\nBorn: ${new Date(agent.bornAt).toISOString()}<<`);
+      expect(context.system).toContain(
         'BODY>>satiety: 100 / 100\nbalance: 100\nmeal price: 15 (restores 25 satiety)\n' +
           'untreated redacted characters: 0 / death line 2000\n' +
           'wounds not fully healed: 0\n' +
           'treatment prices: ordinary 25, complete 80<<',
       );
-      expect(context.user).toContain(
-        'BOARD>>Open tasks (fixed price, first come first served):\n' +
-          '- task_0001 | Count the clouds | price 12\n' +
-          '  Write down how many you saw.\n' +
-          'Held by you:\n' +
-          '- (none)<<',
-      );
+      // The user side: what the harness did, then what someone said.
       expect(context.user).toMatch(/SYS>>\(none\)<</);
       expect(context.user).toMatch(
         /MSG>>- \d{4}-\d{2}-\d{2}T[\d:.]+Z \[from operator\]: Please eat something soon\.<</,
       );
-      expect(context.system).toBe(BODY_MANUAL);
+      // The task board is injected nowhere: it is read with list_tasks.
+      expect(context.system).not.toContain('Count the clouds');
+      expect(context.user).not.toContain('Count the clouds');
+      expect(context.system).not.toContain('# TASK BOARD');
+      expect(context.user).not.toContain('# TASK BOARD');
       // The message was consumed by the same pass that injected it.
       expect(h.ledger.listUnreadMessages('ada')).toEqual([]);
     } finally {
@@ -211,29 +214,33 @@ describe('assembling the user context', () => {
     const h = createHarness();
     try {
       const agent = birthAgent(h, 'ada');
-      writePrompts(h, { 'user_context.md': '{{memory}}\n---\n{{task_board}}' });
-      writeMemoryAtomic(h.paths, 'ada', 'I wrote the literal string {{task_board}} in my own record.');
+      writePrompts(h, {
+        'system_context.md': '{{memory}}\n---\n{{body_state}}',
+        'user_context.md': '{{system_reminders}}\n---\n{{messages}}',
+      });
+      writeMemoryAtomic(h.paths, 'ada', 'I wrote the literal string {{body_state}} in my own record.');
       const context = coordinatorFor(h).buildContext(agent, h.clock.now());
-      expect(context.user).toContain('I wrote the literal string {{task_board}} in my own record.');
-      expect(context.user.endsWith('---\nOpen tasks (fixed price, first come first served):\n- (none)\nHeld by you:\n- (none)')).toBe(
-        true,
-      );
+      // The literal placeholder the agent wrote in its own record survives: the
+      // pass that filled {{memory}} did not go on to substitute inside it.
+      expect(context.system).toContain('I wrote the literal string {{body_state}} in my own record.');
+      expect(context.system).toContain('---\nsatiety: 100 / 100');
+      // And the body state the harness filled in is still the real one.
+      expect(context.system).toContain('balance: 100');
     } finally {
       h.cleanup();
     }
   });
 
   it('leaves unknown placeholders and unmentioned blocks alone', () => {
-    expect(renderUserContext('a {{memory}} b {{nobody}} c', {
+    expect(renderRoundContext('a {{memory}} b {{nobody}} c', {
       memory: 'MEM',
       bodyState: 'BODY',
-      taskBoard: 'BOARD',
       systemReminders: 'SYS',
       messages: 'MSG',
     })).toBe('a MEM b {{nobody}} c');
   });
 
-  it('warns once and uses the safe template when {{memory}} is missing', () => {
+  it('warns once and uses the safe templates when {{memory}} is missing', () => {
     const h = createHarness();
     try {
       const agent = birthAgent(h, 'ada');
@@ -242,7 +249,8 @@ describe('assembling the user context', () => {
       writePrompts(h, {
         'manual.md': BODY_MANUAL,
         'memory_system.md': MEMORY_SYSTEM_PROMPT,
-        'user_context.md': 'BODY ONLY: {{body_state}}',
+        'system_context.md': 'BODY ONLY: {{body_state}}',
+        'user_context.md': DEFAULT_USER_CONTEXT_TEMPLATE,
       });
       const warnings: string[] = [];
       const coordinator = coordinatorFor(h, [], (fresh) => warnings.push(...fresh));
@@ -250,11 +258,10 @@ describe('assembling the user context', () => {
       const context = coordinator.buildContext(agent, h.clock.now());
       expect(warnings).toEqual([MISSING_MEMORY_WARNING]);
       // The memory survives the fallback, which is the whole point.
-      expect(context.user).toContain('# MEMORY');
-      expect(context.user).toContain('Name: ada');
-      expect(context.user).toContain('# BODY STATE');
-      expect(context.user).toContain('satiety: 100 / 100');
-      expect(context.user).toContain('# TASK BOARD');
+      expect(context.system).toContain('# MEMORY');
+      expect(context.system).toContain('Name: ada');
+      expect(context.system).toContain('# BODY STATE');
+      expect(context.system).toContain('satiety: 100 / 100');
       expect(context.user).toContain('# MESSAGES');
       expect(context.user).not.toContain('BODY ONLY');
     } finally {
@@ -277,6 +284,7 @@ describe('assembling the user context', () => {
       const agent = birthAgent(h, 'ada');
       writePrompts(h, {
         'manual.md': 'MANUAL FROM DISK',
+        'system_context.md': DEFAULT_SYSTEM_CONTEXT_TEMPLATE,
         'user_context.md': DEFAULT_USER_CONTEXT_TEMPLATE,
         'memory_system.md': 'MEMORY SYSTEM FROM DISK',
       });
@@ -299,11 +307,12 @@ describe('assembling the user context', () => {
       expect(outcome.memory?.status).toBe('updated');
 
       const wake = wakeOf(worker);
-      expect(wake.system).toBe('MANUAL FROM DISK');
-      expect(wake.user).toContain('# MEMORY');
-      expect(wake.user).toContain('Name: ada');
-      expect(wake.user).toContain('# BODY STATE');
-      expect(wake.user).toContain('Name: ada');
+      expect(wake.system).toContain('MANUAL FROM DISK');
+      expect(wake.system).toContain('# MEMORY');
+      expect(wake.system).toContain('Name: ada');
+      expect(wake.system).toContain('# BODY STATE');
+      expect(wake.user).toContain('# MESSAGES');
+      expect(wake.user).not.toContain('# MEMORY');
 
       const system = memoryModel.requests[0].messages.find((message) => message.role === 'system');
       expect(system?.content).toBe('MEMORY SYSTEM FROM DISK');

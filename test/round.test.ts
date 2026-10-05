@@ -378,7 +378,7 @@ describe('a round', () => {
     }
   });
 
-  it('injects MEMORY, body state, the board and unread messages, then marks them read', async () => {
+  it('injects MEMORY and body state into the system prompt, and unread messages into the user turn', async () => {
     const h = createHarness();
     try {
       const agent = birthAgent(h, 'ada');
@@ -404,12 +404,14 @@ describe('a round', () => {
         memoryResponse('ada', agent.bornAt, written),
       ]);
       const wake = wakeOf(second.worker);
-      expect(wake.user).toContain(written);
-      expect(wake.user).not.toContain('first reply text');
-      expect(wake.user).toContain('# BODY STATE');
-      expect(wake.user).toMatch(/satiety: \d/);
-      expect(wake.user).toMatch(/balance: \d/);
-      expect(wake.user).toContain('Count the clouds');
+      expect(wake.system).toContain(written);
+      expect(wake.system).not.toContain('first reply text');
+      expect(wake.system).toContain('# BODY STATE');
+      expect(wake.system).toMatch(/satiety: \d/);
+      expect(wake.system).toMatch(/balance: \d/);
+      // The task board is injected nowhere; the agent reads it with list_tasks.
+      expect(wake.system).not.toContain('Count the clouds');
+      expect(wake.user).not.toContain('Count the clouds');
       expect(wake.user).not.toContain('Please eat something soon.');
       expect(wake.system).toContain('You are an agent in the Conservatory');
 
@@ -457,9 +459,9 @@ describe('a round', () => {
       const agent = birthAgent(h, 'ada');
       const { worker } = await runRound(h, agent, [textResponse('checking')]);
       const wake = wakeOf(worker);
-      expect(wake.user).toContain('untreated redacted characters: 0 / death line 2000');
-      expect(wake.user).toContain('wounds not fully healed: 0');
-      expect(wake.user).toContain('treatment prices: ordinary 25, complete 80');
+      expect(wake.system).toContain('untreated redacted characters: 0 / death line 2000');
+      expect(wake.system).toContain('wounds not fully healed: 0');
+      expect(wake.system).toContain('treatment prices: ordinary 25, complete 80');
       expect(wake.system).toContain('WOUNDS');
       expect(wake.system).toContain('TREATMENT');
       expect(wake.system).toContain('DEATH');
@@ -595,6 +597,53 @@ describe('a round', () => {
       expect(readMemoryFile(h.paths, 'ada')).toContain(visible);
       expect(h.blackbox.readRecentRounds('ada', 5).flatMap((r) => r.entries.map((e) => e.kind))).toContain(
         'treatment_refused',
+      );
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  it('runs a whole round with a free treatment and ends normally', async () => {
+    const h = createHarness({ values: { ordinaryTreatmentPrice: 0 } });
+    try {
+      const agent = birthAgent(h, 'ada');
+      const original = 'The vault code is 4471 and it matters.';
+      const sentenceId = h.ledger.insertFrozenSentence('ada', original, h.clock.now());
+      const woundId = h.ledger.insertWound({
+        agent: 'ada',
+        sentenceId,
+        offset: 18,
+        length: 4,
+        originalText: '4471',
+        starvationSince: 1,
+        tickIndex: 1,
+        createdAt: h.clock.now(),
+      });
+      const visible = renderSentence(original, h.ledger.listWounds('ada'));
+      writeMemoryAtomic(h.paths, 'ada', `${'Name: ada'}\nBorn: ${new Date(agent.bornAt).toISOString()}\n${visible}`);
+
+      const { outcome, worker } = await runRound(h, agent, [
+        toolCallResponse([{ id: 'c1', name: 'treat', args: { wound_id: woundId, tier: 'ordinary' } }]),
+        textResponse('I healed it for free.'),
+      ]);
+      const first = worker.sent.filter((message) => message.type === 'tool_result')[0];
+      if (first === undefined || first.type !== 'tool_result') {
+        throw new Error('expected one tool result');
+      }
+      expect(first.content).toContain('"ok":true');
+      expect(first.content).toContain('"status":"scarred"');
+      expect(first.content).toContain('"price":0');
+      expect(outcome.endReason).not.toBe('model_error');
+      expect(outcome.endReason).toBe('final');
+      expect(outcome.error).toBeNull();
+      expect(h.ledger.getWound(woundId)?.status).toBe('scarred');
+      expect(h.ledger.getBalance('ada')).toBe(100);
+      expect(h.ledger.listTreatments('ada').length).toBe(1);
+      expect(h.ledger.listTreatments('ada')[0].price).toBe(0);
+      const rounds = h.ledger.listRounds('ada', 5);
+      expect(rounds[0].endedAt).not.toBeNull();
+      expect(h.blackbox.readRecentRounds('ada', 5).flatMap((round) => round.entries.map((e) => e.kind))).toContain(
+        'treatment',
       );
     } finally {
       h.cleanup();

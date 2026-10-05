@@ -1,7 +1,11 @@
 /**
  * The prompt templates are operator-editable Markdown files, not code. This
- * module owns the three of them, the two ways they can be loaded, and the
+ * module owns the four of them, the two ways they can be loaded, and the
  * built-in copy of each that is used when the file is missing or unusable.
+ *
+ * The round has two sides: the system side is the manual plus
+ * `prompts/system_context.md` (MEMORY and body state), and the user side is
+ * `prompts/user_context.md` (system reminders and messages).
  *
  * Every read here is deliberately total: it returns text and a warning, and it
  * never throws. A prompt problem must degrade into a fallback and an operator
@@ -17,30 +21,34 @@ import { MEMORY_SYSTEM_PROMPT } from './memory';
 export type PromptLoadMode = 'hot' | 'cached';
 
 export const MANUAL_FILE = 'manual.md';
+export const SYSTEM_CONTEXT_FILE = 'system_context.md';
 export const USER_CONTEXT_FILE = 'user_context.md';
 export const MEMORY_SYSTEM_FILE = 'memory_system.md';
 
 export const MEMORY_PLACEHOLDER = '{{memory}}';
 export const BODY_STATE_PLACEHOLDER = '{{body_state}}';
-export const TASK_BOARD_PLACEHOLDER = '{{task_board}}';
 export const SYSTEM_REMINDERS_PLACEHOLDER = '{{system_reminders}}';
 export const MESSAGES_PLACEHOLDER = '{{messages}}';
 
 /**
- * The safe template: it is what the file is supposed to be, and the fallback.
+ * The system side of the round: what the agent is, appended after the manual.
  * The headings are plain Markdown, so the agent reads the same text the
- * operator sees when they open prompts/user_context.md.
+ * operator sees when they open prompts/system_context.md.
  */
-export const DEFAULT_USER_CONTEXT_TEMPLATE = [
+export const DEFAULT_SYSTEM_CONTEXT_TEMPLATE = [
   '# MEMORY',
   MEMORY_PLACEHOLDER,
   '',
   '# BODY STATE',
   BODY_STATE_PLACEHOLDER,
-  '',
-  '# TASK BOARD',
-  TASK_BOARD_PLACEHOLDER,
-  '',
+].join('\n');
+
+/**
+ * The user side of the round: what the harness did to the agent's body, and
+ * what someone said to it. The task board is deliberately absent: it is read
+ * with the list_tasks tool instead of being injected.
+ */
+export const DEFAULT_USER_CONTEXT_TEMPLATE = [
   '# SYSTEM REMINDERS',
   SYSTEM_REMINDERS_PLACEHOLDER,
   '',
@@ -62,6 +70,7 @@ export interface LoadedPrompt {
 
 export interface PromptReadResult {
   manual: LoadedPrompt;
+  systemContext: LoadedPrompt;
   userContext: LoadedPrompt;
   memorySystem: LoadedPrompt;
   warnings: string[];
@@ -82,11 +91,16 @@ export interface PromptStatus {
   templates: PromptTemplateStatus[];
 }
 
-export interface UserContextBlocks {
+/**
+ * The blocks of one round. `memory` and `bodyState` fill the system-side
+ * template, which is appended after the manual; `systemReminders` and
+ * `messages` fill the user-side template. The task board is not a block: it is
+ * read with the list_tasks tool.
+ */
+export interface RoundContextBlocks {
   /** The MEMORY text; the boundary lines come from the template itself. */
   memory: string;
   bodyState: string;
-  taskBoard: string;
   /**
    * What the harness did to the agent's body on its own: transfers received,
    * and later other events. Separate from `messages`, which is addressed to the
@@ -96,7 +110,7 @@ export interface UserContextBlocks {
   messages: string;
 }
 
-type PromptKind = 'manual' | 'userContext' | 'memorySystem';
+type PromptKind = 'manual' | 'systemContext' | 'userContext' | 'memorySystem';
 
 interface PromptSpec {
   file: string;
@@ -107,7 +121,8 @@ const SPECS: Record<PromptKind, PromptSpec> = {
   manual: { file: MANUAL_FILE, requiredPlaceholders: [] },
   // The memory is the one block whose loss would erase the agent's past, so
   // this template is refused whole without {{memory}}.
-  userContext: { file: USER_CONTEXT_FILE, requiredPlaceholders: [MEMORY_PLACEHOLDER] },
+  systemContext: { file: SYSTEM_CONTEXT_FILE, requiredPlaceholders: [MEMORY_PLACEHOLDER] },
+  userContext: { file: USER_CONTEXT_FILE, requiredPlaceholders: [] },
   memorySystem: { file: MEMORY_SYSTEM_FILE, requiredPlaceholders: [] },
 };
 
@@ -115,6 +130,7 @@ export interface PromptLibraryOptions {
   dir: string;
   mode?: PromptLoadMode;
   manualFallback?: string;
+  systemContextFallback?: string;
   userContextFallback?: string;
   memorySystemFallback?: string;
 }
@@ -178,23 +194,24 @@ function readPromptFile(dir: string, spec: PromptSpec, fallback: string): Loaded
 }
 
 /**
- * Fills the five blocks in one pass, so a value that happens to contain a
- * placeholder is never substituted again. Blocks the template does not mention
- * are simply not injected, and unknown placeholders stay as written.
+ * Fills the round's blocks in one pass, so a value that happens to contain a
+ * placeholder is never substituted again. The same function serves both sides
+ * of the request: the system template uses memory and body state, the user
+ * template uses system reminders and messages. Blocks a template does not
+ * mention are simply not injected, and unknown placeholders stay as written.
  */
-export function renderUserContext(template: string, blocks: UserContextBlocks): string {
+export function renderRoundContext(template: string, blocks: RoundContextBlocks): string {
   const values: Record<string, string> = {
     memory: blocks.memory,
     body_state: blocks.bodyState,
-    task_board: blocks.taskBoard,
     system_reminders: blocks.systemReminders,
     messages: blocks.messages,
   };
-  const pattern = /\{\{(memory|body_state|task_board|system_reminders|messages)\}\}/g;
+  const pattern = /\{\{(memory|body_state|system_reminders|messages)\}\}/g;
   return template.replace(pattern, (match: string, key: string): string => values[key] ?? match);
 }
 
-/** The three templates, their load mode, and the built-in copy of each. */
+/** The four templates, their load mode, and the built-in copy of each. */
 export class PromptLibrary {
   readonly dir: string;
   private readonly fallbacks: Record<PromptKind, string>;
@@ -206,6 +223,7 @@ export class PromptLibrary {
     this.mode = options.mode ?? 'hot';
     this.fallbacks = {
       manual: options.manualFallback ?? BODY_MANUAL,
+      systemContext: options.systemContextFallback ?? DEFAULT_SYSTEM_CONTEXT_TEMPLATE,
       userContext: options.userContextFallback ?? DEFAULT_USER_CONTEXT_TEMPLATE,
       memorySystem: options.memorySystemFallback ?? MEMORY_SYSTEM_PROMPT,
     };
@@ -239,6 +257,10 @@ export class PromptLibrary {
     return this.load('manual');
   }
 
+  systemContext(): LoadedPrompt {
+    return this.load('systemContext');
+  }
+
   userContext(): LoadedPrompt {
     return this.load('userContext');
   }
@@ -247,15 +269,16 @@ export class PromptLibrary {
     return this.load('memorySystem');
   }
 
-  /** All three at once, which is what one wake-up needs. */
+  /** All four at once, which is what one wake-up needs. */
   read(): PromptReadResult {
     const manual = this.manual();
+    const systemContext = this.systemContext();
     const userContext = this.userContext();
     const memorySystem = this.memorySystem();
-    const warnings = [manual, userContext, memorySystem]
+    const warnings = [manual, systemContext, userContext, memorySystem]
       .map((loaded) => loaded.warning)
       .filter((warning): warning is string => warning !== null);
-    return { manual, userContext, memorySystem, warnings };
+    return { manual, systemContext, userContext, memorySystem, warnings };
   }
 
   status(): PromptStatus {
@@ -265,7 +288,7 @@ export class PromptLibrary {
       dir: this.dir,
       healthy: bundle.warnings.length === 0,
       warnings: bundle.warnings,
-      templates: [bundle.manual, bundle.userContext, bundle.memorySystem].map((loaded) => ({
+      templates: [bundle.manual, bundle.systemContext, bundle.userContext, bundle.memorySystem].map((loaded) => ({
         file: loaded.file,
         path: loaded.path,
         fromFile: loaded.fromFile,

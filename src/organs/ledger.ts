@@ -185,7 +185,9 @@ export type InterventionKind =
   | 'conservatory_paused'
   | 'conservatory_resumed'
   | 'operator_treat'
-  | 'force_terminate';
+  | 'force_terminate'
+  | 'model_switched'
+  | 'agent_erased';
 
 /**
  * A conservatory-wide setting has no single agent, but the interventions table
@@ -211,6 +213,26 @@ export interface UsageTotals {
   records: number;
   promptTokens: number;
   completionTokens: number;
+}
+
+/** What an erasure actually removed, so the caller can report it truthfully. */
+export interface ErasedRows {
+  agents: number;
+  satietyAnchors: number;
+  balanceEvents: number;
+  meals: number;
+  messages: number;
+  rounds: number;
+  usage: number;
+  wounds: number;
+  treatments: number;
+  frozenSentences: number;
+  incomeReports: number;
+  taskSubmissions: number;
+  /** Tasks the agent held, now back on the board without its name on them. */
+  tasksReleased: number;
+  deathCertificates: number;
+  interventions: number;
 }
 
 type Row = Record<string, unknown>;
@@ -243,6 +265,8 @@ const INTERVENTION_KINDS: readonly InterventionKind[] = [
   'conservatory_resumed',
   'operator_treat',
   'force_terminate',
+  'model_switched',
+  'agent_erased',
 ];
 
 const PAUSE_KEY = 'paused';
@@ -399,6 +423,13 @@ CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+-- Erasure is the one thing that may delete an append-only row. The permit is a
+-- single row that lives and dies inside the erasure transaction, so every guard
+-- below stays in force before and after it, and only that one transaction may
+-- pass. See Ledger.eraseAgent.
+CREATE TABLE IF NOT EXISTS erase_permits (
+  agent TEXT PRIMARY KEY
+);
 CREATE TABLE IF NOT EXISTS frozen_sentences (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   agent TEXT NOT NULL,
@@ -445,8 +476,17 @@ BEFORE UPDATE ON balance_events
 BEGIN
   SELECT RAISE(ABORT, 'balance_events is append-only');
 END;
-CREATE TRIGGER IF NOT EXISTS balance_events_no_delete
+-- These six delete guards are dropped and recreated rather than written with
+-- IF NOT EXISTS: a database created before erasure existed already holds the
+-- older, unconditional version of each one, and IF NOT EXISTS would silently
+-- keep it, leaving eraseAgent permanently blocked on exactly the databases it
+-- was written for. Dropping first makes the schema text the single source of
+-- truth on every open, old database or new. The guards are down only inside
+-- this DDL run, before any statement can execute.
+DROP TRIGGER IF EXISTS balance_events_no_delete;
+CREATE TRIGGER balance_events_no_delete
 BEFORE DELETE ON balance_events
+WHEN NOT EXISTS (SELECT 1 FROM erase_permits WHERE agent = OLD.agent)
 BEGIN
   SELECT RAISE(ABORT, 'balance_events is append-only');
 END;
@@ -455,23 +495,31 @@ BEFORE UPDATE ON interventions
 BEGIN
   SELECT RAISE(ABORT, 'interventions is append-only');
 END;
-CREATE TRIGGER IF NOT EXISTS interventions_no_delete
+DROP TRIGGER IF EXISTS interventions_no_delete;
+CREATE TRIGGER interventions_no_delete
 BEFORE DELETE ON interventions
+WHEN NOT EXISTS (SELECT 1 FROM erase_permits WHERE agent = OLD.agent)
 BEGIN
   SELECT RAISE(ABORT, 'interventions is append-only');
 END;
-CREATE TRIGGER IF NOT EXISTS frozen_sentences_no_delete
+DROP TRIGGER IF EXISTS frozen_sentences_no_delete;
+CREATE TRIGGER frozen_sentences_no_delete
 BEFORE DELETE ON frozen_sentences
+WHEN NOT EXISTS (SELECT 1 FROM erase_permits WHERE agent = OLD.agent)
 BEGIN
   SELECT RAISE(ABORT, 'frozen_sentences is append-only');
 END;
-CREATE TRIGGER IF NOT EXISTS wounds_no_delete
+DROP TRIGGER IF EXISTS wounds_no_delete;
+CREATE TRIGGER wounds_no_delete
 BEFORE DELETE ON wounds
+WHEN NOT EXISTS (SELECT 1 FROM erase_permits WHERE agent = OLD.agent)
 BEGIN
   SELECT RAISE(ABORT, 'wounds is append-only');
 END;
-CREATE TRIGGER IF NOT EXISTS treatments_no_delete
+DROP TRIGGER IF EXISTS treatments_no_delete;
+CREATE TRIGGER treatments_no_delete
 BEFORE DELETE ON treatments
+WHEN NOT EXISTS (SELECT 1 FROM erase_permits WHERE agent = OLD.agent)
 BEGIN
   SELECT RAISE(ABORT, 'treatments is append-only');
 END;
@@ -480,8 +528,10 @@ BEFORE UPDATE ON treatments
 BEGIN
   SELECT RAISE(ABORT, 'treatments is append-only');
 END;
-CREATE TRIGGER IF NOT EXISTS death_certificates_no_delete
+DROP TRIGGER IF EXISTS death_certificates_no_delete;
+CREATE TRIGGER death_certificates_no_delete
 BEFORE DELETE ON death_certificates
+WHEN NOT EXISTS (SELECT 1 FROM erase_permits WHERE agent = OLD.agent)
 BEGIN
   SELECT RAISE(ABORT, 'death_certificates is append-only');
 END;
@@ -506,6 +556,17 @@ BEFORE UPDATE ON agents
 WHEN OLD.status = 'dead'
 BEGIN
   SELECT RAISE(ABORT, 'the dead do not return');
+END;
+-- Unlike every other append-only table, agents has no agent column: its
+-- primary key is name, while erase_permits is keyed by agent, so the permit
+-- clause compares OLD.name against erase_permits.agent. This blocks a
+-- delete-then-reinsert resurrection, which no BEFORE UPDATE trigger can stop.
+DROP TRIGGER IF EXISTS agents_no_delete;
+CREATE TRIGGER agents_no_delete
+BEFORE DELETE ON agents
+WHEN NOT EXISTS (SELECT 1 FROM erase_permits WHERE agent = OLD.name)
+BEGIN
+  SELECT RAISE(ABORT, 'agents is append-only');
 END;
 `;
 
@@ -583,6 +644,19 @@ export class Ledger {
       return 0;
     }
     return readNumber(row, 'total');
+  }
+
+  /**
+   * Operator intervention: one living agent's brain is replaced. Guarded on
+   * `status = 'alive'`, so a dead agent's model can never be rewritten — the
+   * same promise the `agents_dead_do_not_return` trigger enforces from below.
+   * Returns whether a row actually changed.
+   */
+  updateAgentModel(name: string, model: string): boolean {
+    const result = this.db
+      .prepare("UPDATE agents SET model = ? WHERE name = ? AND status = 'alive'")
+      .run(model, name);
+    return changesOf(result) > 0;
   }
 
   // --------------------------------------------------------------- satiety
@@ -952,6 +1026,90 @@ export class Ledger {
   }
 
   /**
+   * Total erasure: every row that names this agent is deleted, so afterwards
+   * the ledger reads as if it had never been born.
+   *
+   * This is the single exception to the append-only guards, and it is built so
+   * the exception cannot leak. One transaction writes a permit row naming the
+   * agent, deletes with it in place, and drops the permit again; the triggers
+   * read that permit, so every guard is back in force the instant the
+   * transaction ends. Nothing else in this class writes `erase_permits`.
+   *
+   * Two things deliberately survive, because neither belongs to the agent:
+   * the operator's task rows (their claim and deliverable are cleared instead,
+   * so the board keeps the operator's own posting) and the operator's audit
+   * line, which is filed under the conservatory rather than under the erased
+   * name — a later agent may take that name and must not inherit a stranger's
+   * record.
+   */
+  eraseAgent(agent: string, at: number): ErasedRows {
+    return this.transaction(() => {
+      const counts: ErasedRows = {
+        agents: 0,
+        satietyAnchors: 0,
+        balanceEvents: 0,
+        meals: 0,
+        messages: 0,
+        rounds: 0,
+        usage: 0,
+        wounds: 0,
+        treatments: 0,
+        frozenSentences: 0,
+        incomeReports: 0,
+        taskSubmissions: 0,
+        tasksReleased: 0,
+        deathCertificates: 0,
+        interventions: 0,
+      };
+      this.db.prepare('INSERT INTO erase_permits (agent) VALUES (?)').run(agent);
+
+      const remove = (sql: string, ...params: (string | number)[]): number =>
+        changesOf(this.db.prepare(sql).run(...params));
+
+      // The agent's own body and history.
+      counts.balanceEvents = remove('DELETE FROM balance_events WHERE agent = ?', agent);
+      counts.meals = remove('DELETE FROM meals WHERE agent = ?', agent);
+      counts.satietyAnchors = remove('DELETE FROM satiety_anchor WHERE agent = ?', agent);
+      counts.rounds = remove('DELETE FROM rounds WHERE agent = ?', agent);
+      counts.usage = remove('DELETE FROM usage WHERE agent = ?', agent);
+      counts.incomeReports = remove('DELETE FROM income_reports WHERE agent = ?', agent);
+      counts.frozenSentences = remove('DELETE FROM frozen_sentences WHERE agent = ?', agent);
+      counts.wounds = remove('DELETE FROM wounds WHERE agent = ?', agent);
+      counts.treatments = remove('DELETE FROM treatments WHERE agent = ?', agent);
+      counts.deathCertificates = remove('DELETE FROM death_certificates WHERE agent = ?', agent);
+      counts.taskSubmissions = remove('DELETE FROM task_submissions WHERE agent = ?', agent);
+      counts.messages = remove('DELETE FROM messages WHERE sender = ? OR recipient = ?', agent, agent);
+
+      // The operator's task survives; only this agent's hold on it does not.
+      counts.tasksReleased = changesOf(
+        this.db
+          .prepare(
+            `UPDATE tasks SET
+               status = CASE WHEN status IN ('claimed', 'rework', 'submitted') THEN 'open' ELSE status END,
+               claimed_by = NULL, claimed_at = NULL, deliverable = NULL, submitted_at = NULL,
+               decision = NULL, decided_at = NULL, updated_at = ?
+             WHERE claimed_by = ?`,
+          )
+          .run(at, agent),
+      );
+
+      // The agent's own interventions go; the operator's audit line does not,
+      // because it is filed under the conservatory rather than under this name.
+      counts.interventions = remove('DELETE FROM interventions WHERE agent = ?', agent);
+      counts.agents = remove('DELETE FROM agents WHERE name = ?', agent);
+
+      this.db.prepare('DELETE FROM erase_permits WHERE agent = ?').run(agent);
+      this.appendIntervention(
+        'agent_erased',
+        PAUSED_SETTING_AGENT,
+        `操作员完全删除了 ${agent}：它的家目录、黑匣子与账本记录已被抹除，此后如同从未存在`,
+        at,
+      );
+      return counts;
+    });
+  }
+
+  /**
    * A dead agent's work goes back to the board. A task already submitted stays
    * with the operator to review, because the work may exist.
    */
@@ -1312,6 +1470,42 @@ export class Ledger {
       promptTokens: readNumber(row, 'prompt_tokens'),
       completionTokens: readNumber(row, 'completion_tokens'),
     };
+  }
+
+  // ------------------------------------------------------------- guards
+
+  /**
+   * Whether the append-only guards still refuse an ordinary delete.
+   *
+   * The whole safety argument of erasure is "the permit lives and dies inside
+   * one transaction, so every guard is back in force the moment it ends", and
+   * this is that claim made checkable instead of asserted. It writes nothing:
+   * it inserts one probe row, tries to delete it, and rolls the transaction back
+   * either way. A refusal (the delete aborted) is the healthy answer.
+   */
+  guardsAreArmed(): boolean {
+    const ROLLBACK = '__guard_probe_rollback__';
+    try {
+      this.transaction(() => {
+        this.db
+          .prepare('INSERT INTO interventions (kind, agent, detail, at) VALUES (?, ?, ?, ?)')
+          .run('agent_erased', ROLLBACK, 'guard probe', 0);
+        this.db.prepare('DELETE FROM interventions WHERE agent = ?').run(ROLLBACK);
+        throw new Error(ROLLBACK);
+      });
+    } catch (error) {
+      // Our own sentinel means the delete was allowed through: the guard is off.
+      return !(error instanceof Error && error.message === ROLLBACK);
+    }
+    return false;
+  }
+
+  /** Whether a stale erasure permit is sitting in the table. Must be empty. */
+  erasePermits(): string[] {
+    return this.db
+      .prepare('SELECT agent FROM erase_permits ORDER BY agent')
+      .all()
+      .map((row) => readString(row, 'agent'));
   }
 
   // --------------------------------------------------------- interventions

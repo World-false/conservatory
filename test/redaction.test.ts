@@ -524,10 +524,10 @@ describe('the original text never reaches the agent', () => {
         throw new Error('the round never sent a wake');
       }
       // What the agent sees: the manual, MEMORY as it now reads, body state,
-      // the board, messages.
-      expect(wake.user).not.toContain(stolen);
-      expect(wake.user).toContain(PLACEHOLDER);
+      // messages.
+      expect(wake.system).toContain(PLACEHOLDER);
       expect(wake.system).not.toContain(stolen);
+      expect(wake.user).not.toContain(stolen);
 
       // What the agent gets back from its tools.
       for (const message of worker.sent) {

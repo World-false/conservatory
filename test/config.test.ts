@@ -14,7 +14,7 @@ const VALID_VALUES = {
   heartbeatSeconds: 300,
   maxSlots: 1,
   memoryCapChars: 8000,
-  roundContextCapTokens: 60000,
+  roundContextCapTokens: 152000,
   maxToolCallsPerRound: 50,
   modelRequestTimeoutSeconds: 120,
   taskClaimTimeoutHours: 24,
@@ -61,28 +61,28 @@ function configError(run: () => void): string {
 }
 
 describe('configuration', () => {
-  it('reads the committed config file and leaves the exchange rate unset', () => {
+  it('reads the committed config file', () => {
     const config = loadAppConfig({ rootDir: process.cwd(), env: VALID_ENV });
-    expect(config.values.satietyDecayPerSecond).toBe(0.05);
+    expect(config.values.satietyDecayPerSecond).toBe(0.00028935);
     expect(config.values.satietyMax).toBe(100);
-    expect(config.values.mealPrice).toBe(15);
-    expect(config.values.satietyPerMeal).toBe(25);
-    expect(config.values.heartbeatSeconds).toBe(300);
-    expect(config.values.maxSlots).toBe(4);
-    expect(config.values.memoryCapChars).toBe(8000);
-    expect(config.values.roundContextCapTokens).toBe(60000);
+    expect(config.values.mealPrice).toBe(10);
+    expect(config.values.satietyPerMeal).toBe(35);
+    expect(config.values.heartbeatSeconds).toBe(1500);
+    expect(config.values.maxSlots).toBe(100000);
+    expect(config.values.memoryCapChars).toBe(3000000);
+    expect(config.values.roundContextCapTokens).toBe(900000);
     expect(config.values.maxToolCallsPerRound).toBe(50);
     expect(config.values.modelRequestTimeoutSeconds).toBe(120);
     expect(config.values.taskClaimTimeoutHours).toBe(24);
     expect(config.values.redactionIntervalSeconds).toBe(60);
-    expect(config.values.redactionCharsPerTick).toBe(20);
-    expect(config.values.redactionMinRanges).toBe(1);
-    expect(config.values.redactionMaxRanges).toBe(3);
-    expect(config.values.deathLineChars).toBe(2000);
+    expect(config.values.redactionCharsPerTick).toBe(46);
+    expect(config.values.redactionMinRanges).toBe(2);
+    expect(config.values.redactionMaxRanges).toBe(6);
+    expect(config.values.deathLineChars).toBe(400000);
     expect(config.values.ordinaryTreatmentPrice).toBe(25);
     expect(config.values.completeTreatmentPrice).toBe(80);
     expect(config.values.consolePort).toBe(4317);
-    expect(config.values.exchangeRate).toBeNull();
+    expect(config.values.exchangeRate).toBe(200);
     expect(config.paths.ledgerPath).toBe(path.join(process.cwd(), 'SUPERVISOR', 'ledger.db'));
     expect(config.paths.blackboxDir).toBe(path.join(process.cwd(), 'SUPERVISOR', 'blackbox'));
     expect(config.models.agent.model).toBe('agent-model');
@@ -101,6 +101,17 @@ describe('configuration', () => {
     withConfigFile({ ...VALID_VALUES, deathLineChars: 8000 }, (root) => {
       const message = configError(() => loadAppConfig({ rootDir: root, env: VALID_ENV }));
       expect(message).toContain('"memoryCapChars" must be greater than "deathLineChars"');
+    });
+    // A MEMORY that no round could ever fit: the agent would wake up and be
+    // ended by the cap every time, which is a permanent sleep.
+    withConfigFile({ ...VALID_VALUES, memoryCapChars: 400000, roundContextCapTokens: 200000 }, (root) => {
+      const message = configError(() => loadAppConfig({ rootDir: root, env: VALID_ENV }));
+      expect(message).toContain('"roundContextCapTokens" must be at least 250000');
+    });
+    // Exactly the minimum is allowed: ceil(400000 / 4) + 150000.
+    withConfigFile({ ...VALID_VALUES, memoryCapChars: 400000, roundContextCapTokens: 250000 }, (root) => {
+      const config = loadAppConfig({ rootDir: root, env: VALID_ENV });
+      expect(config.values.roundContextCapTokens).toBe(250000);
     });
     withConfigFile({ ...VALID_VALUES, redactionCharsPerTick: 0 }, (root) => {
       const message = configError(() => loadAppConfig({ rootDir: root, env: VALID_ENV }));
@@ -121,6 +132,14 @@ describe('configuration', () => {
     withConfigFile({ ...VALID_VALUES, deathLineChars: 0.5 }, (root) => {
       const message = configError(() => loadAppConfig({ rootDir: root, env: VALID_ENV }));
       expect(message).toContain('"deathLineChars"');
+    });
+  });
+
+  it('accepts a treatment price of zero', () => {
+    withConfigFile({ ...VALID_VALUES, ordinaryTreatmentPrice: 0, completeTreatmentPrice: 0 }, (root) => {
+      const config = loadAppConfig({ rootDir: root, env: VALID_ENV });
+      expect(config.values.ordinaryTreatmentPrice).toBe(0);
+      expect(config.values.completeTreatmentPrice).toBe(0);
     });
   });
 

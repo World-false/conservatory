@@ -17,6 +17,11 @@ import { Ledger } from '../src/organs/ledger';
 import { createAgent } from '../src/organs/population';
 import { createPromptLibrary, type PromptLibrary, type PromptLoadMode } from '../src/organs/prompts';
 import {
+  createModelConfigStore,
+  type ModelConfigStore,
+  type ModelsConfigData,
+} from '../src/organs/models/store';
+import {
   createSandboxPolicyStore,
   DEFAULT_SANDBOX_POLICY,
   type SandboxPolicyStore,
@@ -151,6 +156,83 @@ export function testSandboxPolicy(h: Harness, initial = DEFAULT_SANDBOX_POLICY):
     initial: { ...initial },
     persist: () => undefined,
   });
+}
+
+/** The `.env` models a test starts from, unless it says otherwise. */
+export const TEST_ENV_MODELS = {
+  agent: { baseUrl: 'http://127.0.0.1:1/v1', apiKey: 'agent-key', model: 'agent-model' },
+  memory: { baseUrl: 'http://127.0.0.1:1/v1', apiKey: 'memory-key', model: 'memory-model' },
+};
+
+/**
+ * A real model roster with its file write captured instead of performed, so a
+ * test never rewrites conservatory.config.json. Validation, seeding from .env
+ * and the "provider still in use" refusal all run exactly as in production.
+ */
+export function testModelStore(
+  h: Harness,
+  options: {
+    data?: ModelsConfigData;
+    listBoundAgents?: () => { agent: string; providerId: string }[];
+  } = {},
+): { store: ModelConfigStore; written: ModelsConfigData[] } {
+  const written: ModelsConfigData[] = [];
+  const store = createModelConfigStore({
+    configPath: h.paths.configPath,
+    env: TEST_ENV_MODELS,
+    readPersisted: () => options.data ?? null,
+    persist: (next) => {
+      written.push(next);
+    },
+    listBoundAgents: options.listBoundAgents,
+  });
+  return { store, written };
+}
+
+/** One provider, one model: the roster a simple test needs. */
+export function simpleModelsData(overrides: Partial<ModelsConfigData> = {}): ModelsConfigData {
+  return {
+    defaultAgentProviderId: 'main',
+    defaultAgentModel: 'agent-model',
+    defaultMemoryProviderId: 'main',
+    defaultMemoryModel: 'memory-model',
+    providers: [
+      {
+        id: 'main',
+        name: '主提供商',
+        baseUrl: 'http://127.0.0.1:1/v1',
+        apiKey: 'main-key',
+        models: ['agent-model', 'memory-model'],
+      },
+    ],
+    ...overrides,
+  };
+}
+
+/** Two providers, for the tests that care which one a model belongs to. */
+export function twoProviderModels(): ModelsConfigData {
+  return {
+    defaultAgentProviderId: 'openai',
+    defaultAgentModel: 'gpt-4o',
+    defaultMemoryProviderId: 'openai',
+    defaultMemoryModel: 'gpt-4o',
+    providers: [
+      {
+        id: 'openai',
+        name: 'OpenAI',
+        baseUrl: 'https://api.openai.com/v1',
+        apiKey: 'sk-openai',
+        models: ['gpt-4o', 'gpt-4o-mini'],
+      },
+      {
+        id: 'deepseek',
+        name: 'DeepSeek',
+        baseUrl: 'https://api.deepseek.com/v1',
+        apiKey: 'sk-deepseek',
+        models: ['deepseek-chat'],
+      },
+    ],
+  };
 }
 
 export function textResponse(

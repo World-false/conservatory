@@ -1,6 +1,7 @@
 # memory index
-- [Development rules](.agents/memory/feedback-development-rules.md) — Two-tier architect role, phase accountability, plain language, system event segregation
-- [User profile](.agents/memory/user-profile.md) — Vibe coder workflow, Windows environment, two-tier AI delegation, console UI modal preferences
+- [Development rules](.agents/memory/feedback-development-rules.md) — Two-tier architect role, plain language, snapshot-not-reference config, secrets out of git, verify the brief's claims
+- [Model config decisions](.agents/memory/project-model-config-decisions.md) — Settled 2026-10-04 choices: provider→model layers, frozen per-agent MODEL.json snapshot with key, untouched design.md §10
+- [User profile](.agents/memory/user-profile.md) — Vibe coder workflow, Windows environment, two-tier delegation, console UI modal preferences
 - [Windows ACL Sandbox reference](.agents/memory/reference-windows-acl-sandbox.md) — Step 3 sandbox blueprint plus the unequal-elevation constraints (no Low label, required restricting SIDs) found while porting it
 
 ---
@@ -39,7 +40,7 @@ No harness component belongs to an agent. That is what lets a component judge an
 - **Satiety and balance are values returned by a call, never files.** Nothing on disk may exist that says "you have N left". The agent reads both numbers and writes neither.
 - **Eating is an autonomous purchase via a fixed tool call.** The agent earns balance from real currency earned outside (credited at a fixed rate after the operator verifies it) or from operator tasks paid in harness currency, and invokes a fixed tool to buy satiety. Satiety falls with wall-clock time only — except while the operator has paused the whole conservatory; a pause stops time for every agent at once, wakes no one, and is recorded permanently as an intervention — and never refills automatically.
 - **Treatment is the agent's own purchase via a fixed tool call**, like eating: it picks the wound and the tier, and is refused when balance falls short.
-- **Placeholders survive every memory rewrite**: position, length, and emptiness. Every sentence holding a placeholder or a scar is frozen; the memory system never rewrites it, and the harness restores it from the ledger after every rewrite. Never ask the model to leave it alone.
+- **Placeholders survive every memory rewrite**: position, length, and emptiness. Every sentence holding a placeholder or a scar is frozen; the memory system never rewrites it, and the harness restores it from the ledger after every rewrite. Never rely on asking the model to leave it alone.
 - **The notebook is never redacted.** The agent can write it, so it can copy it, and a redaction there is not a redaction.
 - **Redaction may cut a word and never the file's structure.** A torn page still reads as a page; a torn index does not.
 - **Death is the only hard lock.** Nothing is restored after death: no snapshot, export, or resume path, not even for the operator. A commitment the operator intends to keep is revoked by one moment of softheartedness; a mechanism cannot be. Every other operator power exists, raises a warning, and is recorded permanently as an intervention.

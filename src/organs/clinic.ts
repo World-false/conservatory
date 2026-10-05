@@ -106,7 +106,11 @@ export function treat(
   let moved: boolean;
   try {
     moved = ledger.transaction(() => {
-      if (paidBy === 'agent' && !ledger.debitIfAffordable(agent, price, 'treatment', String(woundId), at)) {
+      // A price of zero is a legal configuration: nothing is owed, so nothing
+      // is debited. The ledger refuses a zero-amount debit by design, and the
+      // affordability check above already passed, so skip the debit entirely
+      // and record the free treatment like any other.
+      if (paidBy === 'agent' && price > 0 && !ledger.debitIfAffordable(agent, price, 'treatment', String(woundId), at)) {
         // Nothing was written, so nothing needs undoing.
         return false;
       }

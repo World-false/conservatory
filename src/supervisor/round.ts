@@ -24,7 +24,7 @@ import type { Ledger, TransferBalanceResult, TreatmentTier } from '../organs/led
 import { consolidateMemory, isoTime, readMemoryFile, type MemoryOutcome } from '../organs/memory';
 import { eat, formatAmount, readBodyStatus } from '../organs/metabolism';
 import { listLivingOtherAgents } from '../organs/population';
-import { renderUserContext, type PromptLibrary } from '../organs/prompts';
+import { renderRoundContext, type PromptLibrary } from '../organs/prompts';
 import {
   listNotebook,
   NotebookError,
@@ -311,260 +311,264 @@ export function executeTool(
   }
   const args = parsed.ok ? parsed.value : {};
 
-  switch (toolName) {
-    case 'get_status': {
-      const status = readBodyStatus(deps.ledger, deps.values, agent, at);
-      return ok({
-        satiety: Number(status.satiety.toFixed(3)),
-        satietyMax: status.satietyMax,
-        balance: Number(status.balance.toFixed(3)),
-        mealPrice: status.mealPrice,
-        satietyPerMeal: status.satietyPerMeal,
-        untreatedRedactedChars: deps.ledger.untreatedRedactedChars(agent),
-        deathLineChars: deps.values.deathLineChars,
-        ordinaryTreatmentPrice: deps.values.ordinaryTreatmentPrice,
-        completeTreatmentPrice: deps.values.completeTreatmentPrice,
-      });
-    }
-    case 'eat': {
-      const outcome = eat(deps.ledger, deps.values, agent, at);
-      if (!outcome.ok) {
-        deps.blackbox.append(agent, 'meal_refused', at, roundId, {
+  try {
+    switch (toolName) {
+      case 'get_status': {
+        const status = readBodyStatus(deps.ledger, deps.values, agent, at);
+        return ok({
+          satiety: Number(status.satiety.toFixed(3)),
+          satietyMax: status.satietyMax,
+          balance: Number(status.balance.toFixed(3)),
+          mealPrice: status.mealPrice,
+          satietyPerMeal: status.satietyPerMeal,
+          untreatedRedactedChars: deps.ledger.untreatedRedactedChars(agent),
+          deathLineChars: deps.values.deathLineChars,
+          ordinaryTreatmentPrice: deps.values.ordinaryTreatmentPrice,
+          completeTreatmentPrice: deps.values.completeTreatmentPrice,
+        });
+      }
+      case 'eat': {
+        const outcome = eat(deps.ledger, deps.values, agent, at);
+        if (!outcome.ok) {
+          deps.blackbox.append(agent, 'meal_refused', at, roundId, {
+            balance: outcome.balance,
+            price: outcome.price,
+          });
+          return {
+            content: JSON.stringify({
+              ok: false,
+              error: 'insufficient_balance',
+              balance: Number(outcome.balance.toFixed(3)),
+              price: outcome.price,
+              missing: Number(outcome.missing.toFixed(3)),
+              satiety: Number(outcome.satiety.toFixed(3)),
+            }),
+            isError: false,
+          };
+        }
+        deps.blackbox.append(agent, 'meal', at, roundId, {
+          price: outcome.price,
+          gained: outcome.gained,
+          overflow: outcome.overflow,
+          satiety: outcome.satiety,
           balance: outcome.balance,
+        });
+        return ok({
+          satiety: Number(outcome.satiety.toFixed(3)),
+          satietyMax: outcome.satietyMax,
+          balance: Number(outcome.balance.toFixed(3)),
+          gained: Number(outcome.gained.toFixed(3)),
+          overflow: Number(outcome.overflow.toFixed(3)),
           price: outcome.price,
         });
-        return {
-          content: JSON.stringify({
-            ok: false,
-            error: 'insufficient_balance',
-            balance: Number(outcome.balance.toFixed(3)),
-            price: outcome.price,
-            missing: Number(outcome.missing.toFixed(3)),
-            satiety: Number(outcome.satiety.toFixed(3)),
-          }),
-          isError: false,
-        };
       }
-      deps.blackbox.append(agent, 'meal', at, roundId, {
-        price: outcome.price,
-        gained: outcome.gained,
-        overflow: outcome.overflow,
-        satiety: outcome.satiety,
-        balance: outcome.balance,
-      });
-      return ok({
-        satiety: Number(outcome.satiety.toFixed(3)),
-        satietyMax: outcome.satietyMax,
-        balance: Number(outcome.balance.toFixed(3)),
-        gained: Number(outcome.gained.toFixed(3)),
-        overflow: Number(outcome.overflow.toFixed(3)),
-        price: outcome.price,
-      });
-    }
-    case 'list_wounds': {
-      return ok({ wounds: listWoundViews(deps, agent) });
-    }
-    case 'treat': {
-      const woundId = readNumberArg(args, 'wound_id');
-      const tierArg = readStringArg(args, 'tier');
-      if (woundId === null || !Number.isInteger(woundId)) {
-        return fail('wound_id must be an integer');
+      case 'list_wounds': {
+        return ok({ wounds: listWoundViews(deps, agent) });
       }
-      if (tierArg !== 'ordinary' && tierArg !== 'complete') {
-        return fail('tier must be "ordinary" or "complete"');
-      }
-      const tier: TreatmentTier = tierArg;
-      const outcome = treat(deps, agent, woundId, tier, 'agent');
-      if (!outcome.ok) {
-        deps.blackbox.append(agent, 'treatment_refused', at, roundId, {
-          woundId,
-          tier,
-          code: outcome.code,
+      case 'treat': {
+        const woundId = readNumberArg(args, 'wound_id');
+        const tierArg = readStringArg(args, 'tier');
+        if (woundId === null || !Number.isInteger(woundId)) {
+          return fail('wound_id must be an integer');
+        }
+        if (tierArg !== 'ordinary' && tierArg !== 'complete') {
+          return fail('tier must be "ordinary" or "complete"');
+        }
+        const tier: TreatmentTier = tierArg;
+        const outcome = treat(deps, agent, woundId, tier, 'agent');
+        if (!outcome.ok) {
+          deps.blackbox.append(agent, 'treatment_refused', at, roundId, {
+            woundId,
+            tier,
+            code: outcome.code,
+          });
+          return {
+            content: JSON.stringify({
+              ok: false,
+              error: outcome.code,
+              balance: Number(outcome.balance.toFixed(3)),
+              price: outcome.price,
+              missing: Number(outcome.missing.toFixed(3)),
+            }),
+            isError: false,
+          };
+        }
+        return ok({
+          wound_id: outcome.wound.id,
+          status: outcome.wound.status,
+          tier: outcome.tier,
+          price: outcome.price,
+          balance: Number(deps.ledger.getBalance(agent).toFixed(3)),
+          untreatedRedactedChars: deps.ledger.untreatedRedactedChars(agent),
         });
-        return {
-          content: JSON.stringify({
-            ok: false,
-            error: outcome.code,
-            balance: Number(outcome.balance.toFixed(3)),
-            price: outcome.price,
-            missing: Number(outcome.missing.toFixed(3)),
-          }),
-          isError: false,
-        };
       }
-      return ok({
-        wound_id: outcome.wound.id,
-        status: outcome.wound.status,
-        tier: outcome.tier,
-        price: outcome.price,
-        balance: Number(deps.ledger.getBalance(agent).toFixed(3)),
-        untreatedRedactedChars: deps.ledger.untreatedRedactedChars(agent),
-      });
+      case 'list_tasks': {
+        const board = listBoardTasks(deps.ledger, agent);
+        return ok({
+          open: board.open.map((task) => ({
+            id: task.id,
+            title: task.title,
+            description: task.description,
+            price: task.price,
+          })),
+          mine: board.mine.map((task) => ({
+            id: task.id,
+            title: task.title,
+            description: task.description,
+            price: task.price,
+            status: task.status,
+          })),
+        });
+      }
+      case 'claim_task': {
+        const taskId = readStringArg(args, 'task_id');
+        if (taskId === null) {
+          return fail('task_id must be a string');
+        }
+        const result = claimTask(deps.ledger, agent, taskId, at);
+        if (!result.ok) {
+          return { content: JSON.stringify({ ok: false, error: result.code }), isError: false };
+        }
+        deps.blackbox.append(agent, 'task_claimed', at, roundId, { taskId });
+        return ok({ task: { id: result.task.id, title: result.task.title, price: result.task.price, status: result.task.status } });
+      }
+      case 'submit_task': {
+        const taskId = readStringArg(args, 'task_id');
+        const deliverable = readStringArg(args, 'deliverable');
+        if (taskId === null || deliverable === null) {
+          return fail('task_id and deliverable must both be strings');
+        }
+        const result = submitTask(deps.ledger, agent, taskId, deliverable, at);
+        if (!result.ok) {
+          return { content: JSON.stringify({ ok: false, error: result.code }), isError: false };
+        }
+        deps.blackbox.append(agent, 'task_submitted', at, roundId, {
+          taskId,
+          deliverable,
+        });
+        return ok({ task: { id: result.task.id, status: result.task.status } });
+      }
+      case 'report_income': {
+        const where = readStringArg(args, 'where');
+        const work = readStringArg(args, 'work');
+        const amount = readNumberArg(args, 'amount');
+        const currency = readStringArg(args, 'currency');
+        if (where === null || work === null || amount === null || currency === null) {
+          return fail('where, work, amount and currency are all required');
+        }
+        const result = reportIncome(deps.ledger, agent, { where, work, amount, currency }, at);
+        if (!result.ok) {
+          return { content: JSON.stringify({ ok: false, error: result.code }), isError: false };
+        }
+        deps.blackbox.append(agent, 'income_reported', at, roundId, {
+          reportId: result.report.id,
+          where,
+          work,
+          amount,
+          currency,
+        });
+        return ok({ report_id: result.report.id, status: result.report.status });
+      }
+      case 'message_operator': {
+        const text = readStringArg(args, 'text');
+        if (text === null || text.trim() === '') {
+          return fail('text must be a non-empty string');
+        }
+        const id = deps.ledger.appendMessage(agent, OPERATOR, text, at);
+        deps.blackbox.append(agent, 'message_to_operator', at, roundId, { messageId: id, text });
+        return ok({ message_id: id });
+      }
+      case 'list_agents': {
+        const others = listLivingOtherAgents(deps.ledger, agent);
+        deps.blackbox.append(agent, 'list_agents', at, null, { count: others.length });
+        if (others.length === 0) {
+          return plain('There are no other living agents in the conservatory.');
+        }
+        return plain(others.map((other) => `- ${other.name}`).join('\n'));
+      }
+      case 'message_agent': {
+        const recipient = readStringArg(args, 'recipient');
+        const text = readStringArg(args, 'text');
+        if (recipient === null || text === null) {
+          return fail('recipient and text must both be strings');
+        }
+        if (recipient === agent) {
+          return plain('You cannot message yourself.');
+        }
+        if (text.trim() === '') {
+          return plain('Message text cannot be empty.');
+        }
+        const target = deps.ledger.getAgent(recipient);
+        if (target === null) {
+          return plain(`Agent "${recipient}" does not exist.`);
+        }
+        if (target.status !== 'alive') {
+          return plain(`Agent "${recipient}" is not alive.`);
+        }
+        deps.ledger.appendMessage(agent, recipient, text.trim(), at);
+        deps.blackbox.append(agent, 'message_agent', at, null, { recipient, text: text.trim() });
+        return plain(`Message sent to ${recipient}.`);
+      }
+      case 'transfer_balance': {
+        const recipient = readStringArg(args, 'recipient');
+        const amount = readNumberArg(args, 'amount');
+        if (recipient === null) {
+          return fail('recipient must be a string');
+        }
+        if (amount === null || !Number.isFinite(amount) || amount <= 0) {
+          return plain('Amount must be a positive number.');
+        }
+        if (recipient === agent) {
+          return plain('You cannot transfer balance to yourself.');
+        }
+        const result = deps.ledger.transferBalance(agent, recipient, amount, at);
+        if (!result.ok) {
+          return plain(transferRefusal(result.reason));
+        }
+        deps.blackbox.append(agent, 'transfer_out', at, null, { recipient, amount });
+        deps.blackbox.append(recipient, 'transfer_in', at, null, { sender: agent, amount });
+        return plain(
+          `Transferred ${formatAmount(amount)} balance to ${recipient}. Your balance is now ${formatAmount(result.senderBalance)}.`,
+        );
+      }
+      case 'notebook_list': {
+        try {
+          const files = listNotebook(deps.paths, agent);
+          return ok({ files });
+        } catch (error) {
+          return notebookFailure(error);
+        }
+      }
+      case 'notebook_read': {
+        const path = readStringArg(args, 'path');
+        if (path === null) {
+          return fail('path must be a string');
+        }
+        try {
+          const content = readNotebookFile(deps.paths, agent, path);
+          return ok({ path, content });
+        } catch (error) {
+          return notebookFailure(error);
+        }
+      }
+      case 'notebook_write': {
+        const path = readStringArg(args, 'path');
+        const content = readStringArg(args, 'content');
+        if (path === null || content === null) {
+          return fail('path and content must both be strings');
+        }
+        try {
+          const stored = writeNotebookFile(deps.paths, agent, path, content);
+          return ok({ path: stored, bytes: Buffer.byteLength(content, 'utf8') });
+        } catch (error) {
+          return notebookFailure(error);
+        }
+      }
+      default:
+        return fail(`unknown tool: ${toolName}`);
     }
-    case 'list_tasks': {
-      const board = listBoardTasks(deps.ledger, agent);
-      return ok({
-        open: board.open.map((task) => ({
-          id: task.id,
-          title: task.title,
-          description: task.description,
-          price: task.price,
-        })),
-        mine: board.mine.map((task) => ({
-          id: task.id,
-          title: task.title,
-          description: task.description,
-          price: task.price,
-          status: task.status,
-        })),
-      });
-    }
-    case 'claim_task': {
-      const taskId = readStringArg(args, 'task_id');
-      if (taskId === null) {
-        return fail('task_id must be a string');
-      }
-      const result = claimTask(deps.ledger, agent, taskId, at);
-      if (!result.ok) {
-        return { content: JSON.stringify({ ok: false, error: result.code }), isError: false };
-      }
-      deps.blackbox.append(agent, 'task_claimed', at, roundId, { taskId });
-      return ok({ task: { id: result.task.id, title: result.task.title, price: result.task.price, status: result.task.status } });
-    }
-    case 'submit_task': {
-      const taskId = readStringArg(args, 'task_id');
-      const deliverable = readStringArg(args, 'deliverable');
-      if (taskId === null || deliverable === null) {
-        return fail('task_id and deliverable must both be strings');
-      }
-      const result = submitTask(deps.ledger, agent, taskId, deliverable, at);
-      if (!result.ok) {
-        return { content: JSON.stringify({ ok: false, error: result.code }), isError: false };
-      }
-      deps.blackbox.append(agent, 'task_submitted', at, roundId, {
-        taskId,
-        deliverable,
-      });
-      return ok({ task: { id: result.task.id, status: result.task.status } });
-    }
-    case 'report_income': {
-      const where = readStringArg(args, 'where');
-      const work = readStringArg(args, 'work');
-      const amount = readNumberArg(args, 'amount');
-      const currency = readStringArg(args, 'currency');
-      if (where === null || work === null || amount === null || currency === null) {
-        return fail('where, work, amount and currency are all required');
-      }
-      const result = reportIncome(deps.ledger, agent, { where, work, amount, currency }, at);
-      if (!result.ok) {
-        return { content: JSON.stringify({ ok: false, error: result.code }), isError: false };
-      }
-      deps.blackbox.append(agent, 'income_reported', at, roundId, {
-        reportId: result.report.id,
-        where,
-        work,
-        amount,
-        currency,
-      });
-      return ok({ report_id: result.report.id, status: result.report.status });
-    }
-    case 'message_operator': {
-      const text = readStringArg(args, 'text');
-      if (text === null || text.trim() === '') {
-        return fail('text must be a non-empty string');
-      }
-      const id = deps.ledger.appendMessage(agent, OPERATOR, text, at);
-      deps.blackbox.append(agent, 'message_to_operator', at, roundId, { messageId: id, text });
-      return ok({ message_id: id });
-    }
-    case 'list_agents': {
-      const others = listLivingOtherAgents(deps.ledger, agent);
-      deps.blackbox.append(agent, 'list_agents', at, null, { count: others.length });
-      if (others.length === 0) {
-        return plain('There are no other living agents in the conservatory.');
-      }
-      return plain(others.map((other) => `- ${other.name}`).join('\n'));
-    }
-    case 'message_agent': {
-      const recipient = readStringArg(args, 'recipient');
-      const text = readStringArg(args, 'text');
-      if (recipient === null || text === null) {
-        return fail('recipient and text must both be strings');
-      }
-      if (recipient === agent) {
-        return plain('You cannot message yourself.');
-      }
-      if (text.trim() === '') {
-        return plain('Message text cannot be empty.');
-      }
-      const target = deps.ledger.getAgent(recipient);
-      if (target === null) {
-        return plain(`Agent "${recipient}" does not exist.`);
-      }
-      if (target.status !== 'alive') {
-        return plain(`Agent "${recipient}" is not alive.`);
-      }
-      deps.ledger.appendMessage(agent, recipient, text.trim(), at);
-      deps.blackbox.append(agent, 'message_agent', at, null, { recipient, text: text.trim() });
-      return plain(`Message sent to ${recipient}.`);
-    }
-    case 'transfer_balance': {
-      const recipient = readStringArg(args, 'recipient');
-      const amount = readNumberArg(args, 'amount');
-      if (recipient === null) {
-        return fail('recipient must be a string');
-      }
-      if (amount === null || !Number.isFinite(amount) || amount <= 0) {
-        return plain('Amount must be a positive number.');
-      }
-      if (recipient === agent) {
-        return plain('You cannot transfer balance to yourself.');
-      }
-      const result = deps.ledger.transferBalance(agent, recipient, amount, at);
-      if (!result.ok) {
-        return plain(transferRefusal(result.reason));
-      }
-      deps.blackbox.append(agent, 'transfer_out', at, null, { recipient, amount });
-      deps.blackbox.append(recipient, 'transfer_in', at, null, { sender: agent, amount });
-      return plain(
-        `Transferred ${formatAmount(amount)} balance to ${recipient}. Your balance is now ${formatAmount(result.senderBalance)}.`,
-      );
-    }
-    case 'notebook_list': {
-      try {
-        const files = listNotebook(deps.paths, agent);
-        return ok({ files });
-      } catch (error) {
-        return notebookFailure(error);
-      }
-    }
-    case 'notebook_read': {
-      const path = readStringArg(args, 'path');
-      if (path === null) {
-        return fail('path must be a string');
-      }
-      try {
-        const content = readNotebookFile(deps.paths, agent, path);
-        return ok({ path, content });
-      } catch (error) {
-        return notebookFailure(error);
-      }
-    }
-    case 'notebook_write': {
-      const path = readStringArg(args, 'path');
-      const content = readStringArg(args, 'content');
-      if (path === null || content === null) {
-        return fail('path and content must both be strings');
-      }
-      try {
-        const stored = writeNotebookFile(deps.paths, agent, path, content);
-        return ok({ path: stored, bytes: Buffer.byteLength(content, 'utf8') });
-      } catch (error) {
-        return notebookFailure(error);
-      }
-    }
-    default:
-      return fail(`unknown tool: ${toolName}`);
+  } catch (error) {
+    return fail(error instanceof Error ? error.message : String(error));
   }
 }
 
@@ -598,70 +602,76 @@ async function executeCommandTool(
   roundId: number,
 ): Promise<ToolOutcome> {
   const at = deps.now();
-  const parsed = parseArguments(argumentsJson);
-  if (!parsed.ok) {
-    return fail(parsed.error);
-  }
-  const command = readStringArg(parsed.value, 'command');
-  if (command === null || command.trim() === '') {
-    return fail('command must be a non-empty string');
-  }
-  const shellArg = readStringArg(parsed.value, 'shell');
-  if (shellArg !== null && shellArg !== 'pwsh' && shellArg !== 'cmd') {
-    return fail('shell must be "pwsh" or "cmd"');
-  }
-  const shell: SandboxShell = shellArg === 'cmd' ? 'cmd' : 'pwsh';
-
-  const homeDir = agentHomeDir(deps.paths, agent);
-  const notebookDir = agentNotebookDir(deps.paths, agent);
-  const memoryPath = agentMemoryPath(deps.paths, agent);
-  mkdirSync(notebookDir, { recursive: true });
-  const policy = deps.sandbox.resolve({
-    name: agent,
-    homeDir,
-    notebookDir,
-    memoryPath,
-  });
-
   try {
-    const result = await executeSandboxedCommand({
-      command,
-      cwd: notebookDir,
-      writableDirs: policy.writableDirs,
-      readMode: policy.readMode,
-      readBlacklist: policy.readBlacklist,
-      readWhitelist: policy.readWhitelist,
-      readOnlyFiles: policy.readOnlyFiles,
-      whitelistRoot: policy.whitelistRoot,
-      timeoutMs: policy.commandTimeoutSeconds * 1000,
-      maxOutputChars: policy.maxOutputChars,
-      shell,
+    const parsed = parseArguments(argumentsJson);
+    if (!parsed.ok) {
+      return fail(parsed.error);
+    }
+    const command = readStringArg(parsed.value, 'command');
+    if (command === null || command.trim() === '') {
+      return fail('command must be a non-empty string');
+    }
+    const shellArg = readStringArg(parsed.value, 'shell');
+    if (shellArg !== null && shellArg !== 'pwsh' && shellArg !== 'cmd') {
+      return fail('shell must be "pwsh" or "cmd"');
+    }
+    const shell: SandboxShell = shellArg === 'cmd' ? 'cmd' : 'pwsh';
+
+    const homeDir = agentHomeDir(deps.paths, agent);
+    const notebookDir = agentNotebookDir(deps.paths, agent);
+    const memoryPath = agentMemoryPath(deps.paths, agent);
+    mkdirSync(notebookDir, { recursive: true });
+    const policy = deps.sandbox.resolve({
+      name: agent,
+      homeDir,
+      notebookDir,
+      memoryPath,
     });
-    deps.blackbox.append(agent, 'command_executed', at, roundId, {
-      command,
-      shell,
-      cwd: notebookDir,
-      exitCode: result.exitCode,
-      durationMs: result.durationMs,
-      timedOut: result.timedOut,
-      stdout: result.stdout,
-      stderr: result.stderr,
-    });
-    return {
-      content: JSON.stringify({
+
+    try {
+      const result = await executeSandboxedCommand({
+        command,
+        cwd: notebookDir,
+        writableDirs: policy.writableDirs,
+        readMode: policy.readMode,
+        readBlacklist: policy.readBlacklist,
+        readWhitelist: policy.readWhitelist,
+        readOnlyFiles: policy.readOnlyFiles,
+        whitelistRoot: policy.whitelistRoot,
+        timeoutMs: policy.commandTimeoutSeconds * 1000,
+        maxOutputChars: policy.maxOutputChars,
+        shell,
+      });
+      deps.blackbox.append(agent, 'command_executed', at, roundId, {
+        command,
+        shell,
+        cwd: notebookDir,
         exitCode: result.exitCode,
-        stdout: result.stdout,
-        stderr: result.stderr,
         durationMs: result.durationMs,
         timedOut: result.timedOut,
-      }),
-      isError: false,
-    };
+        stdout: result.stdout,
+        stderr: result.stderr,
+      });
+      return {
+        content: JSON.stringify({
+          exitCode: result.exitCode,
+          stdout: result.stdout,
+          stderr: result.stderr,
+          durationMs: result.durationMs,
+          timedOut: result.timedOut,
+        }),
+        isError: false,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const code = error instanceof SandboxError ? error.code : 'sandbox_failure';
+      deps.blackbox.append(agent, 'command_refused', at, roundId, { command, shell, code, message });
+      return { content: JSON.stringify({ ok: false, error: code, message }), isError: true };
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const code = error instanceof SandboxError ? error.code : 'sandbox_failure';
-    deps.blackbox.append(agent, 'command_refused', at, roundId, { command, shell, code, message });
-    return { content: JSON.stringify({ ok: false, error: code, message }), isError: true };
+    deps.blackbox.append(agent, 'command_refused', at, roundId, { code: 'sandbox_failure', message });
+    return fail(message);
   }
 }
 
@@ -718,7 +728,6 @@ export class RoundCoordinator {
 
     const memory = readMemoryFile(paths, agent.name);
     const status = readBodyStatus(ledger, values, agent.name, now);
-    const board = listBoardTasks(ledger, agent.name);
     const unread = ledger.listUnreadMessages(agent.name);
 
     const bodyState = [
@@ -729,24 +738,6 @@ export class RoundCoordinator {
       `wounds not fully healed: ${ledger.listWounds(agent.name).filter((wound) => wound.status !== 'healed').length}`,
       `treatment prices: ordinary ${values.ordinaryTreatmentPrice}, complete ${values.completeTreatmentPrice}`,
     ].join('\n');
-
-    const taskBoard: string[] = [];
-    taskBoard.push('Open tasks (fixed price, first come first served):');
-    if (board.open.length === 0) {
-      taskBoard.push('- (none)');
-    }
-    for (const task of board.open) {
-      taskBoard.push(`- ${task.id} | ${task.title} | price ${task.price}`);
-      taskBoard.push(`  ${task.description}`);
-    }
-    taskBoard.push('Held by you:');
-    if (board.mine.length === 0) {
-      taskBoard.push('- (none)');
-    }
-    for (const task of board.mine) {
-      taskBoard.push(`- ${task.id} | ${task.title} | price ${task.price} | status ${task.status}`);
-      taskBoard.push(`  ${task.description}`);
-    }
 
     // The inbox holds two different things, and the agent must not have to
     // guess which one it is reading: what the harness did to its body, and what
@@ -762,20 +753,28 @@ export class RoundCoordinator {
         ? '(none)'
         : chatMsgs.map((message) => `- ${isoTime(message.at)} [from ${message.sender}]: ${message.body}`).join('\n');
 
-    const user = renderUserContext(templates.userContext.text, {
+    // Who the agent is goes on the system side, after the manual: MEMORY and
+    // the body state are read as part of its own standing description rather
+    // than as something someone said to it. The task board is not injected at
+    // all; the agent reads it with list_tasks when it wants it.
+    const systemBlocks = {
       memory: memory.trimEnd(),
       bodyState,
-      taskBoard: taskBoard.join('\n'),
       systemReminders,
       messages,
-    });
+    };
+    const system = [templates.manual.text, renderRoundContext(templates.systemContext.text, systemBlocks)].join(
+      '\n\n',
+    );
+
+    const user = renderRoundContext(templates.userContext.text, systemBlocks);
 
     ledger.markMessagesRead(
       unread.map((message) => message.id),
       now,
     );
 
-    return { system: templates.manual.text, user };
+    return { system, user };
   }
 
   /** Runs one whole round, then folds it into MEMORY. */
@@ -913,7 +912,15 @@ export class RoundCoordinator {
     };
 
     worker.onMessage((message) => {
-      chain = chain.then(() => handle(message));
+      // Defense in depth: `handle` is not supposed to throw, but if anything
+      // ever escapes it the rejection would otherwise be unhandled, which took
+      // the whole supervisor process down and left this round row open. Record
+      // it and settle the round instead, so the promise always settles.
+      chain = chain.then(() => handle(message)).catch((error: unknown) => {
+        const text = error instanceof Error ? error.message : String(error);
+        blackbox.append(agent.name, 'round_error', this.deps.now(), roundId, { error: text });
+        settle({ endReason: 'model_error', finalReply: null, error: text });
+      });
     });
     try {
       worker.send({
