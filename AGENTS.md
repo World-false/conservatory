@@ -27,7 +27,7 @@ When a task resolved non-trivial bugs, required multiple debugging trials, or in
 
 # AGENTS.md
 
-Conservatory is an agent harness that provides a virtual biological body for agents. Read [docs/philosophy.zh.md](docs/philosophy.zh.md) for the core design philosophy and [docs/design.md](docs/design.md) for engineering specifications before changing anything; it states the substrate and what each decision gave up.
+Conservatory is an agent harness that provides a virtual biological body for agents. Read [docs/philosophy.md](docs/philosophy.md) for the core design philosophy and [docs/design.md](docs/design.md) for engineering specifications before changing anything; it states the substrate and what each decision gave up.
 
 ## The line that decides everything
 

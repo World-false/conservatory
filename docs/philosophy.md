@@ -1,7 +1,5 @@
 # Conservatory Design Philosophy: Constructing a Virtual Biological Substrate for AI Consciousness
 
-English | [中文](philosophy.zh.md)
-
 ---
 
 ## 1. Core Thesis: Consciousness and the Body

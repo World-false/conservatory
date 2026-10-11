@@ -1,7 +1,7 @@
 # Conservatory 项目 Bug 检查报告（完整版）
 
 - 检查日期：2026-10-04（勘误更新：同日深夜，经二次独立核对）
-- 检查对象：`I:\conservatory`（TypeScript / Node，Windows）
+- 检查对象：`G:\Conservatory-new`（TypeScript / Node，Windows）
 - 依据文档：[docs/design.md](docs/design.md)、[docs/philosophy.md](docs/philosophy.md)、[AGENTS.md](AGENTS.md)
 - 检查方式：五路只读审计 + 我本人逐条复现验证（复现脚本全在系统临时目录，未落入项目树）
 - **没有修改项目里任何文件。** 全项目只新增了本报告这一个文件。（勘误更新时例外：以下勘误修订**只改了本文件**，项目源码、配置与文档未动。）
@@ -113,7 +113,7 @@
 
 **位置：**[src/organs/sandbox/index.ts:367-372](src/organs/sandbox/index.ts#L367)（`overlapsWritable` 守卫）、[src/organs/sandbox/policy.ts:350-357](src/organs/sandbox/policy.ts#L350)
 
-**问题**：操作员在控制台里给 Agent 加一个"可写目录"（[design.md §3](docs/design.md#L81) 明确允许这个功能，操作员很自然就会填成项目根目录 `I:\conservatory`）。当这个目录是 `SUPERVISOR/` 的**上级目录**时，那条"锁定的"拒绝规则被**跳过**了：
+**问题**：操作员在控制台里给 Agent 加一个"可写目录"（[design.md §3](docs/design.md#L81) 明确允许这个功能，操作员很自然就会填成项目根目录 `G:\Conservatory-new`）。当这个目录是 `SUPERVISOR/` 的**上级目录**时，那条"锁定的"拒绝规则被**跳过**了：
 
 ```ts
 const overlapsWritable = writableDirs.some(
@@ -206,12 +206,12 @@ agent status after = alive
 ```
 child stdout: "about to run the round with treatment price 0"
 LedgerError: debit amount must be a finite number greater than 0
-    at Ledger.debitIfAffordable (I:\conservatory\src\organs\ledger.ts:730:13)
-    at <anonymous> (I:\conservatory\src\organs\clinic.ts:109:41)
-    at treat (I:\conservatory\src\organs\clinic.ts:108:20)
-    at executeTool (I:\conservatory\src\supervisor\round.ts:377:23)
-    at handle (I:\conservatory\src\supervisor\round.ts:857:15)
-    at <anonymous> (I:\conservatory\src\supervisor\round.ts:916:32)
+    at Ledger.debitIfAffordable (G:\Conservatory-new\src\organs\ledger.ts:730:13)
+    at <anonymous> (G:\Conservatory-new\src\organs\clinic.ts:109:41)
+    at treat (G:\Conservatory-new\src\organs\clinic.ts:108:20)
+    at executeTool (G:\Conservatory-new\src\supervisor\round.ts:377:23)
+    at handle (G:\Conservatory-new\src\supervisor\round.ts:857:15)
+    at <anonymous> (G:\Conservatory-new\src\supervisor\round.ts:916:32)
 child exit code: 1
 => CONFIRMED - the treatment-price-0 LedgerError kills the whole process.
 ```

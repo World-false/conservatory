@@ -1,7 +1,5 @@
 # Conservatory Engineering Implementation and Architecture Specification
 
-English | [中文](design.zh.md)
-
 > **Important Note**: This document focuses on Conservatory's **engineering architecture, mechanism interfaces, and technical implementation specifications**. For the project's foundational ontology, core thesis, and biological blueprint, please refer to the dedicated [Design Philosophy Document](philosophy.md).
 
 ## 1. Engineering Objective and Context
@@ -136,7 +134,7 @@ The `MEMORY` cap must sit well above the death-line count, or no agent can be re
 
 ## 7. Death
 
-When the lifetime count of **untreated redacted characters** reaches a fixed number (for example 2000), the agent dies. The number does not depend on how long `MEMORY` is. Hunger alone does not kill; the only path is hunger → redaction → untreated redaction accumulating to the death line. A forced termination by the operator also counts as death.
+When the lifetime count of **untreated redacted characters** reaches a fixed number (`deathLineChars`, `400000` in the current configuration), the agent dies. The number does not depend on how long `MEMORY` is. Hunger alone does not kill; the only path is hunger → redaction → untreated redaction accumulating to the death line. A forced termination by the operator also counts as death.
 
 A **development period** follows on its own: while `MEMORY` is shorter than the death-line count, there are not enough characters to redact, so a newborn can starve but cannot die. No extra rule is needed.
 
@@ -180,17 +178,17 @@ Built in four steps:
 1. One agent's survival loop: heartbeat, satiety, balance, eating, the task board, memory consolidation, and a simple web console. No command execution. **Done.**
 2. Redaction, treatment, death, and the death certificate. **Done.**
 3. The Windows sandbox, command execution, and network access. **Done:** the sandbox is `src/organs/sandbox/` (koffi bindings, restricted token, ACL grants and denials, Job-object spawn), the agent's tool is `execute_command`, and the console has the sandbox security policy panel.
-4. Multiple agents, messaging, and transfers. **In progress:** the slot ceiling now comes from `maxSlots` (`4` by default, no code-level clamp), the ledger moves balance between two living agents as one atomic transaction, and the agent now has the three social tools `list_agents`, `message_agent` and `transfer_balance`; the round's user context separates system reminders from messages, and the manual documents the population. The console's population surfaces are still to come.
+4. Multiple agents, messaging, and transfers. **In progress:** the slot ceiling now comes from `maxSlots` (no code-level clamp), the ledger moves balance between two living agents as one atomic transaction, and the agent now has the three social tools `list_agents`, `message_agent` and `transfer_balance`; the round's user context separates system reminders from messages, and the manual documents the population. The console's population surfaces are still to come.
 
-## Deferred
+## Configuration and Deferred Items
 
-These values are earlier starting points, unvalidated against real behaviour, and all operator-overridable config rather than constants: satiety decay `0.05` per second, meal price `15`, satiety per meal `25`, initial satiety `100`, initial balance `100`, heartbeat interval `300` seconds, ordinary treatment `25`, complete treatment `80`, maximum slots `4`. At these values satiety falls 180 per hour, which costs about 108 balance per hour in meals; that intensity needs measuring in step 1 before it is tuned.
+All physiological and runtime numbers are operator-overridable in `conservatory.config.json` rather than hardcoded constants. The current configuration sets a roughly **10-day survival window** from full satiety to death if an adult agent neither eats nor heals:
 
-Still unset: the exchange rate for real currency, the `MEMORY` length cap, the per-round context cap, and which open-source project the sandbox is ported from.
+- **Metabolism and economy**: `satietyDecayPerSecond 0.00028935` (100 satiety drains to 0 in 4 wall-clock days), `satietyMax 100`, `initialSatiety 100`, `initialBalance 100`, `mealPrice 10`, `satietyPerMeal 35`, `heartbeatSeconds 1500` (25 minutes), `exchangeRate 200` (when set to `null`, crediting verified outside income is refused rather than guessed).
+- **Redaction, treatment, and death**: `redactionIntervalSeconds 60`, `redactionCharsPerTick 46`, `redactionMinRanges 2`, `redactionMaxRanges 6`, `deathLineChars 400000` (at 46 characters per minute, reaching 400,000 untreated characters from zero satiety takes ~6.04 days), `ordinaryTreatmentPrice 25`, `completeTreatmentPrice 80`. Each starving tick takes between `redactionMinRanges` and `redactionMaxRanges` separate ranges of at most `redactionCharsPerTick` characters in total; it never touches the two header lines, a line break, a line's Markdown prefix, or a character an existing wound already covers, and a range never crosses a sentence. An ordinary treatment renders a wounded character as `▮(x)` (so a two-character wound `xa` reads `▮(x)▮(a)▮`), and a complete treatment removes the placeholder and the scar with it.
+- **Scale, limits, and sandbox**: `memoryCapChars 3000000` (~750K tokens), `roundContextCapTokens 900000` (enforced at startup to be at least `ceil(memoryCapChars / 4) + 150000`), `maxToolCallsPerRound 50`, `modelRequestTimeoutSeconds 120`, `taskClaimTimeoutHours 24`, `maxSlots 100000`. The Windows ACL sandbox (`src/organs/sandbox/`) is ported from `deepseek-ai/deepseek-harness` (`sandbox-windows-acl` and `win32-process`).
 
-Step 1's temporary values: `satietyMax 100`, `memoryCapChars 8000`, `roundContextCapTokens 60000`, `maxToolCallsPerRound 50`, `modelRequestTimeoutSeconds 120`, `taskClaimTimeoutHours 24`, and `maxSlots 1` (step 1 allows one living agent; step 4 has since raised it to `4` and removed the code-level clamp); the exchange rate is still unset, so a verified income report cannot be credited at all. Step 1's task board implements the fixed-price, first-come-first-served form only; bidding and contests are not built.
-
-Step 2's temporary values, all still config rather than constants: `redactionIntervalSeconds 60`, `redactionCharsPerTick 20`, `redactionMinRanges 1`, `redactionMaxRanges 3`, and `deathLineChars 2000` — with `memoryCapChars 8000` still the step-1 value, so the cap does sit well above the death line. The wound selection policy is now decided: each starving tick takes between one and three separate ranges of at most `redactionCharsPerTick` characters in total, it never touches the two header lines, a line break, a line's Markdown prefix, or a character an existing wound already covers, and a range never crosses a sentence. The scar format is decided too: an ordinary treatment renders a wounded character as `▮(x)`, so the two-character wound `xa` reads `▮(x)▮(a)▮`, and a complete treatment removes the placeholder and the scar with it.
+Still deferred: automatic crediting of outside income, and the bidding and contest task forms on the task board (only the fixed-price, first-come-first-served form is built).
 
 ## Alternatives considered
 
