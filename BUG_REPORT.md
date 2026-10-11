@@ -19,6 +19,7 @@
 7. **行数勘误**：初版混用了 `Measure-Object -Line`（漏算空行）与真实行数两种数法；`ledger.ts` 现为 **1615 行**。
 8. **文档行号勘误**：`design.md` 审计后又改过（228→237 行），"汇率未设定"的矛盾段落现在是 **:183 / :185**（矛盾本身仍在：配置里 `exchangeRate` 已设 200）。
 9. **基线更新**：`npx tsc --noEmit` 干净；**20 文件 / 279 测试全过**（较本报告初版的 19/264 多出 erasure 的新测试）。
+10. **#4、#3c、#17、#37 已修复（2026-10-11）**：通过账本 `frozen_sentences.start_offset` 位置追踪（`resolveFrozenLocations`）、诊所按 `sentenceId` 定点替换与偏移量平移、UTF-16 代理对边界保护，以及记忆整理模型的句级上锁编辑沙箱（5 次打回重开 + 3 局失败自动全局暂停），根治了"用文本搜索当冻结句身份"导致的四个问题。详见 [docs/frozen-sentence-identity.zh.md](docs/frozen-sentence-identity.zh.md) 与 `test/ledger-offsets.test.ts`、`test/memory.test.ts`。
 
 ---
 
@@ -226,7 +227,9 @@ child exit code: 1
 
 ---
 
-## 4. 两句"长得一样"的冻结句子会塌到同一位置，静默丢失
+## 4. 两句"长得一样"的冻结句子会塌到同一位置，静默丢失【已修复 ✅】
+
+> **更新（2026-10-11）：本条已修复**（见顶部第 10 条与 `test/ledger-offsets.test.ts`）。`frozen_sentences` 新增 `start_offset`，`resolveFrozenLocations` 按句子 ID 与偏移量一对一定位，重名冻结句各自独立保留。以下保留原始发现存档。
 
 **位置：**[src/organs/redaction.ts:386-407](src/organs/redaction.ts#L386)（`indexOf` 定位）、[:468-479](src/organs/redaction.ts#L468)（`activeFrozenFor`）、[:664-679](src/organs/redaction.ts#L664)（`locateAll`）
 
@@ -259,7 +262,9 @@ run 5: COLLISION at tick 2 (id=1 at=1214, id=2 at=1214)
 
 # 🟠 高（15 条）
 
-## 3c. 治疗会**打错位置**：治好一个伤口，却把另一个未治疗伤口的文字抹掉了
+## 3c. 治疗会**打错位置**：治好一个伤口，却把另一个未治疗伤口的文字抹掉了【已修复 ✅】
+
+> **更新（2026-10-11）：本条已修复**（见顶部第 10 条与 `test/ledger-offsets.test.ts`）。`clinic.ts` 的 `rewriteMemory` 现按 `sentenceId` 对应的账本区间精确替换，并同步后续冻结句偏移。以下保留原始发现存档。
 
 **位置：**[clinic.ts:196](src/organs/clinic.ts#L196)（`text.indexOf(visibleBefore)` 纯字符串查找）
 
@@ -469,7 +474,9 @@ apiKey="   " -> accepted=true stored="   "
 
 对比：控制台自己的错误文案（[server.ts:148](src/console/server.ts#L148)）声称会校验 API Key。结果是 Agent 一出生就每轮 `model_error`，而且因为绑定优先，改名册也救不回来。
 
-## 17. 冻结句子的"位置"根本不会恢复（模型挪一下就永久挪了）
+## 17. 冻结句子的"位置"根本不会恢复（模型挪一下就永久挪了）【已修复 ✅】
+
+> **更新（2026-10-11）：本条已修复**（见顶部第 10 条与 `test/memory.test.ts`）。记忆整理改为工具驱动的句级上锁编辑沙箱（`replace_in_memory` / `append_to_memory` / `finish_memory_edit`），任何触碰含 `▮` 或活跃冻结句的修改均被当场拦截退回，冻结句严格保留在原位，整理结束后自动重算账本偏移。以下保留原始发现存档。
 
 **位置：**[redaction.ts:761-812](src/organs/redaction.ts#L761)（模型保留但移动 → 直接 `kept.push` 不管位置）
 
@@ -587,7 +594,9 @@ tick 2: applied 1 new wound(s), untreated now 4
 => CONFIRMED: a paid-for healed wound is re-wounded and re-charged
 ```
 
-### 37. 伤口切在代理对（surrogate pair）中间 → 写入 `U+FFFD`，该句子**永久失去保护**
+### 37. 伤口切在代理对（surrogate pair）中间 → 写入 `U+FFFD`，该句子**永久失去保护**【已修复 ✅】
+
+> **更新（2026-10-11）：本条已修复**（见顶部第 10 条与 `test/ledger-offsets.test.ts`）。涂黑选点与结痂生成均增加了 UTF-16 高低代理项边界对齐，确保 emoji 与非 BMP 字符绝不会从中间劈开。以下保留原始发现存档。
 
 **位置：**[redaction.ts:330-343](src/organs/redaction.ts#L330)（偏移按 UTF-16 code unit 步进）、[:454-461](src/organs/redaction.ts#L454)
 

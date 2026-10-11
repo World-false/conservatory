@@ -136,6 +136,13 @@ export interface FrozenSentenceRecord {
   original: string;
   createdAt: number;
   releasedAt: number | null;
+  /**
+   * Where this sentence starts in MEMORY, as of the last write the harness
+   * made. null means "not known": the sentence predates the column, or no
+   * rewrite has placed it yet. It is a hint for locating the sentence, never
+   * the identity itself — the id is the identity.
+   */
+  startOffset: number | null;
 }
 
 export interface WoundRecord {
@@ -435,7 +442,8 @@ CREATE TABLE IF NOT EXISTS frozen_sentences (
   agent TEXT NOT NULL,
   original TEXT NOT NULL,
   created_at INTEGER NOT NULL,
-  released_at INTEGER
+  released_at INTEGER,
+  start_offset INTEGER
 );
 CREATE TABLE IF NOT EXISTS wounds (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -587,6 +595,26 @@ export class Ledger {
     this.db = new DatabaseSync(dbPath);
     this.db.exec('PRAGMA foreign_keys = ON;');
     this.db.exec(SCHEMA);
+    this.migrate();
+  }
+
+  /**
+   * Brings a database written by an older version up to the current schema.
+   * `CREATE TABLE IF NOT EXISTS` never adds a column to a table that already
+   * exists, so a new column needs its own explicit step, and a deployment that
+   * predates it must not silently keep the old shape: the sentence offsets the
+   * redaction path relies on would simply never be recorded there.
+   */
+  private migrate(): void {
+    if (!this.hasColumn('frozen_sentences', 'start_offset')) {
+      this.db.exec('ALTER TABLE frozen_sentences ADD COLUMN start_offset INTEGER;');
+    }
+  }
+
+  /** Whether a table already carries a column, asked of SQLite itself. */
+  private hasColumn(table: string, column: string): boolean {
+    const rows = this.db.prepare('SELECT name FROM pragma_table_info(?)').all(table);
+    return rows.some((row) => readString(row, 'name') === column);
   }
 
   close(): void {
@@ -838,12 +866,46 @@ export class Ledger {
 
   // ---------------------------------------------------------------- damage
 
-  /** Freezes one sentence: from now on only the ledger holds its true text. */
-  insertFrozenSentence(agent: string, original: string, at: number): number {
+  /**
+   * Freezes one sentence: from now on only the ledger holds its true text.
+   * `startOffset` is where the sentence sits in MEMORY at the moment it is
+   * frozen, which is what lets the next tick tell two identical sentences
+   * apart. It is a hint, not a promise: a rewrite may move the sentence, and
+   * `setFrozenSentenceOffset` records where it landed.
+   */
+  insertFrozenSentence(agent: string, original: string, at: number, startOffset: number | null = null): number {
     const result = this.db
-      .prepare('INSERT INTO frozen_sentences (agent, original, created_at, released_at) VALUES (?, ?, ?, NULL)')
-      .run(agent, original, at);
+      .prepare(
+        `INSERT INTO frozen_sentences (agent, original, created_at, released_at, start_offset)
+         VALUES (?, ?, ?, NULL, ?)`,
+      )
+      .run(agent, original, at, startOffset);
     return Number(result.lastInsertRowid);
+  }
+
+  /** Records where in MEMORY a frozen sentence now begins. */
+  setFrozenSentenceOffset(id: number, startOffset: number): void {
+    this.db.prepare('UPDATE frozen_sentences SET start_offset = ? WHERE id = ?').run(startOffset, id);
+  }
+
+  /**
+   * Moves the recorded position of every active sentence that starts after
+   * `fromOffsetExclusive`, by `delta` characters. A rewrite that changes the
+   * length of one sentence shifts everything below it; without this the
+   * recorded offsets would point into the middle of the wrong sentence.
+   * `fromOffsetExclusive` is the offset of the change itself, so the sentence
+   * that was rewritten is shifted by the caller, not here.
+   */
+  shiftFrozenSentenceOffsets(agent: string, fromOffsetExclusive: number, delta: number): void {
+    if (delta === 0) {
+      return;
+    }
+    this.db
+      .prepare(
+        `UPDATE frozen_sentences SET start_offset = start_offset + ?
+         WHERE agent = ? AND released_at IS NULL AND start_offset IS NOT NULL AND start_offset > ?`,
+      )
+      .run(delta, agent, fromOffsetExclusive);
   }
 
   /** Sentences still holding a wound, so still frozen. */
@@ -1594,6 +1656,7 @@ function mapFrozenSentence(row: Row): FrozenSentenceRecord {
     original: readString(row, 'original'),
     createdAt: readNumber(row, 'created_at'),
     releasedAt: readNullableNumber(row, 'released_at'),
+    startOffset: readNullableNumber(row, 'start_offset'),
   };
 }
 

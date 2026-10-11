@@ -695,6 +695,12 @@ export interface RoundDeps {
   /** Told what the prompts looked like at this wake, so the operator can be warned. */
   onPromptWarnings?(warnings: string[]): void;
   onMemoryError(agent: string, message: string): void;
+  /**
+   * The memory system ran out of sessions for one step. It is a body-level
+   * fault rather than a bad answer, so the conservatory is paused and the
+   * operator is told why.
+   */
+  onPauseConservatory?(agent: string, reason: string, at: number): void;
 }
 
 export interface RoundOutcome {
@@ -969,6 +975,7 @@ export class RoundCoordinator {
           systemPrompt: this.deps.prompts.memorySystem().text,
           now: this.deps.now,
           onError: this.deps.onMemoryError,
+          onPauseConservatory: this.deps.onPauseConservatory,
         },
         transcript,
       );

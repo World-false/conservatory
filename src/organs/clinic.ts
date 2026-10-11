@@ -2,7 +2,7 @@ import type { ConservatoryValues, RuntimePaths } from '../config';
 import type { Blackbox } from './blackbox';
 import type { Ledger, TreatmentPayer, TreatmentTier, WoundRecord } from './ledger';
 import { readMemoryFile, writeMemoryAtomic } from './memory';
-import { ledgerFrozenRefs, renderSentence, restoreFrozenSentences, type FrozenRef } from './redaction';
+import { ledgerFrozenRefs, renderSentence, resolveFrozenLocations, restoreFrozenSentences, type FrozenRef } from './redaction';
 
 export type TreatErrorCode = 'wound_not_found' | 'wound_not_treatable' | 'insufficient_balance';
 
@@ -179,9 +179,13 @@ export function treat(
 }
 
 /**
- * Swaps the sentence's old visible text for its new one in MEMORY. If the model
- * has since rewritten that sentence, it is first restored from the ledger, so
- * the swap lands on the text the harness owns rather than on model prose.
+ * Swaps the treated sentence's old visible text for its new one in MEMORY.
+ *
+ * The sentence is found by its ledger id, never by searching for its text:
+ * two sentences may read exactly the same, and a search would heal the wrong
+ * one while leaving the treated wound still showing on disk. If the model has
+ * rewritten the sentence since, it is first restored from the ledger, so the
+ * swap lands on the text the harness owns rather than on model prose.
  */
 function rewriteMemory(
   deps: ClinicDeps,
@@ -197,19 +201,30 @@ function rewriteMemory(
   const after = deps.ledger.listWounds(agent).filter((row) => row.sentenceId === sentenceId);
   const visibleAfter = renderSentence(original, after);
   let text = readMemoryFile(deps.paths, agent);
-  let at = text.indexOf(visibleBefore);
-  if (at < 0) {
+
+  const locate = (haystack: string): number | null => {
+    const found = resolveFrozenLocations(
+      haystack,
+      refsBefore.map((ref) => ({ id: ref.id, visible: ref.visible, startOffset: ref.startOffset ?? null })),
+    ).get(sentenceId);
+    return found === undefined ? null : found;
+  };
+
+  let at = locate(text);
+  if (at === null) {
     // The model may have filled the gap in: restore from the ledger first, so
     // the swap lands on the text the harness owns rather than on model prose.
     const restored = restoreFrozenSentences(text, refsBefore);
     text = restored.text;
-    at = text.indexOf(visibleBefore);
+    at = locate(text);
   }
-  if (at < 0) {
+  if (at === null) {
     // It is still not there: the visible form may already have changed (a
     // healed sentence with no scar, for instance).
-    at = text.indexOf(visibleAfter);
-    if (at >= 0) {
+    const alreadyThere = resolveFrozenLocations(text, [
+      { id: sentenceId, visible: visibleAfter, startOffset: null },
+    ]).get(sentenceId);
+    if (alreadyThere !== undefined) {
       return;
     }
     deps.blackbox.append(agent, 'treatment_memory_skipped', deps.now(), null, { sentenceId });
@@ -217,6 +232,10 @@ function rewriteMemory(
   }
   text = text.slice(0, at) + visibleAfter + text.slice(at + visibleBefore.length);
   writeMemoryAtomic(deps.paths, agent, text);
+  // Every frozen sentence below this one sits `delta` characters further down
+  // (or nearer the top) now, and the ledger has to say so or the next rewrite
+  // will look for it in the wrong place.
+  deps.ledger.shiftFrozenSentenceOffsets(agent, at, visibleAfter.length - visibleBefore.length);
 }
 
 /**

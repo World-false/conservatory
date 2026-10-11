@@ -8,14 +8,20 @@ import type { FrozenSentenceRecord, WoundRecord } from '../src/organs/ledger';
 import { createPauseOrgan } from '../src/organs/pause';
 import { readMemoryFile, writeMemoryAtomic } from '../src/organs/memory';
 import { readNotebookFile, writeNotebookFile } from '../src/organs/notebook';
+import { treat } from '../src/organs/clinic';
 import {
   activeFrozenFor,
   dueTicks,
+  frozenRefsFor,
+  isHighSurrogate,
+  isLowSurrogate,
   PLACEHOLDER,
   planRedaction,
   redactAgent,
   redactOnce,
   renderSentence,
+  resolveFrozenLocations,
+  restoreFrozenSentences,
   sentenceUnits,
   similarity,
   starvationSinceOf,
@@ -23,6 +29,24 @@ import {
   type Range,
   type RedactionDeps,
 } from '../src/organs/redaction';
+
+/** True when a string holds a surrogate code unit with no partner beside it. */
+function hasUnpairedSurrogate(text: string): boolean {
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    if (isHighSurrogate(code)) {
+      if (index + 1 >= text.length || !isLowSurrogate(text.charCodeAt(index + 1))) {
+        return true;
+      }
+      index += 1;
+      continue;
+    }
+    if (isLowSurrogate(code)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 function woundAt(offset: number, length: number, status: WoundRecord['status']): WoundRecord {
   return {
@@ -41,7 +65,7 @@ function woundAt(offset: number, length: number, status: WoundRecord['status']):
 }
 
 function sentence(id: number, original: string): FrozenSentenceRecord {
-  return { id, agent: 'ada', original, createdAt: 0, releasedAt: null };
+  return { id, agent: 'ada', original, createdAt: 0, releasedAt: null, startOffset: null };
 }
 
 /** A random source that always answers the same number. */
@@ -424,6 +448,90 @@ describe('catching up the redactions a starving agent owes', () => {
   });
 });
 
+describe('resolving where each frozen sentence sits', () => {
+  function item(id: number, visible: string, startOffset: number | null) {
+    return { id, visible, startOffset };
+  }
+
+  it('takes the recorded offset when the text is still there', () => {
+    const text = 'aaa TARGET bbb TARGET';
+    const resolved = resolveFrozenLocations(text, [
+      item(1, 'TARGET', 4),
+      item(2, 'TARGET', 15),
+    ]);
+    expect(resolved.get(1)).toBe(4);
+    expect(resolved.get(2)).toBe(15);
+  });
+
+  it('never lets two sentences claim the same characters', () => {
+    const text = 'aaa TARGET bbb TARGET';
+    // Both recorded offsets point at the first occurrence: one of them has to
+    // move to the second rather than both collapsing onto the same place.
+    const resolved = resolveFrozenLocations(text, [
+      item(1, 'TARGET', 4),
+      item(2, 'TARGET', 4),
+    ]);
+    expect(resolved.get(1)).toBe(4);
+    expect(resolved.get(2)).toBe(15);
+  });
+
+  it('falls back to the earliest free occurrence when the offset has gone stale', () => {
+    const text = 'aaa TARGET bbb TARGET';
+    const resolved = resolveFrozenLocations(text, [
+      item(1, 'TARGET', 999),
+      item(2, 'TARGET', 0),
+    ]);
+    // Both offsets are wrong, so both search; the earlier ledger id wins the
+    // earlier occurrence.
+    expect(resolved.get(2)).toBe(4);
+    expect(resolved.get(1)).toBe(15);
+  });
+
+  it('leaves out a sentence that is nowhere in the text at all', () => {
+    const resolved = resolveFrozenLocations('nothing to see', [item(1, 'TARGET', 3)]);
+    expect(resolved.has(1)).toBe(false);
+  });
+
+  it('lets the longer sentence win the characters a shorter one occurs inside', () => {
+    // The four placeholders of the short sentence also occur inside the long
+    // one, but nothing of the short sentence's own is in the text.
+    const text = 'The vault is ▮▮▮▮.';
+    const resolved = resolveFrozenLocations(text, [
+      item(1, '▮▮▮▮', null),
+      item(2, 'The vault is ▮▮▮▮.', null),
+    ]);
+    expect(resolved.get(2)).toBe(0);
+    expect(resolved.has(1)).toBe(false);
+  });
+
+  it('finds the short sentence at its own place when it has one', () => {
+    const text = 'The vault is ▮▮▮▮.\n▮▮▮▮';
+    const resolved = resolveFrozenLocations(text, [
+      item(1, '▮▮▮▮', null),
+      item(2, 'The vault is ▮▮▮▮.', null),
+    ]);
+    // Not the four inside the long sentence: those belong to the long one.
+    expect(resolved.get(2)).toBe(0);
+    expect(resolved.get(1)).toBe(text.lastIndexOf('▮▮▮▮'));
+  });
+
+  it('does not match an empty sentence against anything', () => {
+    const resolved = resolveFrozenLocations('some text', [
+      item(1, '', null),
+      item(2, 'some', null),
+    ]);
+    expect(resolved.has(1)).toBe(false);
+    expect(resolved.get(2)).toBe(0);
+  });
+
+  it('is unmoved by an offset that lands between the halves of an astral character', () => {
+    const text = 'a🐕TARGET';
+    // 2 is the low surrogate of the dog, not the start of `TARGET`.
+    const resolved = resolveFrozenLocations(text, [item(1, 'TARGET', 2)]);
+    expect(resolved.get(1)).toBe(3);
+  });
+});
+
 describe('finding the frozen sentences in a MEMORY', () => {
   it('reports the visible text the ledger implies, and nothing else', () => {
     const h = createHarness();
@@ -445,6 +553,229 @@ describe('finding the frozen sentences in a MEMORY', () => {
       const active = activeFrozenFor(h.ledger, 'ada', `${HEADER}\n${PLACEHOLDER.repeat(3)} vault code is 4471.`);
       expect(active.length).toBe(1);
       expect(active[0].visible).toBe(`${PLACEHOLDER.repeat(3)} vault code is 4471.`);
+    } finally {
+      h.cleanup();
+    }
+  });
+});
+
+describe('two frozen sentences that read exactly the same (#4)', () => {
+  const values = testValues({ redactionCharsPerTick: 4, redactionMinRanges: 1, redactionMaxRanges: 1 });
+
+  /** Two identical sentences, both wounded the same way, at their real places. */
+  function twoTwins(h: Harness): { ids: [number, number]; visible: string; text: string } {
+    const original = 'I remember the garden.';
+    const first = h.ledger.insertFrozenSentence('ada', original, h.clock.now(), 0);
+    const second = h.ledger.insertFrozenSentence('ada', original, h.clock.now(), 0);
+    for (const sentenceId of [first, second]) {
+      h.ledger.insertWound({
+        agent: 'ada',
+        sentenceId,
+        offset: 0,
+        length: 4,
+        originalText: 'I re',
+        starvationSince: 1,
+        tickIndex: 1,
+        createdAt: h.clock.now(),
+      });
+    }
+    const visible = renderSentence(original, h.ledger.listWounds('ada'));
+    // Nothing but the two sentences below the header, so a tick has no other
+    // unit to fall back on and every assertion below is about the twins.
+    const text = body(visible, visible);
+    const firstAt = HEADER.length + 1;
+    h.ledger.setFrozenSentenceOffset(first, firstAt);
+    h.ledger.setFrozenSentenceOffset(second, firstAt + visible.length + 1);
+    writeMemoryAtomic(h.paths, 'ada', text);
+    return { ids: [first, second], visible, text };
+  }
+
+  it('locates both at their own places instead of collapsing them onto the first', () => {
+    const h = createHarness();
+    try {
+      birthAgent(h, 'ada');
+      const { ids, visible, text } = twoTwins(h);
+
+      const active = activeFrozenFor(h.ledger, 'ada', text);
+      expect(active.map((item) => item.record.id)).toEqual([ids[0], ids[1]]);
+      expect(active[0].visible).toBe(visible);
+      expect(active[1].visible).toBe(visible);
+
+      const refs = frozenRefsFor(h.ledger, 'ada', text);
+      expect(refs.map((ref) => ref.id)).toEqual([ids[0], ids[1]]);
+      expect(refs[0].startOffset).toBe(text.indexOf(visible));
+      expect(refs[1].startOffset).toBe(text.indexOf(visible, text.indexOf(visible) + 1));
+      // The two offsets are genuinely different: this is the whole bug.
+      expect(refs[0].startOffset).not.toBe(refs[1].startOffset);
+
+      const resolved = resolveFrozenLocations(
+        text,
+        active.map((item) => ({
+          id: item.record.id,
+          visible: item.visible,
+          startOffset: item.record.startOffset,
+        })),
+      );
+      expect(resolved.get(ids[0])).toBe(refs[0].startOffset);
+      expect(resolved.get(ids[1])).toBe(refs[1].startOffset);
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  it('wounds each twin in its own slot, never both in the first', () => {
+    const h = createHarness({ values: { redactionCharsPerTick: 4, redactionMinRanges: 1, redactionMaxRanges: 1 } });
+    try {
+      birthAgent(h, 'ada');
+      const { ids } = twoTwins(h);
+      const text = readMemoryFile(h.paths, 'ada');
+      const active = activeFrozenFor(h.ledger, 'ada', text);
+
+      const planned = planRedaction(text, active, values, fixed(0));
+      expect(planned.length).toBe(1);
+
+      // Whichever twin the tick picked, the wound sits inside that twin's own
+      // span, not inside the first twin's.
+      const before = active[0].visible.length;
+      const planned0 = planned[0];
+      const firstStart = text.indexOf(active[0].visible);
+      const secondStart = text.indexOf(active[1].visible, firstStart + 1);
+      const inFirst = planned0.visibleStart >= firstStart && planned0.visibleStart < firstStart + before;
+      const inSecond = planned0.visibleStart >= secondStart && planned0.visibleStart < secondStart + before;
+      expect(inFirst !== inSecond).toBe(true);
+      expect([...new Set(ids)]).toHaveLength(2);
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  it('restores both after a rewrite, keeping them apart and deleting neither', () => {
+    const h = createHarness();
+    try {
+      birthAgent(h, 'ada');
+      const { visible, text } = twoTwins(h);
+
+      const refs = frozenRefsFor(h.ledger, 'ada', text);
+      const result = restoreFrozenSentences(text, refs);
+
+      expect(result.text.split(visible).length - 1).toBe(2);
+      expect(result.duplicatesRemoved).toBe(0);
+      expect(result.inserted).toEqual([]);
+      expect(result.text).toBe(text);
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  it('survives a real tick: both twins are still in MEMORY afterwards', () => {
+    const h = createHarness({ values: { redactionCharsPerTick: 4, redactionMinRanges: 1, redactionMaxRanges: 1 } });
+    try {
+      birthAgent(h, 'ada');
+      twoTwins(h);
+      const deps = depsFor(h, fixed(0));
+
+      const first = redactOnce(deps, 'ada', 1_000, 1);
+      expect(first.status).toBe('applied');
+
+      const written = readMemoryFile(h.paths, 'ada');
+      // Both sentences are still there, each carrying its own wound.
+      for (const sentence of h.ledger.listActiveFrozenSentences('ada')) {
+        const mine = h.ledger.listWounds('ada').filter((wound) => wound.sentenceId === sentence.id);
+        expect(written).toContain(renderSentence(sentence.original, mine));
+      }
+      const offsets = h.ledger
+        .listActiveFrozenSentences('ada')
+        .map((sentence) => sentence.startOffset);
+      expect(offsets.filter((offset) => offset !== null)).toHaveLength(2);
+      expect(new Set(offsets).size).toBe(2);
+      // 4 characters for each twin's first wound, plus the 4 this tick took.
+      expect(h.ledger.untreatedRedactedChars('ada')).toBe(12);
+      const second = h.ledger.listWounds('ada').filter((wound) => wound.tickIndex === 1);
+      expect(new Set(second.map((wound) => wound.sentenceId)).size).toBe(2);
+    } finally {
+      h.cleanup();
+    }
+  });
+});
+
+describe('wounds never split an astral character (#37)', () => {
+  const values = testValues({ redactionCharsPerTick: 4, redactionMinRanges: 1, redactionMaxRanges: 1 });
+
+  it('renders a scarred astral character whole, never as two surrogate halves', () => {
+    const rendered = renderSentence('a🐕b', [woundAt(1, 2, 'scarred')]);
+    expect(rendered).toBe(`a${PLACEHOLDER}(${'🐕'})${PLACEHOLDER}b`);
+    expect(hasUnpairedSurrogate(rendered)).toBe(false);
+    expect(rendered).not.toContain('\uFFFD');
+  });
+
+  it('never splits a surrogate pair, however the tick draws it', () => {
+    const text = body('I fed the 🐕 dog and 🐈 cat and left.');
+    const values2 = testValues({ redactionCharsPerTick: 1, redactionMinRanges: 1, redactionMaxRanges: 1 });
+    for (let seed = 0; seed <= 1; seed += 0.05) {
+      for (let chars = 1; chars <= 6; chars += 1) {
+        const drawn = planRedaction(text, [], { ...values2, redactionCharsPerTick: chars }, fixed(seed));
+        for (const wound of drawn) {
+          const start = wound.visibleStart;
+          const end = start + wound.length;
+          expect(text.slice(start, end)).not.toContain('\uFFFD');
+          expect(hasUnpairedSurrogate(text.slice(start, end))).toBe(false);
+          // The cut never lands between the two halves of one character.
+          if (start > 0 && start < text.length) {
+            expect(isLowSurrogate(text.charCodeAt(start)) && isHighSurrogate(text.charCodeAt(start - 1))).toBe(false);
+          }
+          if (end > 0 && end < text.length) {
+            expect(isHighSurrogate(text.charCodeAt(end - 1)) && isLowSurrogate(text.charCodeAt(end))).toBe(false);
+          }
+        }
+      }
+    }
+  });
+
+  it('keeps an emoji sentence protected through redaction, scarring, and every tick after', () => {
+    const h = createHarness({ values: { redactionCharsPerTick: 3, redactionMinRanges: 1, redactionMaxRanges: 1 } });
+    try {
+      birthAgent(h, 'ada');
+      const original = 'I fed the 🐕 dog and 🐈 cat.';
+      writeMemoryAtomic(h.paths, 'ada', body(original));
+      const deps = depsFor(h, fixed(0));
+
+      for (let tick = 0; tick < 6; tick += 1) {
+        const result = redactOnce(deps, 'ada', 1_000, tick + 1);
+        const written = readMemoryFile(h.paths, 'ada');
+        expect(written).not.toContain('\uFFFD');
+        expect(hasUnpairedSurrogate(written)).toBe(false);
+
+        // The sentence the ledger holds is exactly what is on disk, so the next
+        // tick still finds it: a lost sentence is one that can never be wounded
+        // or healed again.
+        const active = activeFrozenFor(h.ledger, 'ada', written);
+        expect(active.length).toBe(1);
+        for (const item of active) {
+          expect(written).toContain(item.visible);
+        }
+        if (result.wounds.length > 0) {
+          expect(result.wounds[0].originalText).not.toContain('\uFFFD');
+        }
+      }
+
+      // Ordinary treatment scars the emoji sentence, which is the other path
+      // that used to wrap each half of a pair on its own.
+      const wound = h.ledger.listWounds('ada')[0];
+      const outcome = treat(
+        { ledger: h.ledger, values: h.values, paths: h.paths, blackbox: h.blackbox, now: h.clock.now },
+        'ada',
+        wound.id,
+        'ordinary',
+        'agent',
+      );
+      expect(outcome.ok).toBe(true);
+      const afterTreat = readMemoryFile(h.paths, 'ada');
+      expect(afterTreat).not.toContain('\uFFFD');
+      expect(hasUnpairedSurrogate(afterTreat)).toBe(false);
+      // And it is still found, so its remaining wounds stay protected.
+      expect(activeFrozenFor(h.ledger, 'ada', afterTreat).length).toBe(1);
+      expect(redactOnce(deps, 'ada', 1_000, 7).status).toBe('applied');
+      expect(readMemoryFile(h.paths, 'ada')).not.toContain('\uFFFD');
     } finally {
       h.cleanup();
     }

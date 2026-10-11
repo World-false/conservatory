@@ -95,4 +95,93 @@ describe('restoring frozen sentences after a memory rewrite', () => {
     expect(result.text.startsWith('Name: ad')).toBe(true);
     expect(result.text).toContain(frozen.visible);
   });
+
+  it('keeps both of two frozen sentences that read exactly the same (#4)', () => {
+    const first = ref(1, `The vault is ${PLACEHOLDER}${PLACEHOLDER}${PLACEHOLDER}${PLACEHOLDER}.`);
+    const second = ref(2, first.visible);
+    const text = body(first.visible, second.visible);
+
+    const result = restoreFrozenSentences(text, [first, second]);
+
+    // Two ledger sentences, two copies on disk: neither is the other's
+    // duplicate, and the second one is not deleted as a model invention.
+    expect(result.text.split(first.visible).length - 1).toBe(2);
+    expect(result.duplicatesRemoved).toBe(0);
+    expect(result.inserted).toEqual([]);
+    expect(result.replaced).toEqual([]);
+    expect(result.text).toBe(text);
+  });
+
+  it('repairs a sentence its identical twin left standing, and drops only the extra copy', () => {
+    const first = ref(1, `The vault is ${PLACEHOLDER}${PLACEHOLDER}${PLACEHOLDER}${PLACEHOLDER}.`);
+    const second = ref(2, first.visible);
+    // The model wrote three copies: two for the ledger's two sentences, one of
+    // its own invention.
+    const text = body(first.visible, first.visible, first.visible);
+
+    const result = restoreFrozenSentences(text, [first, second]);
+
+    expect(result.text.split(first.visible).length - 1).toBe(2);
+    expect(result.duplicatesRemoved).toBe(1);
+  });
+
+  it('keeps a short placeholder-only sentence that sits inside a longer one (#4)', () => {
+    // The four placeholders of `short` also occur inside `long`. The ledger
+    // order matches the file, so the only question is that neither sentence is
+    // mistaken for a copy of the other.
+    const long = ref(1, `The vault is ${PLACEHOLDER}${PLACEHOLDER}${PLACEHOLDER}${PLACEHOLDER}.`);
+    const short = ref(2, `${PLACEHOLDER}${PLACEHOLDER}${PLACEHOLDER}${PLACEHOLDER}`);
+    const text = body(long.visible, short.visible);
+
+    const result = restoreFrozenSentences(text, [long, short]);
+
+    expect(result.text).toBe(text);
+    expect(result.duplicatesRemoved).toBe(0);
+    expect(result.strayRemoved).toBe(0);
+    expect(result.replaced).toEqual([]);
+  });
+
+  it('puts a reordered pair back into the ledger order and records both ids (#17)', () => {
+    const first = ref(1, `First loss: ${PLACEHOLDER}${PLACEHOLDER}.`);
+    const second = ref(2, `Second loss: ${PLACEHOLDER}${PLACEHOLDER}.`);
+    // The model moved the two apart: the ledger has [first, second], the file
+    // has them the other way round. Nothing was deleted and nothing changed.
+    const text = body(second.visible, first.visible);
+
+    const result = restoreFrozenSentences(text, [first, second]);
+
+    const lines = result.text.split('\n');
+    expect(lines[2]).toBe(first.visible);
+    expect(lines[3]).toBe(second.visible);
+    expect(result.replaced.sort((left, right) => left - right)).toEqual([1, 2]);
+    expect(result.inserted).toEqual([]);
+  });
+
+  it('reports no repair when a reordered pair reads exactly the same either way', () => {
+    const first = ref(1, `Same loss: ${PLACEHOLDER}${PLACEHOLDER}.`);
+    const second = ref(2, first.visible);
+    const text = body(first.visible, second.visible);
+
+    const result = restoreFrozenSentences(text, [first, second]);
+
+    // The swap is invisible on disk, so there is nothing to repair and nothing
+    // to report: the promise is the text, not the bytes.
+    expect(result.text).toBe(text);
+    expect(result.replaced).toEqual([]);
+    expect(result.duplicatesRemoved).toBe(0);
+  });
+
+  it('inserts a missing sentence inside `# WHO I AM`, not above its heading (#17)', () => {
+    const frozen = ref(1, `The loss: ${PLACEHOLDER}${PLACEHOLDER}.`);
+    const text = `${HEADER}\n\n# WHO I AM\n\n# RECENT ROUNDS\n\n## Round 1 — 2023-11-14T22:14:20.000Z\nI woke up.`;
+
+    const result = restoreFrozenSentences(text, [frozen]);
+
+    expect(result.inserted).toEqual([1]);
+    const heading = result.text.indexOf('# WHO I AM');
+    const recent = result.text.indexOf('# RECENT ROUNDS');
+    const at = result.text.indexOf(frozen.visible);
+    expect(at).toBeGreaterThan(heading);
+    expect(at).toBeLessThan(recent);
+  });
 });

@@ -343,6 +343,65 @@ describe('treating a wound', () => {
       h.cleanup();
     }
   });
+
+  it('heals the second of two identical sentences, leaving the first untouched (#3c)', () => {
+    const h = createHarness({ values: { initialBalance: 300 } });
+    try {
+      birthAgent(h, 'ada');
+      const original = 'I remember the garden.';
+      const firstSentence = h.ledger.insertFrozenSentence('ada', original, h.clock.now(), 0);
+      const secondSentence = h.ledger.insertFrozenSentence('ada', original, h.clock.now(), 0);
+      const firstWound = h.ledger.insertWound({
+        agent: 'ada',
+        sentenceId: firstSentence,
+        offset: 0,
+        length: 4,
+        originalText: 'I re',
+        starvationSince: 1,
+        tickIndex: 1,
+        createdAt: h.clock.now(),
+      });
+      const secondWound = h.ledger.insertWound({
+        agent: 'ada',
+        sentenceId: secondSentence,
+        offset: 0,
+        length: 4,
+        originalText: 'I re',
+        starvationSince: 1,
+        tickIndex: 1,
+        createdAt: h.clock.now(),
+      });
+      // Both sentences were wounded the same way, so both read the same: this
+      // is the shape that made `indexOf` patch the wrong one.
+      const visible = renderSentence(original, h.ledger.listWounds('ada'));
+      const preamble = `${HEADER}\nI am`;
+      const firstAt = preamble.length;
+      const secondAt = firstAt + visible.length + '\nI am'.length;
+      writeMemoryAtomic(h.paths, 'ada', `${preamble}${visible}\nI am${visible}`);
+      h.ledger.setFrozenSentenceOffset(firstSentence, firstAt);
+      h.ledger.setFrozenSentenceOffset(secondSentence, secondAt);
+      // The recorded offsets really are where the two sentences sit, so the
+      // treatment below has to be resolved by id and not by a text search.
+      expect(readMemoryFile(h.paths, 'ada').slice(firstAt, firstAt + visible.length)).toBe(visible);
+      expect(readMemoryFile(h.paths, 'ada').slice(secondAt, secondAt + visible.length)).toBe(visible);
+
+      const outcome = treat(depsFor(h), 'ada', secondWound, 'complete', 'agent');
+      expect(outcome.ok).toBe(true);
+      expect(h.ledger.getWound(secondWound)?.status).toBe('healed');
+      expect(h.ledger.getWound(firstWound)?.status).toBe('untreated');
+
+      // The treated sentence is the second one; the first keeps its placeholders.
+      expect(readMemoryFile(h.paths, 'ada')).toBe(
+        `${preamble}${visible}\nI am${original}`,
+      );
+      // The wound that is still untreated still counts against the death line.
+      expect(h.ledger.untreatedRedactedChars('ada')).toBe(4);
+      // ...and the sentence below the one that changed length is still found.
+      expect(h.ledger.getFrozenSentence(firstSentence)?.startOffset).toBe(firstAt);
+    } finally {
+      h.cleanup();
+    }
+  });
 });
 
 describe('what the agent can see about its own wounds', () => {

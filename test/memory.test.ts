@@ -2,10 +2,13 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { RoundTranscript } from '../src/agent/ipc';
 import { agentMemoryPath } from '../src/config';
+import type { ChatResponse } from '../src/model/client';
 import {
   consolidateMemory,
   enforceHeader,
+  MAX_MEMORY_SESSIONS_PER_ROUND,
   MAX_RECENT_ROUNDS,
+  MAX_SANDBOX_REJECTIONS_PER_SESSION,
   MEMORY_SYSTEM_PROMPT,
   newbornMemory,
   readMemoryFile,
@@ -15,7 +18,16 @@ import {
   type MemoryDeps,
 } from '../src/organs/memory';
 import { PLACEHOLDER, redactOnce, renderSentence, type RedactionDeps } from '../src/organs/redaction';
-import { birthAgent, createHarness, memoryResponse, ScriptedModelClient, textResponse, type Harness } from './helpers';
+import { createPauseOrgan } from '../src/organs/pause';
+import {
+  birthAgent,
+  createHarness,
+  memoryResponse,
+  ScriptedModelClient,
+  textResponse,
+  toolCallResponse,
+  type Harness,
+} from './helpers';
 
 function transcriptFor(agent: string, at: number, roundId = 1): RoundTranscript {
   return {
@@ -34,8 +46,16 @@ function transcriptFor(agent: string, at: number, roundId = 1): RoundTranscript 
   };
 }
 
-function depsFor(h: Harness, responses: string[], capChars = 4000): { deps: MemoryDeps; errors: string[] } {
+interface MemoryHarness {
+  deps: MemoryDeps;
+  errors: string[];
+  /** Every (agent, reason, at) the sandbox reported a conservatory pause with. */
+  pauses: { agent: string; reason: string; at: number }[];
+}
+
+function depsFor(h: Harness, responses: string[], capChars = 4000): MemoryHarness {
   const errors: string[] = [];
+  const pauses: { agent: string; reason: string; at: number }[] = [];
   const model = new ScriptedModelClient(responses.map((text) => textResponse(text)));
   return {
     deps: {
@@ -49,9 +69,29 @@ function depsFor(h: Harness, responses: string[], capChars = 4000): { deps: Memo
       onError: (agent, message) => {
         errors.push(`${agent}: ${message}`);
       },
+      onPauseConservatory: (agent, reason, at) => {
+        pauses.push({ agent, reason, at });
+      },
     },
     errors,
+    pauses,
   };
+}
+
+/** The same deps, with a model that answers with tool calls instead of prose. */
+function toolDepsFor(h: Harness, responses: ChatResponse[], capChars = 4000): MemoryHarness {
+  const built = depsFor(h, [], capChars);
+  built.deps.model = new ScriptedModelClient(responses);
+  return built;
+}
+
+/** Every black box entry kind written for this agent, oldest first. */
+function blackboxKinds(h: Harness, agent = 'ada'): string[] {
+  return h.blackbox.readRecentRounds(agent, 10).flatMap((round) => round.entries.map((entry) => entry.kind));
+}
+
+function blackboxEntries(h: Harness, agent = 'ada'): Record<string, unknown>[] {
+  return h.blackbox.readRecentRounds(agent, 10).flatMap((round) => round.entries);
 }
 
 /** The round count of a file, which is also its `## Round` heading count. */
@@ -165,13 +205,25 @@ describe('folding a round into MEMORY', () => {
         '## Round 1 — 1999-01-01T00:00:00.000Z',
         'I woke up.',
       ].join('\n');
-      const { deps, errors } = depsFor(h, [dump, dump]);
+      // Three sessions of five refusals each, and only then is the file given
+      // up on: an answer this bad is not one bad guess.
+      const { deps, errors, pauses } = depsFor(h, Array.from({ length: 15 }, () => dump));
 
       const outcome = await consolidateMemory(deps, transcriptFor('ada', h.clock.now()));
       expect(outcome.status).toBe('rejected');
+      if (outcome.status === 'rejected') {
+        expect(outcome.pausedConservatory).toBe(true);
+      }
       expect(readMemoryFile(h.paths, 'ada')).toBe(before);
       expect(errors.length).toBe(1);
       expect(errors[0]).toContain('kept unchanged');
+      expect(pauses.length).toBe(1);
+      expect(pauses[0].agent).toBe('ada');
+
+      const entries = blackboxEntries(h);
+      expect(entries.filter((entry) => entry['kind'] === 'memory_rejected').length).toBe(15);
+      expect(entries.filter((entry) => entry['kind'] === 'memory_session_reset').length).toBe(3);
+      expect(entries.some((entry) => entry['kind'] === 'memory_sandbox_paused')).toBe(true);
     } finally {
       h.cleanup();
     }
@@ -192,24 +244,31 @@ describe('folding a round into MEMORY', () => {
     }
   });
 
-  it('keeps the old MEMORY untouched when two answers are unusable', async () => {
+  it('keeps the old MEMORY untouched when every session is unusable', async () => {
     const h = createHarness();
     try {
       birthAgent(h, 'ada');
       const before = readMemoryFile(h.paths, 'ada');
-      const { deps, errors } = depsFor(h, ['   ', '']);
+      const { deps, errors, pauses } = depsFor(h, Array.from({ length: 15 }, () => '   '));
 
       const outcome = await consolidateMemory(deps, transcriptFor('ada', h.clock.now()));
       expect(outcome.status).toBe('rejected');
+      if (outcome.status === 'rejected') {
+        expect(outcome.pausedConservatory).toBe(true);
+      }
       expect(readMemoryFile(h.paths, 'ada')).toBe(before);
       expect(errors.length).toBe(1);
       expect(errors[0]).toContain('kept unchanged');
+      // One pause, and the conservatory really is paused in the ledger.
+      expect(pauses.length).toBe(1);
+      expect(h.ledger.getPauseState().paused).toBe(false);
 
       const rounds = h.blackbox.readRecentRounds('ada', 5).flatMap((round) => round.round);
       expect(rounds).toContain(1);
-      const entries = h.blackbox.readRecentRounds('ada', 5).flatMap((round) => round.entries);
-      expect(entries.filter((entry) => entry.kind === 'memory_rejected').length).toBe(3);
-      expect(entries.some((entry) => entry['keptOldMemory'] === true)).toBe(true);
+      const entries = blackboxEntries(h);
+      expect(entries.filter((entry) => entry['kind'] === 'memory_rejected').length).toBe(15);
+      expect(entries.filter((entry) => entry['kind'] === 'memory_session_reset').length).toBe(3);
+      expect(entries.some((entry) => entry['kind'] === 'memory_sandbox_paused')).toBe(true);
     } finally {
       h.cleanup();
     }
@@ -220,10 +279,8 @@ describe('folding a round into MEMORY', () => {
     try {
       const agent = birthAgent(h, 'ada');
       const before = readMemoryFile(h.paths, 'ada');
-      const { deps } = depsFor(h, [
-        memoryResponse('ada', agent.bornAt).message.content ?? '',
-        '',
-      ]);
+      const empty = memoryResponse('ada', agent.bornAt).message.content ?? '';
+      const { deps } = depsFor(h, Array.from({ length: 15 }, () => empty));
       const outcome = await consolidateMemory(deps, transcriptFor('ada', h.clock.now()));
       expect(outcome.status).toBe('rejected');
       expect(readMemoryFile(h.paths, 'ada')).toBe(before);
@@ -301,7 +358,7 @@ describe('folding a round into MEMORY', () => {
     }
   });
 
-  it('puts a frozen sentence back when the model filled the gap in', async () => {
+  it('refuses a round that fills a frozen gap in, and takes the answer that obeys', async () => {
     const h = createHarness();
     try {
       birthAgent(h, 'ada');
@@ -320,38 +377,47 @@ describe('folding a round into MEMORY', () => {
       const frozen = `The vault code is ${PLACEHOLDER}${PLACEHOLDER}${PLACEHOLDER}${PLACEHOLDER} and it matters.`;
       writeMemoryFileHelper(h, `I remember this.\n${frozen}`);
 
-      // The model smooths the gap over instead of leaving it empty, and writes
-      // the round as one paragraph the way the prompt asks it to.
+      // First the model smooths the gap over. That is a written echo of a
+      // frozen sentence, so the sandbox refuses the answer instead of quietly
+      // dropping the offending sentence out of it.
       const smoothed = `I remember this. The vault code is 9999 and it matters.`;
-      const { deps } = depsFor(h, [smoothed], 4000);
+      const { deps } = depsFor(h, [smoothed, 'I remember this.']);
       const outcome = await consolidateMemory(deps, transcriptFor('ada', h.clock.now()));
       expect(outcome.status).toBe('updated');
 
       const written = readFileSync(agentMemoryPath(h.paths, 'ada'), 'utf8');
       expect(written).toContain(frozen);
       expect(written).not.toContain('9999');
-      // The rest of the paragraph survives: only the echo is dropped.
       expect(written).toContain('I remember this.');
 
-      const entries = h.blackbox.readRecentRounds('ada', 5).flatMap((round) => round.entries);
-      const repair = entries.find((entry) => entry.kind === 'frozen_restored');
-      expect(repair).toBeDefined();
-      expect(repair?.['replaced']).toEqual([sentenceId]);
+      const entries = blackboxEntries(h);
+      const rejection = entries.find((entry) => entry.kind === 'memory_rejected');
+      expect(rejection).toBeDefined();
+      expect(String(rejection?.['reason'])).toContain('frozen sentence');
+      // The answer that obeyed is the one that was folded in.
+      expect(entries.some((entry) => entry.kind === 'memory_appended')).toBe(true);
     } finally {
       h.cleanup();
     }
   });
 
-  it('deletes a placeholder the model invented where no wound exists', async () => {
+  it('refuses a round that invents a placeholder, and takes the answer that obeys', async () => {
     const h = createHarness();
     try {
       birthAgent(h, 'ada');
       writeMemoryFileHelper(h, 'I have been here before.');
-      const { deps } = depsFor(h, [`I have been here before.\nI invented a scar: ${PLACEHOLDER}${PLACEHOLDER}.`], 4000);
+      const { deps } = depsFor(h, [
+        `I have been here before.\nI invented a scar: ${PLACEHOLDER}${PLACEHOLDER}.`,
+        'I invented nothing.',
+      ]);
       const outcome = await consolidateMemory(deps, transcriptFor('ada', h.clock.now()));
       expect(outcome.status).toBe('updated');
       expect(readMemoryFile(h.paths, 'ada')).not.toContain(PLACEHOLDER);
-      expect(readMemoryFile(h.paths, 'ada')).toContain('I invented a scar: .');
+      expect(readMemoryFile(h.paths, 'ada')).toContain('I invented nothing.');
+      expect(readMemoryFile(h.paths, 'ada')).not.toContain('I invented a scar');
+
+      const rejection = blackboxEntries(h).find((entry) => entry.kind === 'memory_rejected');
+      expect(String(rejection?.['reason'])).toContain('do not write the');
     } finally {
       h.cleanup();
     }
@@ -609,7 +675,7 @@ describe('the round limit', () => {
     }
   });
 
-  it('puts a frozen sentence the compaction dropped back, from the ledger', async () => {
+  it('refuses a compaction that drops a frozen sentence, and keeps it from the ledger', async () => {
     const h = createHarness();
     try {
       birthAgent(h, 'ada');
@@ -629,17 +695,282 @@ describe('the round limit', () => {
       const blocks = Array.from({ length: 11 }, (_, index) => ({ body: `note ${index + 1}` }));
       writeCanonicalMemory(h, blocks, `I remember this.\n${visible}`);
 
-      // The compaction answer simply forgets the wounded sentence.
-      const { deps } = depsFor(h, ['note 12', 'I still remember the vault.']);
+      // The first compaction answer forgets the wounded sentence outright. The
+      // sandbox refuses it rather than repairing it behind the model's back;
+      // the second answer carries the sentence across untouched and is taken.
+      const carried = `I remember this.\n${visible}\nI still remember the vault.`;
+      const { deps } = depsFor(h, ['note 12', 'I still remember the vault.', carried]);
       const outcome = await consolidateMemory(deps, transcriptFor('ada', h.clock.now(), 12));
       expect(outcome.status).toBe('updated');
       const written = outcome.status === 'updated' ? outcome.memory : '';
 
+      // The sentence that would have been dropped is still there, reading
+      // exactly as the ledger renders it.
       expect(written).toContain(visible);
       expect(renderSentence(original, h.ledger.listWounds('ada'))).toBe(visible);
       expect(h.ledger.untreatedRedactedChars('ada')).toBe(4);
-      const entries = h.blackbox.readRecentRounds('ada', 5).flatMap((round) => round.entries);
-      expect(entries.some((entry) => entry.kind === 'frozen_restored')).toBe(true);
+      const entries = blackboxEntries(h);
+      const rejection = entries.find((entry) => entry.kind === 'memory_rejected');
+      expect(rejection).toBeDefined();
+      expect(String(rejection?.['reason'])).toContain('must survive character for character');
+      expect(entries.some((entry) => entry.kind === 'memory_compacted')).toBe(true);
+    } finally {
+      h.cleanup();
+    }
+  });
+});
+
+describe('editing the long-term part through the sandbox', () => {
+  const PARAGRAPH_ONE = 'The day before yesterday, A scammed me out of 20 yuan.';
+  const PARAGRAPH_TWO =
+    `Yesterday, I earne${PLACEHOLDER} 10 ${PLACEHOLDER}uan working a part-${PLACEHOLDER}${PLACEHOLDER}me job, ` +
+    `so n${PLACEHOLDER}w I had plenty of time to figure out how to improve my efficiency.`;
+  const PARAGRAPH_THREE =
+    "Today I'm really speechless. The system had a bug, and it took me forever to exchange it for satiety. I almost starved to death.";
+  /** Enough rounds that the next one forces a compaction. */
+  const FULL_LIST = Array.from({ length: MAX_RECENT_ROUNDS + 1 }, (_, index) => ({ body: `note ${index + 1}` }));
+
+  /**
+   * A frozen sentence whose visible form is exactly `visible`: the placeholders
+   * stand for one wounded character each, which is how the ledger renders an
+   * untreated wound of length one.
+   */
+  function insertFrozenVisible(h: Harness, visible: string): number {
+    const alphabet = 'abcdefghijklmnopqrstuvwxyz';
+    let original = '';
+    const offsets: number[] = [];
+    for (const character of visible) {
+      if (character === PLACEHOLDER) {
+        offsets.push(original.length);
+        original += alphabet[offsets.length % alphabet.length];
+      } else {
+        original += character;
+      }
+    }
+    const id = h.ledger.insertFrozenSentence('ada', original, h.clock.now());
+    offsets.forEach((offset, index) => {
+      h.ledger.insertWound({
+        agent: 'ada',
+        sentenceId: id,
+        offset,
+        length: 1,
+        originalText: alphabet[index % alphabet.length],
+        starvationSince: 1,
+        tickIndex: 1,
+        createdAt: h.clock.now(),
+      });
+    });
+    return id;
+  }
+
+  function whoOf(h: Harness): string {
+    const text = readMemoryFile(h.paths, 'ada');
+    const at = text.indexOf(WHO_I_AM_HEADING);
+    const end = text.indexOf(RECENT_ROUNDS_HEADING);
+    return text.slice(at + WHO_I_AM_HEADING.length, end).trim();
+  }
+
+  it('refuses an edit inside a wounded sentence and folds in the next answer', async () => {
+    const h = createHarness();
+    try {
+      birthAgent(h, 'ada');
+      insertFrozenVisible(h, PARAGRAPH_TWO);
+      writeCanonicalMemory(
+        h,
+        FULL_LIST,
+        [PARAGRAPH_ONE, PARAGRAPH_TWO, PARAGRAPH_THREE].join('\n\n'),
+      );
+      const before = whoOf(h);
+      expect(before).toContain(PARAGRAPH_TWO);
+
+      // First the model reaches into the wounded sentence, quoting only a
+      // fragment of it. Then it edits the healthy third paragraph instead.
+      const intoTheWound = toolCallResponse([
+        {
+          id: 'c1',
+          name: 'replace_in_memory',
+          args: {
+            old_text: `earne${PLACEHOLDER} 10 ${PLACEHOLDER}uan`,
+            new_text: 'earned 10 yuan',
+          },
+        },
+      ]);
+      const healthyEdit = toolCallResponse([
+        {
+          id: 'c2',
+          name: 'replace_in_memory',
+          args: {
+            old_text: PARAGRAPH_THREE,
+            new_text:
+              'Today, speechless—a system bug made exchanging for satiety take forever, nearly starving me.',
+          },
+        },
+        { id: 'c3', name: 'finish_memory_edit', args: {} },
+      ]);
+      const { deps } = toolDepsFor(h, [textResponse('note 12'), intoTheWound, healthyEdit]);
+
+      const outcome = await consolidateMemory(deps, transcriptFor('ada', h.clock.now(), 12));
+      expect(outcome.status).toBe('updated');
+
+      const after = whoOf(h);
+      // The wounded paragraph is untouched, character for character, in the
+      // middle of the section, in the same order.
+      expect(after).toContain(PARAGRAPH_TWO);
+      expect(after).not.toContain('earned 10 yuan');
+      expect(after.indexOf(PARAGRAPH_ONE)).toBeLessThan(after.indexOf(PARAGRAPH_TWO));
+      expect(after.indexOf(PARAGRAPH_TWO)).toBeLessThan(after.indexOf('Today, speechless'));
+      expect(after).not.toContain(PARAGRAPH_THREE);
+      // The healthy edit went through, so the section really is different now.
+      expect(after).toContain('nearly starving me.');
+
+      const entries = blackboxEntries(h);
+      const rejection = entries.find((entry) => entry.kind === 'memory_rejected');
+      expect(rejection).toBeDefined();
+      const reason = String(rejection?.['reason']);
+      expect(reason).toContain('is frozen');
+      expect(reason).toContain('cannot be modified');
+      // The model was told which sentence it had reached into.
+      expect(reason).toContain('Yesterday, I earne');
+      expect(entries.some((entry) => entry.kind === 'memory_compacted')).toBe(true);
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  it('throws away a session that burns five refusals, partial edits included', async () => {
+    const h = createHarness();
+    try {
+      birthAgent(h, 'ada');
+      insertFrozenVisible(h, PARAGRAPH_TWO);
+      writeCanonicalMemory(
+        h,
+        FULL_LIST,
+        [PARAGRAPH_ONE, PARAGRAPH_TWO, PARAGRAPH_THREE].join('\n\n'),
+      );
+
+      const fragment = `part-${PLACEHOLDER}${PLACEHOLDER}me job`;
+      const intoTheWound = (index: number): ChatResponse =>
+        toolCallResponse([
+          {
+            id: `bad${index}`,
+            name: 'replace_in_memory',
+            args: { old_text: fragment, new_text: `a proper job ${index}` },
+          },
+        ]);
+      const goodEdit = toolCallResponse([
+        {
+          id: 'good',
+          name: 'replace_in_memory',
+          args: { old_text: PARAGRAPH_ONE, new_text: 'SESSION ONE WAS HERE.' },
+        },
+      ]);
+      // Session 1: one good edit, then five refusals, which throws it away.
+      // Session 2: a different good edit, and this time it finishes.
+      const sessionTwo = toolCallResponse([
+        {
+          id: 'pick',
+          name: 'replace_in_memory',
+          args: { old_text: PARAGRAPH_ONE, new_text: 'SESSION TWO WAS HERE.' },
+        },
+        { id: 'done', name: 'finish_memory_edit', args: {} },
+      ]);
+      const { deps } = toolDepsFor(h, [
+        textResponse('note 12'),
+        goodEdit,
+        intoTheWound(1),
+        intoTheWound(2),
+        intoTheWound(3),
+        intoTheWound(4),
+        intoTheWound(5),
+        sessionTwo,
+      ]);
+
+      const outcome = await consolidateMemory(deps, transcriptFor('ada', h.clock.now(), 12));
+      expect(outcome.status).toBe('updated');
+
+      const after = whoOf(h);
+      // Session 1's good edit is gone: the whole session was discarded, not
+      // just the calls that were refused.
+      expect(after).not.toContain('SESSION ONE WAS HERE.');
+      expect(after).toContain('SESSION TWO WAS HERE.');
+      expect(after).not.toContain(PARAGRAPH_ONE);
+      expect(after).toContain(PARAGRAPH_TWO);
+
+      const entries = blackboxEntries(h);
+      const reset = entries.find((entry) => entry.kind === 'memory_session_reset');
+      expect(reset).toBeDefined();
+      expect(reset?.['session']).toBe(1);
+      expect(reset?.['rejections']).toBe(MAX_SANDBOX_REJECTIONS_PER_SESSION);
+      // Session 2 starts clean, so the whole step took exactly five refusals.
+      expect(entries.filter((entry) => entry.kind === 'memory_rejected').length).toBe(
+        MAX_SANDBOX_REJECTIONS_PER_SESSION,
+      );
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  it('pauses the whole conservatory when all three sessions fail', async () => {
+    const h = createHarness();
+    try {
+      birthAgent(h, 'ada');
+      insertFrozenVisible(h, PARAGRAPH_TWO);
+      writeCanonicalMemory(
+        h,
+        FULL_LIST,
+        [PARAGRAPH_ONE, PARAGRAPH_TWO, PARAGRAPH_THREE].join('\n\n'),
+      );
+      const whoBefore = whoOf(h);
+
+      const fragment = `so n${PLACEHOLDER}w I had plenty`;
+      const bad = (index: number): ChatResponse =>
+        toolCallResponse([
+          {
+            id: `bad${index}`,
+            name: 'replace_in_memory',
+            args: { old_text: fragment, new_text: `so now I had plenty ${index}` },
+          },
+        ]);
+      const { deps, pauses } = toolDepsFor(h, [
+        textResponse('note 12'),
+        ...Array.from({ length: 15 }, (_, index) => bad(index)),
+      ]);
+      // The same wiring the supervisor uses: the callback really throws the
+      // switch, so this checks the ledger and not just the callback.
+      const pause = createPauseOrgan({
+        ledger: h.ledger,
+        values: h.values,
+        recordIntervention: () => undefined,
+      });
+      deps.onPauseConservatory = (agent, reason, at) => {
+        pauses.push({ agent, reason, at });
+        pause.set(true, at);
+      };
+
+      const outcome = await consolidateMemory(deps, transcriptFor('ada', h.clock.now(), 12));
+      expect(outcome.status).toBe('rejected');
+      if (outcome.status === 'rejected') {
+        expect(outcome.pausedConservatory).toBe(true);
+      }
+
+      // Fifteen refusals, three sessions thrown away, and one pause.
+      const entries = blackboxEntries(h);
+      expect(entries.filter((entry) => entry.kind === 'memory_rejected').length).toBe(15);
+      expect(entries.filter((entry) => entry.kind === 'memory_session_reset').length).toBe(
+        MAX_MEMORY_SESSIONS_PER_ROUND,
+      );
+      const paused = entries.find((entry) => entry.kind === 'memory_sandbox_paused');
+      expect(paused).toBeDefined();
+      expect(paused?.['sessions']).toBe(MAX_MEMORY_SESSIONS_PER_ROUND);
+      expect(paused?.['rejectionsPerSession']).toBe(MAX_SANDBOX_REJECTIONS_PER_SESSION);
+
+      expect(pauses.length).toBe(1);
+      expect(h.ledger.getPauseState().paused).toBe(true);
+      // The long-term part is exactly what it was: the abandoned compaction
+      // wrote nothing into it.
+      expect(whoOf(h)).toBe(whoBefore);
+      expect(whoOf(h)).toContain(PARAGRAPH_TWO);
+      expect(readMemoryFile(h.paths, 'ada')).not.toContain('so now I had plenty 0');
     } finally {
       h.cleanup();
     }

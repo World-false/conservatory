@@ -1,9 +1,9 @@
 # memory index
-- [Development rules](.agents/memory/feedback-development-rules.md) — Two-tier architect role, plain language, snapshot-not-reference config, secrets out of git, verify the brief's claims, split hand-off briefs by topic
+- [Development rules](.agents/memory/feedback-development-rules.md) — Two-tier architect role, zero-jargon plain language, snapshot config, secrets out of git, staged/split hand-off briefs
 - [Model config decisions](.agents/memory/project-model-config-decisions.md) — Settled 2026-10-04 choices: provider→model layers, frozen per-agent MODEL.json snapshot with key, untouched design.md §10
 - [User profile](.agents/memory/user-profile.md) — Vibe coder workflow, Windows environment, two-tier delegation, quota-driven hand-off, console UI modal preferences
 - [Windows ACL Sandbox reference](.agents/memory/reference-windows-acl-sandbox.md) — Step 3 sandbox blueprint plus the unequal-elevation constraints (no Low label, required restricting SIDs) found while porting it
-- [Scale & memory decisions](.agents/memory/project-scale-and-memory-decisions.md) — 1M-context scale, append-only 750K-token memory, system-side MEMORY, pending frozen-sentence identity problem
+- [Scale & memory decisions](.agents/memory/project-scale-and-memory-decisions.md) — 1M-context scale, 750K-token memory, system-side MEMORY, tool-driven memory sandbox & offset-tracked frozen sentences
 
 ---
 

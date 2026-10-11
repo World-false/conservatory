@@ -24,7 +24,12 @@ import {
   type InterventionKind,
   type TreatmentTier,
 } from '../organs/ledger';
-import { readMemoryFile, writeMemoryAtomic } from '../organs/memory';
+import {
+  MAX_MEMORY_SESSIONS_PER_ROUND,
+  MAX_SANDBOX_REJECTIONS_PER_SESSION,
+  readMemoryFile,
+  writeMemoryAtomic,
+} from '../organs/memory';
 import { grantSatiety, readSatiety } from '../organs/metabolism';
 import { readModelBinding, writeModelBinding } from '../organs/models/binding';
 import { switchAgentModel, type SwitchModelOutcome } from '../organs/models/switch';
@@ -457,6 +462,20 @@ function main(): void {
       },
       onMemoryError: (agent, message) => {
         addNotice(state, agent, message, now());
+      },
+      // The memory model broke the ledger's frozen sentences in every session
+      // of one step. That is not a bad answer, it is the mechanism that carries
+      // an agent between rounds failing, so the whole conservatory stops and
+      // the operator decides what to do. The pause is recorded like any other.
+      onPauseConservatory: (agent, reason, at) => {
+        const outcome = state.pause.set(true, at);
+        state.paused = outcome.paused;
+        addNotice(
+          state,
+          PAUSED_SETTING_AGENT,
+          `因 ${agent} 的记忆模型在单回合内连续 ${MAX_MEMORY_SESSIONS_PER_ROUND} 次会话（每次满 ${MAX_SANDBOX_REJECTIONS_PER_SESSION} 次违规）触碰或破坏冻结句（${reason}），系统已自动全局暂停温室。`,
+          at,
+        );
       },
     }),
     processes: new Map<string, AgentProcess>(),
