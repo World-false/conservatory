@@ -51,6 +51,24 @@ interface RenderedSentence {
    * or null when the character is decoration masking a lost one.
    */
   map: (number | null)[];
+  /** Where each wound's own rendering sits inside `text`. */
+  spans: RenderedWoundSpan[];
+}
+
+/**
+ * The characters one wound occupies in the rendered sentence, by wound id.
+ *
+ * The console cannot find a wound by searching for its rendered form: two
+ * adjacent untreated wounds join into one run of placeholders, so the search
+ * would hand the first wound the whole run and leave the second unplaceable.
+ * The renderer already knows where each one landed, so it says so.
+ */
+export interface RenderedWoundSpan {
+  woundId: number;
+  /** Inclusive index of the wound's first character in the rendered text. */
+  start: number;
+  /** Exclusive index just past its last character. */
+  end: number;
 }
 
 /**
@@ -77,6 +95,7 @@ function renderWithMap(original: string, wounds: readonly WoundRecord[]): Render
   const ordered = [...wounds].sort((left, right) => left.offset - right.offset);
   let text = '';
   const map: (number | null)[] = [];
+  const spans: RenderedWoundSpan[] = [];
   let cursor = 0;
 
   const push = (piece: string, originalIndex: number | null): void => {
@@ -93,6 +112,9 @@ function renderWithMap(original: string, wounds: readonly WoundRecord[]): Render
       continue;
     }
     push(original.slice(cursor, start), cursor);
+    // Recorded before the wound's own text is appended, so the span covers
+    // exactly this wound's rendering and nothing of the literal text before it.
+    const spanStart = text.length;
     const body = original.slice(start, end);
     if (wound.status === 'untreated') {
       push(PLACEHOLDER.repeat(body.length), null);
@@ -115,10 +137,11 @@ function renderWithMap(original: string, wounds: readonly WoundRecord[]): Render
     } else {
       push(body, start);
     }
+    spans.push({ woundId: wound.id, start: spanStart, end: text.length });
     cursor = end;
   }
   push(original.slice(cursor), cursor);
-  return { text, map };
+  return { text, map, spans };
 }
 
 /**
@@ -129,6 +152,25 @@ function renderWithMap(original: string, wounds: readonly WoundRecord[]): Render
  */
 export function renderSentence(original: string, wounds: readonly WoundRecord[]): string {
   return renderWithMap(original, wounds).text;
+}
+
+/**
+ * The same rendering as `renderSentence`, plus where each wound landed in it.
+ *
+ * This is the only reliable way to point at a wound inside a rendered
+ * sentence. Searching the rendered text for a wound's own characters fails
+ * exactly where it matters most: `▯▯▯` and `▯▯▯▯` next to each other are one
+ * run of seven placeholders, and the second wound — the one created later, so
+ * the higher id — is indistinguishable from the first by its text alone. The
+ * caller that has to attribute a click to a specific wound therefore asks the
+ * renderer rather than guessing.
+ */
+export function renderSentenceWithSpans(
+  original: string,
+  wounds: readonly WoundRecord[],
+): { text: string; spans: RenderedWoundSpan[] } {
+  const rendered = renderWithMap(original, wounds);
+  return { text: rendered.text, spans: rendered.spans };
 }
 
 /** One unit a wound may fall in: a sentence, frozen or not. */

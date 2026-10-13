@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import http from 'node:http';
-import type { ConservatoryValues, RuntimePaths } from '../config';
+import { isReasoningEffort, validateValuesPatch, type ConservatoryValues, type ReasoningEffort, type RuntimePaths } from '../config';
 import { parseDeathCertificate } from '../organs/death';
 import { verifyIncome, rejectIncome, type IncomeResult } from '../organs/income';
 import type {
@@ -15,11 +15,12 @@ import type {
 } from '../organs/ledger';
 import { readSatiety } from '../organs/metabolism';
 import { readMemoryFile } from '../organs/memory';
+import { readModelBinding } from '../organs/models/binding';
 import type { ModelConfigStore } from '../organs/models/store';
 import { NotebookError, listNotebook, readNotebookFile } from '../organs/notebook';
 import type { PromptLibrary } from '../organs/prompts';
-import { renderSentence } from '../organs/redaction';
-import { createTask, reviewTask, type ReviewDecision } from '../organs/taskboard';
+import { renderSentenceWithSpans } from '../organs/redaction';
+import { cancelTask, createTask, reviewTask, updateTask, type ReviewDecision } from '../organs/taskboard';
 import type { Blackbox } from '../organs/blackbox';
 import type { RoundRegistry } from '../organs/population';
 import type { SandboxPolicyStore, SandboxPolicyView } from '../organs/sandbox/policy';
@@ -56,6 +57,18 @@ export interface ConsoleDeps {
    * Binding one to an agent is the supervisor's job, not the console's.
    */
   modelStore: ModelConfigStore;
+  /**
+   * Applies a partial update of the body's numbers. The supervisor owns this
+   * because a change to the decay rate has to re-anchor every living agent
+   * before the new rate is in force, and it is the supervisor that holds the
+   * ledger and the two heartbeats.
+   *
+   * When it is not injected the console validates and applies the patch itself
+   * against `values`, which is what a test that only wants the route does.
+   */
+  updateValues?(
+    patch: unknown,
+  ): { ok: true; values: ConservatoryValues } | { ok: false; error: string };
   indexHtmlPath: string;
   now(): number;
   getRuntime(name: string): RuntimeInfo;
@@ -63,6 +76,7 @@ export interface ConsoleDeps {
     name: string,
     providerId?: string,
     model?: string,
+    reasoningEffort?: ReasoningEffort | null,
   ): Promise<{ ok: true } | { ok: false; error: string }>;
   /**
    * Rebinds one living agent's brain. `deferred` means the agent is mid-round,
@@ -72,6 +86,7 @@ export interface ConsoleDeps {
     name: string,
     providerId: string,
     model: string,
+    reasoningEffort?: ReasoningEffort | null,
   ): { ok: true; deferred: boolean; message: string } | { ok: false; error: string; agents?: string[] };
   wakeAgent(
     name: string,
@@ -113,7 +128,7 @@ const MESSAGES: Record<string, string> = {
   invalid_price: '价格必须是不小于 0 的数字',
   invalid_deliverable: '交付内容不能为空',
   task_not_found: '任务不存在',
-  task_not_open: '任务不是待认领状态',
+  task_not_open: '只有开放中的任务可以修改或撤下',
   task_not_claimed_by_you: '该任务不由这个 agent 持有',
   task_not_submitted: '任务不在待审核状态',
   report_not_found: '收入申报不存在',
@@ -168,13 +183,14 @@ const MESSAGES: Record<string, string> = {
   unknown_model: '这个提供商下没有这个模型',
   provider_removed: '这个提供商已经被删除，请重新选择',
   invalid_model_selection: '请选择提供商与模型',
+  invalid_reasoning_effort: '思考努力等级必须是 low、medium、high 或留空（默认）',
 };
 
 function messageFor(code: string): string {
   return MESSAGES[code] ?? code;
 }
 
-function taskView(task: TaskRecord): Record<string, unknown> {
+function taskView(ledger: Ledger, task: TaskRecord): Record<string, unknown> {
   return {
     id: task.id,
     title: task.title,
@@ -188,6 +204,14 @@ function taskView(task: TaskRecord): Record<string, unknown> {
     createdAt: task.createdAt,
     decidedAt: task.decidedAt,
     decision: task.decision,
+    // Every attempt, oldest first, so the page can show what changed across a
+    // rework. The task row only keeps the latest deliverable.
+    submissions: ledger.listTaskSubmissions(task.id).map((submission) => ({
+      id: submission.id,
+      agent: submission.agent,
+      deliverable: submission.deliverable,
+      at: submission.at,
+    })),
   };
 }
 
@@ -234,6 +258,233 @@ function sandboxConfigView(view: SandboxPolicyView): Record<string, unknown> {
     },
     configPath: view.configPath,
   };
+}
+
+function buildModelsEndpointUrl(baseUrl: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(baseUrl);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return null;
+  }
+  const trimmedPath = parsed.pathname.replace(/\/+$/, '');
+  parsed.pathname = trimmedPath.endsWith('/models') ? trimmedPath : `${trimmedPath}/models`;
+  return parsed.toString();
+}
+
+/**
+ * The chat endpoint for a test call, derived the same way the `/models` URL is:
+ * the operator's Base URL may or may not already end in `/v1`, and may or may
+ * not carry a trailing slash. A URL that already names the route is left alone
+ * rather than doubled up.
+ */
+function buildChatCompletionsUrl(baseUrl: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(baseUrl);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return null;
+  }
+  const trimmedPath = parsed.pathname.replace(/\/+$/, '');
+  parsed.pathname = trimmedPath.endsWith('/chat/completions')
+    ? trimmedPath
+    : `${trimmedPath}/chat/completions`;
+  return parsed.toString();
+}
+
+function extractModelIds(payload: unknown): string[] {
+  const list: unknown[] = Array.isArray(payload)
+    ? payload
+    : typeof payload === 'object' && payload !== null
+      ? Array.isArray((payload as Record<string, unknown>)['data'])
+        ? ((payload as Record<string, unknown>)['data'] as unknown[])
+        : Array.isArray((payload as Record<string, unknown>)['models'])
+          ? ((payload as Record<string, unknown>)['models'] as unknown[])
+          : []
+      : [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of list) {
+    let rawId: unknown = null;
+    if (typeof item === 'string') {
+      rawId = item;
+    } else if (typeof item === 'object' && item !== null) {
+      const record = item as Record<string, unknown>;
+      rawId = typeof record['id'] === 'string' ? record['id'] : record['name'];
+    }
+    if (typeof rawId !== 'string') {
+      continue;
+    }
+    const id = rawId.trim();
+    if (id === '' || seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
+async function fetchRemoteModels(
+  baseUrl: string,
+  apiKey: string,
+): Promise<{ ok: true; models: string[] } | { ok: false; error: string }> {
+  const endpoint = buildModelsEndpointUrl(baseUrl);
+  if (endpoint === null) {
+    return { ok: false, error: '请填写合法的 Base URL（以 http:// 或 https:// 开头）' };
+  }
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  if (apiKey.trim() !== '') {
+    headers['Authorization'] = `Bearer ${apiKey.trim()}`;
+  }
+  let response: Response;
+  try {
+    response = await fetch(endpoint, {
+      method: 'GET',
+      headers,
+      signal: AbortSignal.timeout(15000),
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return { ok: false, error: `连接模型接口失败：${detail}` };
+  }
+  const rawText = await response.text().catch(() => '');
+  let parsed: unknown = null;
+  if (rawText.trim() !== '') {
+    try {
+      parsed = JSON.parse(rawText);
+    } catch {
+      parsed = null;
+    }
+  }
+  if (!response.ok) {
+    let remoteMsg = '';
+    if (typeof parsed === 'object' && parsed !== null) {
+      const record = parsed as Record<string, unknown>;
+      const errObj = record['error'];
+      if (typeof errObj === 'string') {
+        remoteMsg = errObj;
+      } else if (typeof errObj === 'object' && errObj !== null) {
+        const msg = (errObj as Record<string, unknown>)['message'];
+        if (typeof msg === 'string') {
+          remoteMsg = msg;
+        }
+      } else if (typeof record['message'] === 'string') {
+        remoteMsg = record['message'];
+      }
+    }
+    const suffix = remoteMsg.trim() !== '' ? `（${remoteMsg.trim()}）` : '';
+    return { ok: false, error: `拉取模型列表失败：HTTP ${String(response.status)}${suffix}` };
+  }
+  const models = extractModelIds(parsed);
+  if (models.length === 0) {
+    return { ok: false, error: '接口返回成功，但没有找到任何可用的模型名称' };
+  }
+  return { ok: true, models };
+}
+
+interface TestedUsage {
+  promptTokens: number;
+  completionTokens: number;
+}
+
+/**
+ * One tiny round trip to prove a model is usable at all.
+ *
+ * A reply is not enough. The whole harness meters on the usage the provider
+ * reports, so a model that answers but reports no token counts is a model the
+ * conservatory cannot run: the round would end with `usage_missing` and the
+ * operator would be left guessing why. The check is therefore deliberately
+ * stricter than "did it answer" — reachable, and metered.
+ */
+async function testModelConnection(
+  baseUrl: string,
+  apiKey: string,
+  model: string,
+  reasoningEffort: ReasoningEffort | null,
+): Promise<{ ok: true; usage: TestedUsage } | { ok: false; error: string }> {
+  const endpoint = buildChatCompletionsUrl(baseUrl);
+  if (endpoint === null) {
+    return { ok: false, error: '请填写合法的 Base URL（以 http:// 或 https:// 开头）' };
+  }
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    Accept: 'application/json',
+  };
+  if (apiKey.trim() !== '') {
+    headers['Authorization'] = `Bearer ${apiKey.trim()}`;
+  }
+  const payload: Record<string, unknown> = {
+    model,
+    messages: [{ role: 'user', content: 'ping' }],
+    max_tokens: 8,
+  };
+  if (reasoningEffort !== null) {
+    payload['reasoning_effort'] = reasoningEffort;
+  }
+  let response: Response;
+  try {
+    response = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(15000),
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return { ok: false, error: `模型测试失败（网络错误）：${detail}` };
+  }
+  const rawText = await response.text().catch(() => '');
+  let parsed: unknown = null;
+  if (rawText.trim() !== '') {
+    try {
+      parsed = JSON.parse(rawText);
+    } catch {
+      parsed = null;
+    }
+  }
+  if (!response.ok) {
+    let remoteMsg = '';
+    if (typeof parsed === 'object' && parsed !== null) {
+      const record = parsed as Record<string, unknown>;
+      const errObj = record['error'];
+      if (typeof errObj === 'string') {
+        remoteMsg = errObj;
+      } else if (typeof errObj === 'object' && errObj !== null) {
+        const msg = (errObj as Record<string, unknown>)['message'];
+        if (typeof msg === 'string') {
+          remoteMsg = msg;
+        }
+      } else if (typeof record['message'] === 'string') {
+        remoteMsg = record['message'];
+      }
+    }
+    const detail = remoteMsg.trim() !== '' ? remoteMsg.trim() : rawText.trim().slice(0, 200);
+    return { ok: false, error: `模型测试失败（HTTP ${String(response.status)}）：${detail}` };
+  }
+  const record = typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : null;
+  const usage = record === null ? null : record['usage'];
+  const usageRecord = typeof usage === 'object' && usage !== null ? (usage as Record<string, unknown>) : null;
+  const promptTokens = usageRecord === null ? null : usageRecord['prompt_tokens'];
+  const completionTokens = usageRecord === null ? null : usageRecord['completion_tokens'];
+  if (
+    typeof promptTokens !== 'number' ||
+    !Number.isFinite(promptTokens) ||
+    typeof completionTokens !== 'number' ||
+    !Number.isFinite(completionTokens)
+  ) {
+    return {
+      ok: false,
+      error: '接口连通成功，但未返回 token 用量（usage），温室无法使用该模型',
+    };
+  }
+  return { ok: true, usage: { promptTokens, completionTokens } };
 }
 
 export function createConsoleServer(deps: ConsoleDeps): http.Server {
@@ -310,14 +561,46 @@ function readString(body: Record<string, unknown>, key: string): string | null {
   return typeof value === 'string' ? value : null;
 }
 
+/**
+ * The optional thinking level off a request body. Absent, `null`, `''` and
+ * `'default'` all mean "the operator did not choose one", which is not an
+ * error — it is how the panel says "clear it and let the provider decide".
+ * Anything else that is not one of the three levels is refused rather than
+ * ignored: a typo silently treated as "unset" would look like it worked.
+ */
+function readReasoningEffort(
+  body: Record<string, unknown>,
+): { ok: true; value: ReasoningEffort | null } | { ok: false } {
+  const raw = body['reasoningEffort'];
+  if (raw === undefined || raw === null || raw === '' || raw === 'default') {
+    return { ok: true, value: null };
+  }
+  if (isReasoningEffort(raw)) {
+    return { ok: true, value: raw };
+  }
+  return { ok: false };
+}
+
 function readNumber(body: Record<string, unknown>, key: string): number | null {
   const value = body[key];
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+/**
+ * One wound, as the memory page needs it: what was taken, the whole sentence
+ * it was taken from as the agent reads it, and exactly where inside that
+ * sentence this wound sits.
+ *
+ * The coordinates are what let the page point at the right wound when two of
+ * them are neighbours. The rendered sentence alone cannot say which run of
+ * placeholders belongs to which wound, so the renderer is asked and its answer
+ * is passed through rather than re-derived in the browser.
+ */
 function woundView(ledger: Ledger, agent: string, wound: WoundRecord): Record<string, unknown> {
   const sentence = ledger.getFrozenSentence(wound.sentenceId);
   const siblings = ledger.listWounds(agent).filter((row) => row.sentenceId === wound.sentenceId);
+  const rendered = sentence === null ? null : renderSentenceWithSpans(sentence.original, siblings);
+  const span = rendered === null ? undefined : rendered.spans.find((item) => item.woundId === wound.id);
   return {
     id: wound.id,
     status: wound.status,
@@ -326,7 +609,12 @@ function woundView(ledger: Ledger, agent: string, wound: WoundRecord): Record<st
     treatedAt: wound.treatedAt,
     // The operator may read the original text; the agent never can.
     originalText: wound.originalText,
-    sentence: sentence === null ? '' : renderSentence(sentence.original, siblings),
+    sentence: rendered === null ? '' : rendered.text,
+    sentenceId: wound.sentenceId,
+    offset: wound.offset,
+    sentenceStartOffset: sentence === null ? null : sentence.startOffset,
+    spanStart: span === undefined ? null : span.start,
+    spanEnd: span === undefined ? null : span.end,
   };
 }
 
@@ -350,10 +638,26 @@ function buildState(deps: ConsoleDeps): Record<string, unknown> {
     const anchor = ledger.getSatietyAnchor(agent.name);
     const injuries = ledger.listWounds(agent.name);
     const certificate = ledger.getDeathCertificate(agent.name);
+    // The frozen snapshot, minus the key. The page shows what an agent is
+    // actually running on; `apiKey` stays on the server, where the agent's own
+    // binding file already keeps it out of the operator's view.
+    const binding = readModelBinding(deps.paths, agent.name);
     return {
       name: agent.name,
       bornAt: agent.bornAt,
       model: agent.model,
+      modelBinding:
+        binding === null
+          ? null
+          : {
+              providerId: binding.providerId,
+              providerName: binding.providerName,
+              model: binding.model,
+              ...(binding.reasoningEffort === undefined
+                ? {}
+                : { reasoningEffort: binding.reasoningEffort }),
+              boundAt: binding.boundAt,
+            },
       status: agent.status,
       satiety: anchor === null ? null : readSatiety(ledger, values, agent.name, now),
       satietyMax: values.satietyMax,
@@ -394,22 +698,32 @@ function buildState(deps: ConsoleDeps): Record<string, unknown> {
     config: {
       satietyMax: values.satietyMax,
       satietyDecayPerSecond: values.satietyDecayPerSecond,
+      initialSatiety: values.initialSatiety,
+      initialBalance: values.initialBalance,
       mealPrice: values.mealPrice,
       satietyPerMeal: values.satietyPerMeal,
       heartbeatSeconds: values.heartbeatSeconds,
       memoryCapChars: values.memoryCapChars,
       roundContextCapTokens: values.roundContextCapTokens,
+      maxToolCallsPerRound: values.maxToolCallsPerRound,
+      modelRequestTimeoutSeconds: values.modelRequestTimeoutSeconds,
       taskClaimTimeoutHours: values.taskClaimTimeoutHours,
       maxSlots: values.maxSlots,
       redactionIntervalSeconds: values.redactionIntervalSeconds,
       redactionCharsPerTick: values.redactionCharsPerTick,
+      redactionMinRanges: values.redactionMinRanges,
+      redactionMaxRanges: values.redactionMaxRanges,
       deathLineChars: values.deathLineChars,
       ordinaryTreatmentPrice: values.ordinaryTreatmentPrice,
       completeTreatmentPrice: values.completeTreatmentPrice,
+      // Stored and shown like the rest, but the listener is bound once at boot:
+      // the panel marks this one "needs a restart" rather than pretending the
+      // change is live.
+      consolePort: values.consolePort,
     },
     agents,
     busy: deps.registry.busyAgents(),
-    tasks: ledger.listTasks().map(taskView),
+    tasks: ledger.listTasks().map((task) => taskView(ledger, task)),
     income: ledger.listIncomeReports().map(incomeView),
     messages: ledger
       .listMessagesForOperator()
@@ -432,6 +746,31 @@ function buildState(deps: ConsoleDeps): Record<string, unknown> {
     })),
     notices: deps.getNotices(),
   };
+}
+
+/**
+ * One patch of the body's numbers, through whichever owner is available.
+ *
+ * With `updateValues` injected (the supervisor) that callback does the whole
+ * job: validate, re-anchor satiety, persist, retune the clocks. Without it —
+ * a console test, or any embedder that only wants the route — the shared
+ * validator is applied to the live `values` object in place, which is enough
+ * for `/api/state` and income verification to see the change immediately.
+ */
+function applyValuesPatch(
+  deps: ConsoleDeps,
+  patch: unknown,
+): { ok: true; values: ConservatoryValues } | { ok: false; error: string } {
+  const update = deps.updateValues;
+  if (update !== undefined) {
+    return update(patch);
+  }
+  const result = validateValuesPatch(deps.values, patch);
+  if (!result.ok) {
+    return { ok: false, error: result.error };
+  }
+  Object.assign(deps.values, result.next);
+  return { ok: true, values: deps.values };
 }
 
 async function route(
@@ -475,11 +814,27 @@ async function route(
     // the configured defaults; the supervisor refuses a pair it cannot resolve.
     const providerId = readString(body, 'providerId');
     const model = readString(body, 'model');
-    const result = await deps.createAgent(
-      name.trim(),
-      providerId === null ? undefined : providerId.trim(),
-      model === null ? undefined : model.trim(),
-    );
+    const effort = readReasoningEffort(body);
+    if (!effort.ok) {
+      sendJson(response, 400, { ok: false, error: messageFor('invalid_reasoning_effort') });
+      return;
+    }
+    // The level is only passed on when it was actually chosen, so a request
+    // that says nothing about thinking is indistinguishable from one made
+    // before this setting existed.
+    const result =
+      effort.value === null
+        ? await deps.createAgent(
+            name.trim(),
+            providerId === null ? undefined : providerId.trim(),
+            model === null ? undefined : model.trim(),
+          )
+        : await deps.createAgent(
+            name.trim(),
+            providerId === null ? undefined : providerId.trim(),
+            model === null ? undefined : model.trim(),
+            effort.value,
+          );
     if (!result.ok) {
       sendJson(response, 400, { ok: false, error: messageFor(result.error) });
       return;
@@ -510,6 +865,83 @@ async function route(
       sendJson(response, 200, { ok: true, models: result.data });
       return;
     }
+  }
+
+  // POST /api/models/fetch-models
+  if (segments.length === 3 && segments[1] === 'models' && segments[2] === 'fetch-models' && method === 'POST') {
+    const body = await readJsonBody(request);
+    const rawBaseUrl = readString(body, 'baseUrl');
+    const rawApiKey = readString(body, 'apiKey');
+    const providerId = readString(body, 'providerId');
+    if (rawBaseUrl === null || rawBaseUrl.trim() === '') {
+      sendJson(response, 400, { ok: false, error: '请先填写 Base URL' });
+      return;
+    }
+    const storedKey =
+      providerId !== null && providerId.trim() !== ''
+        ? (deps.modelStore.getProvider(providerId.trim())?.apiKey ?? '')
+        : '';
+    const apiKey = rawApiKey !== null && rawApiKey !== '' ? rawApiKey : storedKey;
+    const outcome = await fetchRemoteModels(rawBaseUrl.trim(), apiKey);
+    if (!outcome.ok) {
+      sendJson(response, 400, { ok: false, error: outcome.error });
+      return;
+    }
+    sendJson(response, 200, { ok: true, models: outcome.models });
+    return;
+  }
+
+  // POST /api/models/test
+  // Proves one brain works before the operator commits to it: reachable,
+  // metered, and — when a level was chosen — accepted at that level. Nothing
+  // is written; this route only answers.
+  if (segments.length === 3 && segments[1] === 'models' && segments[2] === 'test' && method === 'POST') {
+    const body = await readJsonBody(request);
+    const rawModel = readString(body, 'model');
+    if (rawModel === null || rawModel.trim() === '') {
+      sendJson(response, 400, { ok: false, error: '请先选择或填写要测试的模型名' });
+      return;
+    }
+    const model = rawModel.trim();
+    const effort = readReasoningEffort(body);
+    if (!effort.ok) {
+      sendJson(response, 400, { ok: false, error: messageFor('invalid_reasoning_effort') });
+      return;
+    }
+    const rawBaseUrl = readString(body, 'baseUrl');
+    const rawApiKey = readString(body, 'apiKey');
+    const providerId = readString(body, 'providerId');
+    const provider =
+      providerId !== null && providerId.trim() !== ''
+        ? deps.modelStore.getProvider(providerId.trim())
+        : null;
+    // An explicit Base URL wins; a chosen provider is the fallback, so testing
+    // a saved provider needs no retyping. The key follows the same order, and a
+    // form that is still being filled in may legitimately have none yet.
+    const baseUrl = rawBaseUrl !== null && rawBaseUrl.trim() !== '' ? rawBaseUrl.trim() : (provider?.baseUrl ?? '');
+    if (baseUrl === '') {
+      sendJson(response, 400, { ok: false, error: '请先填写 Base URL 或选择提供商' });
+      return;
+    }
+    const apiKey = rawApiKey !== null && rawApiKey !== '' ? rawApiKey : (provider?.apiKey ?? '');
+    const outcome = await testModelConnection(baseUrl, apiKey, model, effort.value);
+    if (!outcome.ok) {
+      sendJson(response, 400, { ok: false, error: outcome.error });
+      return;
+    }
+    sendJson(response, 200, {
+      ok: true,
+      model,
+      reasoningEffort: effort.value,
+      usage: {
+        promptTokens: outcome.usage.promptTokens,
+        completionTokens: outcome.usage.completionTokens,
+      },
+      message: `测试通过（提示 ${String(outcome.usage.promptTokens)} / 生成 ${String(
+        outcome.usage.completionTokens,
+      )} tokens）`,
+    });
+    return;
   }
 
   // /api/agents/:name/...
@@ -567,10 +999,18 @@ async function route(
         sendJson(response, 400, { ok: false, error: messageFor('invalid_model_selection') });
         return;
       }
+      const effort = readReasoningEffort(body);
+      if (!effort.ok) {
+        sendJson(response, 400, { ok: false, error: messageFor('invalid_reasoning_effort') });
+        return;
+      }
       // A model change is an operator intervention, so it is allowed while the
       // agent is mid-round: the ledger and the binding are written now and the
       // running process picks the new brain up on its next wake-up.
-      const result = deps.switchAgentModel(agentName, providerId.trim(), model.trim());
+      const result =
+        effort.value === null
+          ? deps.switchAgentModel(agentName, providerId.trim(), model.trim())
+          : deps.switchAgentModel(agentName, providerId.trim(), model.trim(), effort.value);
       if (!result.ok) {
         sendJson(response, 400, { ok: false, error: messageFor(result.error) });
         return;
@@ -683,7 +1123,7 @@ async function route(
   // /api/tasks
   if (segments.length >= 2 && segments[1] === 'tasks') {
     if (segments.length === 2 && method === 'GET') {
-      sendJson(response, 200, { ok: true, tasks: deps.ledger.listTasks().map(taskView) });
+      sendJson(response, 200, { ok: true, tasks: deps.ledger.listTasks().map((task) => taskView(deps.ledger, task)) });
       return;
     }
     if (segments.length === 2 && method === 'POST') {
@@ -701,7 +1141,7 @@ async function route(
         sendJson(response, 400, { ok: false, error: messageFor(result.code) });
         return;
       }
-      sendJson(response, 200, { ok: true, task: taskView(result.task) });
+      sendJson(response, 200, { ok: true, task: taskView(deps.ledger, result.task) });
       return;
     }
     if (segments.length === 4 && segments[3] === 'review' && method === 'POST') {
@@ -712,12 +1152,41 @@ async function route(
         sendJson(response, 400, { ok: false, error: 'decision 必须是 accept / reject / rework / return' });
         return;
       }
-      const result = reviewTask(deps.ledger, taskId, decision as ReviewDecision, deps.now());
+      const note = readString(body, 'note');
+      const result = reviewTask(deps.ledger, taskId, decision as ReviewDecision, deps.now(), note ?? undefined);
       if (!result.ok) {
         sendJson(response, 400, { ok: false, error: messageFor(result.code) });
         return;
       }
-      sendJson(response, 200, { ok: true, task: taskView(result.task) });
+      sendJson(response, 200, { ok: true, task: taskView(deps.ledger, result.task) });
+      return;
+    }
+    if (segments.length === 4 && segments[3] === 'update' && method === 'POST') {
+      const taskId = decodeURIComponent(segments[2]);
+      const body = await readJsonBody(request);
+      const title = readString(body, 'title');
+      const description = readString(body, 'description');
+      const price = readNumber(body, 'price');
+      if (title === null || description === null || price === null) {
+        sendJson(response, 400, { ok: false, error: '标题、描述和价格都要填写' });
+        return;
+      }
+      const result = updateTask(deps.ledger, taskId, { title, description, price }, deps.now());
+      if (!result.ok) {
+        sendJson(response, 400, { ok: false, error: messageFor(result.code) });
+        return;
+      }
+      sendJson(response, 200, { ok: true, task: taskView(deps.ledger, result.task) });
+      return;
+    }
+    if (segments.length === 4 && segments[3] === 'cancel' && method === 'POST') {
+      const taskId = decodeURIComponent(segments[2]);
+      const result = cancelTask(deps.ledger, taskId);
+      if (!result.ok) {
+        sendJson(response, 400, { ok: false, error: messageFor(result.code) });
+        return;
+      }
+      sendJson(response, 200, { ok: true, id: result.id });
       return;
     }
   }
@@ -736,7 +1205,15 @@ async function route(
         sendJson(response, 400, { ok: false, error: '请填写核实金额' });
         return;
       }
-      const result = verifyIncome(deps.ledger, reportId, verifiedAmount, deps.values.exchangeRate, deps.now());
+      const note = readString(body, 'note');
+      const result = verifyIncome(
+        deps.ledger,
+        reportId,
+        verifiedAmount,
+        deps.values.exchangeRate,
+        deps.now(),
+        note ?? undefined,
+      );
       if (!result.ok) {
         sendJson(response, 400, { ok: false, error: incomeError(result) });
         return;
@@ -750,7 +1227,9 @@ async function route(
         sendJson(response, 400, { ok: false, error: '申报编号不合法' });
         return;
       }
-      const result = rejectIncome(deps.ledger, reportId, deps.now());
+      const body = await readJsonBody(request);
+      const note = readString(body, 'note');
+      const result = rejectIncome(deps.ledger, reportId, deps.now(), note ?? undefined);
       if (!result.ok) {
         sendJson(response, 400, { ok: false, error: incomeError(result) });
         return;
@@ -841,6 +1320,25 @@ async function route(
       sendJson(response, 200, sandboxConfigView(result.view));
       return;
     }
+  }
+
+  // POST /api/settings/values
+  if (segments.length === 3 && segments[1] === 'settings' && segments[2] === 'values' && method === 'POST') {
+    const body = await readJsonBody(request);
+    const result = applyValuesPatch(deps, body);
+    if (!result.ok) {
+      sendJson(response, 400, { ok: false, error: result.error });
+      return;
+    }
+    // The panel is repainted from this answer, so it is the state after the
+    // change rather than the request's echo: what the operator sees next is
+    // what the supervisor is actually holding.
+    sendJson(response, 200, {
+      ok: true,
+      config: buildState(deps)['config'],
+      exchangeRate: deps.values.exchangeRate,
+    });
+    return;
   }
 
   // POST /api/settings/pause

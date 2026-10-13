@@ -13,7 +13,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { agentHomeDir, type RuntimePaths } from '../../config';
+import { agentHomeDir, isReasoningEffort, type ReasoningEffort, type RuntimePaths } from '../../config';
 
 export const MODEL_BINDING_FILE = 'MODEL.json';
 
@@ -24,6 +24,8 @@ export interface AgentModelBinding {
   baseUrl: string;
   apiKey: string;
   model: string;
+  /** How hard this brain is asked to think; absent means the provider decides. */
+  reasoningEffort?: ReasoningEffort;
   /** When the operator last bound or switched this brain. */
   boundAt: number;
 }
@@ -73,12 +75,16 @@ export function readModelBinding(paths: RuntimePaths, name: string): AgentModelB
   }
   const providerName = readString(record, 'providerName');
   const boundAt = record['boundAt'];
+  // A level that is not one of the three is a torn or hand-edited file: the
+  // binding is then simply absent of a level, never given a bogus one.
+  const effort = record['reasoningEffort'];
   return {
     providerId,
     providerName: providerName ?? providerId,
     baseUrl,
     apiKey,
     model,
+    ...(isReasoningEffort(effort) ? { reasoningEffort: effort } : {}),
     boundAt: typeof boundAt === 'number' && Number.isFinite(boundAt) ? boundAt : 0,
   };
 }

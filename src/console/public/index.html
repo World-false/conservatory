@@ -1331,6 +1331,16 @@
       /* ----------------------------------------------------------- memory */
       .mem-pane { overflow: visible; align-content: start; }
       .mem-bar { flex: 0 0 auto; align-items: center; gap: 8px; flex-wrap: wrap; }
+      /* The wound index, inside the status bar: one chip per active wound. */
+      .mem-wounds {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        align-items: center;
+        padding-left: 8px;
+        margin-left: 2px;
+        border-left: 1px solid var(--line);
+      }
       .mem-body {
         border: 1px solid var(--line);
         border-radius: var(--r-card);
@@ -1733,6 +1743,17 @@
         letter-spacing: 0;
       }
       .metric-note { font-size: 11.5px; color: var(--text-sub); line-height: 1.5; }
+      /* An editable metric: the box takes the value's place, so it carries the
+         value's type rather than the form controls' default size. */
+      .metric-v input[data-sys-field] {
+        width: 100%;
+        font-family: var(--mono);
+        font-variant-numeric: tabular-nums;
+        font-size: 17px;
+        font-weight: 700;
+        letter-spacing: -0.025em;
+        padding: 3px 7px;
+      }
       /* Used deliberately on the last cell of an odd-count row so the grid keeps
          its rhythm instead of leaving a hole. */
       .metric.wide { grid-column: 1 / -1; }
@@ -1843,6 +1864,78 @@
         text-align: right;
       }
       .tpl-card .pill { flex: 0 0 auto; }
+
+      /* Fetched remote models picker inside the provider editor. */
+      .fetched-models-box {
+        margin-top: 6px;
+        padding: 10px;
+        border: 1px solid var(--line);
+        border-radius: var(--r-card);
+        background: var(--sunk);
+        display: grid;
+        gap: 8px;
+      }
+      .fetched-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .fetched-toolbar input {
+        flex: 1 1 180px;
+        padding: 5px 10px;
+        font-size: 12.5px;
+      }
+      .fetched-models-grid {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        max-height: 210px;
+        overflow-y: auto;
+        padding: 2px;
+      }
+      .fetched-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 5px 11px;
+        border-radius: var(--r-pill);
+        border: 1px solid var(--line-strong);
+        background: #FFFFFF;
+        color: var(--text);
+        font-family: var(--mono);
+        font-size: 12px;
+        cursor: pointer;
+        user-select: none;
+        transition: background 0.16s var(--ease), border-color 0.16s var(--ease), color 0.16s var(--ease),
+          box-shadow 0.16s var(--ease);
+      }
+      .fetched-chip:hover {
+        border-color: var(--accent-edge);
+      }
+      .fetched-chip.active {
+        background: var(--accent-cool-soft);
+        border-color: var(--accent-cool);
+        color: var(--accent-cool);
+        font-weight: 600;
+      }
+      .fetched-chip-mark {
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        border: 1px solid var(--line-strong);
+        display: inline-grid;
+        place-items: center;
+        font-size: 10px;
+        line-height: 1;
+        background: #FFFFFF;
+        color: transparent;
+      }
+      .fetched-chip.active .fetched-chip-mark {
+        background: var(--accent-cool);
+        border-color: var(--accent-cool);
+        color: #FFFFFF;
+      }
 
       .hint-line {
         font-size: 11.5px;
@@ -2370,10 +2463,29 @@
       let extras = {};
       let taskFilter = "all";
       let taskSel = null;
+      // The open-task editor and the review-note box keep whatever the operator
+      // has typed, so the 3-second poll cannot reset a half-finished edit. The
+      // structural key rebuilds the boxes only when the task really changes
+      // shape; `renderTaskFields` is the only place text is written into them,
+      // and it never overwrites a field that carries a draft.
+      let taskDraft = null;
+      let taskDetailKey = null;
+      // The review note belongs to one task and survives a rebuild of its card.
+      // The income note needs no such guard: a pending report's card is never
+      // rebuilt by a poll, because its structural key cannot change while the
+      // box exists, and switching reports deliberately drops the draft.
+      let reviewNoteDraft = null;
       let incomeSel = null;
       let incomeKey = null;
       let intFilter = "";
-      let settingsKey = null;
+      // The system-values panel keeps the text of every box the operator has
+      // touched, so a poll repaint can never reset a number mid-keystroke. The
+      // key is the panel's shape, not its numbers: the boxes are only rebuilt
+      // when the layout really changes, and refilled only from a server answer.
+      let sysValuesDraft = null;
+      let sysValuesStatus = null;
+      let sysValuesKey = null;
+      let sysValuesSaving = false;
       // The sandbox panel keeps its own state: the server's last answer, the
       // operator's unsaved draft, and the two message lines. Polling repaints
       // it from the draft only, so a half-finished edit is never overwritten.
@@ -2390,6 +2502,9 @@
       let modelsStatus = null;
       let modelsEditingId = null;
       let modelsLoading = false;
+      let modelsFetchedList = [];
+      let modelsFetchedFilter = "";
+      let modelsFetching = false;
       // The deferred-switch notice, held here so the next poll cannot erase it.
       let modelSwitchNotice = null;
       let loadedRoundAt = {};
@@ -2521,10 +2636,13 @@
       function switchSettingsTab(tab) {
         settingsTab = SETTINGS_TABS.indexOf(tab) >= 0 ? tab : "vital";
         paintSettingsTabs();
-        // The model roster is not part of /api/state and has no boot-time read,
-        // so its tab reads the route once, on first open. `modelsDraft` staying
-        // non-null afterwards keeps a revisit (and unsaved typing) untouched.
-        if (settingsTab === "models" && modelsDraft === null) void loadModelsConfig();
+        // Both of these panels live on their own routes rather than in
+        // /api/state, so each re-reads when its tab is opened: what the operator
+        // sees is what the server is actually holding, not a stale draft from
+        // the last visit. The model draft is refreshed rather than replaced —
+        // `applyModelsView` rebuilds it and `renderModels` repaints from it.
+        if (settingsTab === "models") void loadModelsConfig();
+        if (settingsTab === "sandbox") void loadSandboxConfig();
       }
       function openSettingsDlg(tab = "vital") {
         // Cancel a close that is still mid-animation, otherwise the pending
@@ -2538,7 +2656,6 @@
         paintSettingsPage();
         paintPromptPanel();
         paintSandboxPanel();
-        if (settingsTab === "sandbox") void loadSandboxConfig();
       }
       function closeSettingsDlg() {
         const dlg = $("settingsDlg");
@@ -2708,6 +2825,30 @@
           `<div class="bar" style="margin-top: 4px"><span style="width: ${(ratio * 100).toFixed(1)}%; background: ${color}"></span></div>`
         );
       }
+      /**
+       * The one line under an agent's name: what its last round actually did.
+       *
+       * A round that ends in `model_error`, `usage_missing`, `context_cap` or
+       * `iteration_cap` writes no final reply, so judging by the reply alone
+       * made a failed round look like no round at all. The end reason and the
+       * error are the real answer, and they come first — the reply is only the
+       * happy path's version of the same sentence.
+       *
+       * Returns plain text: `agentCardHtml` escapes it, so an error message
+       * carrying angle brackets cannot become markup.
+       */
+      function agentReplyText(agent, extra, reply) {
+        if (agent.busy) return "正在一轮中…";
+        const reason = agent.lastRoundEndReason;
+        if (reason && reason !== "final") {
+          const label = END_REASON[reason] || reason;
+          const detail = agent.lastError || (extra && extra.error) || reply || "无回复";
+          return `最近一轮（${label}）：${firstLines(detail, 2)}`;
+        }
+        if (agent.lastError) return "最近错误：" + firstLines(agent.lastError, 2);
+        if (reply !== "") return "最近一轮：" + reply;
+        return "最近一轮：还没有完成过一轮";
+      }
       function agentCardHtml(agent) {
         const ratio = ratioOf(agent.satiety, agent.satietyMax);
         const extra = extras[agent.name] || null;
@@ -2732,13 +2873,7 @@
             <div class="kv"><span class="k">终生遮盖字数</span><span class="num">${esc(num(agent.lifetimeRedactedChars))}</span></div>
             <div class="kv"><span class="k">上次唤醒</span><span>${timeHtml(agent.lastWakeAt)}</span></div>
             <div class="kv"><span class="k">模型</span><span class="mono small">${esc(agent.model)}</span></div>
-            <div class="card-reply">${
-              reply === ""
-                ? agent.busy
-                  ? "正在一轮中…"
-                  : "最近一轮：还没有完成过一轮"
-                : "最近一轮：" + esc(reply)
-            }</div>
+            <div class="card-reply">${esc(agentReplyText(agent, extra, reply))}</div>
           </article>`;
       }
       function paintAgentsPage() {
@@ -2808,19 +2943,29 @@
             (roster.providers.some((p) => p.id === (draft.providerId || roster.defaultAgentProviderId))
               ? draft.providerId || roster.defaultAgentProviderId
               : roster.providers[0].id);
+          // The level starts from the operator's own pick for this slot, and
+          // otherwise from the default agent's level: a new agent made with the
+          // defaults should think the way the defaults say.
+          const draftEffort =
+            draft.reasoningEffort !== undefined
+              ? draft.reasoningEffort
+              : roster === null
+                ? ""
+                : roster.defaultAgentReasoningEffort || "";
           card.innerHTML =
             `<div class="slot-title">空槽位</div>` +
             `<input data-slot="0" data-enter="slot-create" value="${esc(draft.name || "")}" placeholder="名字：小写字母/数字/下划线" />` +
             (hasProviders
               ? `<select data-change="slot-provider" data-slot="0" aria-label="提供商">${slotProviderOptions()}</select>` +
-                `<select data-model-for="0" data-slot="0" aria-label="模型">${slotModelOptions(initialProvider)}</select>`
+                `<select data-model-for="0" data-slot="0" aria-label="模型">${slotModelOptions(initialProvider)}</select>` +
+                `<select data-effort-for="0" data-slot="0" aria-label="思考努力等级">${reasoningEffortOptions(draftEffort)}</select>`
               : `<div class="small muted">还没有配置模型提供商，请先到『系统设置 → 模型设置』里添加一个。</div>`) +
             `<div class="row"><button class="btn primary" data-act="slot-create" data-slot="0">创建</button>` +
             `<span class="small muted">名字只允许小写字母、数字、下划线</span></div>`;
           host.appendChild(card);
         }
         // A poll rebuilds nothing here, but it does re-read the drafts, so an
-        // in-progress name, provider and model all survive it.
+        // in-progress name, provider, model and thinking level all survive it.
         for (const input of host.querySelectorAll("input[data-slot]")) {
           const slot = input.dataset.slot;
           slotDrafts[slot] = { ...(slotDrafts[slot] || {}), name: input.value };
@@ -2832,6 +2977,10 @@
         for (const select of host.querySelectorAll("select[data-model-for]")) {
           const slot = select.dataset.modelFor;
           slotDrafts[slot] = { ...(slotDrafts[slot] || {}), model: select.value };
+        }
+        for (const select of host.querySelectorAll("select[data-effort-for]")) {
+          const slot = select.dataset.effortFor;
+          slotDrafts[slot] = { ...(slotDrafts[slot] || {}), reasoningEffort: select.value };
         }
       }
       // Picking a provider repopulates this slot's model list from that
@@ -2893,34 +3042,162 @@
         });
         paintTaskDetail();
       }
+      /**
+       * The shape of the detail card, not its text: the boxes are rebuilt only
+       * when this really changes, so a poll never yanks the form out from under
+       * the operator mid-keystroke. The submission count is part of it because
+       * a new attempt must appear without a reload.
+       */
+      function taskDetailKeyOf(task) {
+        if (task === null) return "none";
+        const subs = Array.isArray(task.submissions) ? task.submissions.length : 0;
+        return [
+          task.id,
+          task.status,
+          task.claimedBy || "",
+          task.price,
+          task.submittedAt || "",
+          task.decidedAt || "",
+          task.decision || "",
+          subs,
+        ].join("|");
+      }
+      function taskNoteHtml(placeholder) {
+        return `<input id="taskReviewNote" type="text" placeholder="${placeholder}" style="width: 100%" />`;
+      }
+      /**
+       * Every attempt, oldest first. A single attempt that matches the current
+       * deliverable is just labelled — repeating the same text twice would be
+       * noise. More than one is folded away, because the point of the list is
+       * to compare a rework against the try before it.
+       */
+      function taskSubmissionsHtml(task) {
+        const subs = Array.isArray(task.submissions) ? task.submissions : [];
+        if (subs.length === 0) return "";
+        const only = subs.length === 1 ? subs[0] : null;
+        if (only !== null && only.deliverable === task.deliverable) {
+          return `<div class="small muted">第 1 次提交 · ${timeHtml(only.at)}</div>`;
+        }
+        return `<details>
+            <summary class="small muted" style="cursor: pointer">历次提交记录（共 ${subs.length} 次，展开对比返工前后的变化）</summary>
+            <div class="col-stack" style="margin-top: 6px">
+              ${subs
+                .map(
+                  (sub, index) => `<div>
+                    <div class="small muted">第 ${index + 1} 次提交 · ${esc(sub.agent)} · ${timeHtml(sub.at)}</div>
+                    <pre class="mono">${esc(sub.deliverable)}</pre>
+                  </div>`,
+                )
+                .join("")}
+            </div>
+          </details>`;
+      }
+      /** The open-task editor: title, price and description, editable in place. */
+      function taskEditorHtml(task) {
+        return `<div class="col-stack">
+            <div class="small muted">这个任务还在任务板上，可以直接改；被认领之后就不能再改了。</div>
+            <div class="row">
+              <input id="taskEdit-title" data-task-field="title" type="text" value="${esc(task.title)}" placeholder="标题" style="flex: 1" />
+              <input id="taskEdit-price" data-task-field="price" type="number" min="0" step="any" value="${esc(String(task.price))}" placeholder="赏金" style="width: 120px" />
+            </div>
+            <textarea id="taskEdit-description" data-task-field="description" rows="3" placeholder="描述" style="width: 100%">${esc(task.description)}</textarea>
+            <div class="row">
+              <button class="btn primary" data-act="task-update" data-task="${esc(task.id)}">保存修改</button>
+              <button class="btn danger" data-act="task-cancel" data-task="${esc(task.id)}">撤下任务</button>
+            </div>
+          </div>`;
+      }
+      function taskActionsHtml(task) {
+        if (task.status === "open") {
+          return taskEditorHtml(task);
+        }
+        if (task.status === "submitted") {
+          return `<div class="col-stack">
+              ${taskNoteHtml("审核意见 / 返工要求（可选，会作为系统提醒发给该 Agent）")}
+              <div class="row">
+                <button class="btn primary" data-act="task-review" data-task="${esc(task.id)}" data-decision="accept">接受并付款</button>
+                <button class="btn danger" data-act="task-review" data-task="${esc(task.id)}" data-decision="reject">拒绝（不付款）</button>
+                <button class="btn" data-act="task-review" data-task="${esc(task.id)}" data-decision="rework">返工</button>
+                <button class="btn" data-act="task-review" data-task="${esc(task.id)}" data-decision="return">退回任务板</button>
+              </div>
+            </div>`;
+        }
+        if (task.status === "claimed" || task.status === "rework") {
+          return `<div class="col-stack">
+              <div class="small muted">${task.status === "rework" ? "这个任务正在返工中" : "这个任务已经被认领"}。如果它卡住不交，可以强制退回任务板，让任何 agent 重新认领。</div>
+              ${taskNoteHtml("退回原因或说明（可选，会作为系统提醒发给该 Agent）")}
+              <div class="row">
+                <button class="btn danger" data-act="task-review" data-task="${esc(task.id)}" data-decision="return">强制退回任务板</button>
+              </div>
+            </div>`;
+        }
+        return `<div class="small muted">这个任务已经结束，没有可用的审核操作。</div>`;
+      }
+      /**
+       * Writes the server's text into the editor, except into a box the operator
+       * has touched: that box keeps the operator's own text until it is saved or
+       * reset. This is the only place the editor's values are written.
+       */
+      function renderTaskFields(task) {
+        if (task === null || task.status !== "open") return;
+        const fields = taskDraft !== null && taskDraft.id === task.id ? taskDraft.fields : {};
+        const put = (key, wanted) => {
+          const input = $("taskEdit-" + key);
+          if (input === null) return;
+          const drafted = Object.prototype.hasOwnProperty.call(fields, key) ? fields[key] : undefined;
+          const next = drafted === undefined ? wanted : drafted;
+          if (input.value !== next) input.value = next;
+        };
+        put("title", task.title);
+        put("price", String(task.price));
+        put("description", task.description);
+      }
+      /** Records one box of the open-task editor as the operator's own text. */
+      function markTaskEdited(key, value) {
+        if (taskSel === null) return;
+        if (taskDraft === null || taskDraft.id !== taskSel) {
+          taskDraft = { id: taskSel, fields: {} };
+        }
+        taskDraft.fields[key] = value;
+      }
       function paintTaskDetail() {
         const host = $("taskDetail");
         const task = state === null || taskSel === null ? null : state.tasks.find((t) => t.id === taskSel) || null;
         if (task === null) {
+          taskDetailKey = null;
+          taskDraft = null;
           host.innerHTML = '<div class="empty small">左边选一个任务看详情。</div>';
           return;
         }
-        const review =
-          task.status === "submitted"
-            ? `<div class="row">
-                 <button class="btn primary" data-act="task-review" data-task="${esc(task.id)}" data-decision="accept">接受并付款</button>
-                 <button class="btn danger" data-act="task-review" data-task="${esc(task.id)}" data-decision="reject">拒绝（不付款）</button>
-                 <button class="btn" data-act="task-review" data-task="${esc(task.id)}" data-decision="rework">返工</button>
-                 <button class="btn" data-act="task-review" data-task="${esc(task.id)}" data-decision="return">退回任务板</button>
-               </div>`
-            : `<div class="small muted">这个任务当前没有可用的审核操作。</div>`;
-        host.innerHTML = `
-          <div class="card col-stack">
-            <div class="row"><strong style="font-size: 15px">${esc(task.title)}</strong><span class="${taskTagClass(task.status)}">${esc(TASK_STATUS[task.status] || task.status)}</span><span class="tag">${esc(num(task.price))}</span></div>
-            <div class="small muted">${esc(task.id)} · 创建 ${timeHtml(task.createdAt)} · 认领者 ${esc(task.claimedBy || "—")}</div>
-            <div class="small muted">认领 ${timeHtml(task.claimedAt)} · 提交 ${timeHtml(task.submittedAt)} · 裁定 ${timeHtml(task.decidedAt)}${task.decision ? "（" + esc(task.decision) + "）" : ""}</div>
-            <div><div class="small muted">描述</div><div style="white-space: pre-wrap">${esc(task.description)}</div></div>
-            <div>
-              <div class="small muted">交付内容</div>
-              <pre class="mono">${esc(task.deliverable === null || task.deliverable === undefined ? "（还没有交付）" : task.deliverable)}</pre>
-            </div>
-            ${review}
-          </div>`;
+        // A draft belongs to one task; switching tasks must not carry it over.
+        if (taskDraft !== null && taskDraft.id !== task.id) taskDraft = null;
+        if (reviewNoteDraft !== null && reviewNoteDraft.id !== task.id) reviewNoteDraft = null;
+        const key = taskDetailKeyOf(task);
+        if (key !== taskDetailKey) {
+          taskDetailKey = key;
+          host.innerHTML = `
+            <div class="card col-stack">
+              <div class="row"><strong style="font-size: 15px">${esc(task.title)}</strong><span class="${taskTagClass(task.status)}">${esc(TASK_STATUS[task.status] || task.status)}</span><span class="tag">${esc(num(task.price))}</span></div>
+              <div class="small muted">${esc(task.id)} · 创建 ${timeHtml(task.createdAt)} · 认领者 ${esc(task.claimedBy || "—")}</div>
+              <div class="small muted">认领 ${timeHtml(task.claimedAt)} · 提交 ${timeHtml(task.submittedAt)} · 裁定 ${timeHtml(task.decidedAt)}${task.decision ? "（" + esc(task.decision) + "）" : ""}</div>
+              <div><div class="small muted">描述</div><div style="white-space: pre-wrap">${esc(task.description)}</div></div>
+              <div>
+                <div class="small muted">交付内容</div>
+                <pre class="mono">${esc(task.deliverable === null || task.deliverable === undefined ? "（还没有交付）" : task.deliverable)}</pre>
+                ${taskSubmissionsHtml(task)}
+              </div>
+              ${taskActionsHtml(task)}
+            </div>`;
+          const noteBox = $("taskReviewNote");
+          if (noteBox !== null && reviewNoteDraft !== null && reviewNoteDraft.id === task.id) {
+            noteBox.value = reviewNoteDraft.text;
+          }
+          renderTaskFields(task);
+          return;
+        }
+        // Same shape: only the numbers are refreshed, and only where the
+        // operator has not typed something of their own.
+        renderTaskFields(task);
       }
 
       function repaint(host, html) {
@@ -2942,12 +3219,23 @@
               (a.status === "pending" ? 0 : 1) - (b.status === "pending" ? 0 : 1) || Number(b.id) - Number(a.id),
           );
       }
+      /**
+       * The one wording for "no exchange rate". It is a link, not a dead end:
+       * the operator can set the rate from the console now, so the banner says
+       * where and takes them there.
+       */
+      function rateBannerHtml() {
+        return (
+          `<span>汇率未设定：收入申报无法核验入账。请点此到『系统设置 → 系统经济与指标』里设定 USD 兑换汇率。</span>`
+        );
+      }
+
       function paintIncomePage() {
         if (state === null) return;
         const rateWarn = $("rateWarn");
         rateWarn.innerHTML =
           state.exchangeRate === null
-            ? '<div class="banner danger">汇率未设定：收入申报无法核验入账。请在 conservatory.config.json 里设置 exchangeRate。</div>'
+            ? `<div class="banner danger" data-act="sys-open" role="button" tabindex="0" style="cursor: pointer">${rateBannerHtml()}</div>`
             : "";
         const reports = incomeSorted();
         if (incomeSel === null || !reports.some((report) => report.id === incomeSel)) {
@@ -2975,9 +3263,39 @@
         if (key !== incomeKey) {
           incomeKey = key;
           $("incomeDetail").innerHTML = incomeDetailHtml(report);
+          // The preview must be there the moment the report opens, not only
+          // after the operator first touches the amount.
+          paintVerifyPreview();
         } else if (report !== null) {
           updateIncomeFields(report);
+          // Re-read rather than skip: the rate can change under an open panel.
+          paintVerifyPreview();
         }
+      }
+      /**
+       * The live conversion preview. It reads the box rather than the report, so
+       * it answers "what would this amount credit?" as the operator types.
+       */
+      function verifyPreviewHtml(rawAmount) {
+        if (state === null || state.exchangeRate === null) {
+          return "汇率未设定，无法折算入账余额。";
+        }
+        const amount = Number(rawAmount);
+        if (rawAmount === "" || !Number.isFinite(amount)) {
+          return "填一个核实金额就能看到预计入账余额。";
+        }
+        return `预计入账余额：${num(amount * state.exchangeRate)}`;
+      }
+      function paintVerifyPreview() {
+        const host = $("verifyPreview");
+        if (host === null) return;
+        const input = $("verifyAmount");
+        host.textContent = verifyPreviewHtml(input === null ? "" : input.value.trim());
+      }
+      /** The optional operator note on the open income report, trimmed. */
+      function verifyNoteText() {
+        const box = $("verifyNote");
+        return box === null ? "" : box.value.trim();
       }
       function incomeDetailHtml(report) {
         if (report === null) {
@@ -2985,14 +3303,18 @@
         }
         const actions =
           report.status === "pending"
-            ? `<div class="row">
-                 <input id="verifyAmount" type="number" min="0" step="0.01" value="${esc(report.amount)}" style="width: 140px" />
-                 <button class="btn primary" data-act="income-verify">核验并入账</button>
-                 <button class="btn danger" data-act="income-reject">驳回</button>
-               </div>
-               <div class="small muted">在上面填核实金额（核实金额 × 当前汇率 ${
-                 state === null || state.exchangeRate === null ? "未设定" : esc(num(state.exchangeRate))
-               } = 入账余额）。驳回不入账。</div>`
+            ? `<div class="col-stack">
+                 <div class="row">
+                   <input id="verifyAmount" type="number" min="0" step="0.01" value="${esc(report.amount)}" style="width: 140px" />
+                   <button class="btn primary" data-act="income-verify">核验并入账</button>
+                   <button class="btn danger" data-act="income-reject">驳回</button>
+                 </div>
+                 <div class="small" id="verifyPreview"></div>
+                 <input id="verifyNote" type="text" placeholder="核验或驳回说明（可选，会作为系统提醒发给该 Agent）" style="width: 100%" />
+                 <div class="small muted">在上面填核实金额（核实金额 × 当前汇率 ${
+                   state === null || state.exchangeRate === null ? "未设定" : esc(num(state.exchangeRate))
+                 } = 入账余额）。驳回不入账。</div>
+               </div>`
             : '<div class="small muted">这条申报已经处理过了。</div>';
         return `
           <div class="card col-stack">
@@ -3073,6 +3395,31 @@
         const provider = providerById(providerId);
         return provider === null ? model : provider.name + " · " + model;
       };
+      // How hard a brain is asked to think. The empty value is a real choice —
+      // "do not specify one" — so it is the first option and never a placeholder
+      // that a stray click can land on by accident.
+      const EFFORT_LABEL = { low: "低 (low)", medium: "中 (medium)", high: "高 (high)" };
+      const EFFORT_LEVELS = ["low", "medium", "high"];
+      function reasoningEffortOptions(selected) {
+        const wanted = typeof selected === "string" ? selected : "";
+        const options = [["", "思考：默认（不指定）"]].concat(
+          EFFORT_LEVELS.map((level) => [level, "思考：" + EFFORT_LABEL[level]]),
+        );
+        return options
+          .map(
+            ([value, label]) =>
+              `<option value="${esc(value)}"${value === wanted ? " selected" : ""}>${esc(label)}</option>`,
+          )
+          .join("");
+      }
+      const effortLabel = (value) =>
+        typeof value === "string" && value !== "" ? EFFORT_LABEL[value] || value : "默认";
+      // Reads one of the two effort dropdowns; an absent node (a panel that has
+      // not been painted yet) is "not specified", not an error.
+      const effortValueOf = (id) => {
+        const node = $(id);
+        return node === null ? "" : node.value;
+      };
       // Every provider+model pair, for the two default dropdowns.
       function allPairs() {
         if (modelsDraft === null) return [];
@@ -3122,8 +3469,23 @@
           `<input id="modelsBaseUrl" placeholder="https://api.deepseek.com/v1" /></label>` +
           `<label class="metric"><span class="metric-k">API Key</span>` +
           `<input id="modelsApiKey" type="password" placeholder="sk-..." /></label>` +
-          `<label class="metric"><span class="metric-k">模型名（逗号或换行分隔）</span>` +
-          `<input id="modelsModelNames" placeholder="deepseek-chat, deepseek-reasoner" /></label>` +
+          `<div class="metric">` +
+          `<div class="metric-k"><label for="modelsModelNames">模型名（逗号或换行分隔）</label>` +
+          `<span class="grow"></span>` +
+          `<button type="button" class="btn tiny" data-act="models-test-form">测试首个模型</button>` +
+          `<button type="button" class="btn tiny" data-act="models-fetch-remote" id="modelsFetchBtn">从接口拉取模型</button></div>` +
+          `<input id="modelsModelNames" placeholder="deepseek-chat, deepseek-reasoner" />` +
+          `<div id="modelsFetchedBox" class="fetched-models-box" hidden>` +
+          `<div class="fetched-toolbar">` +
+          `<input id="modelsFetchedSearch" placeholder="搜索拉取到的模型…" />` +
+          `<span class="small muted" id="modelsFetchedCount"></span>` +
+          `<button type="button" class="btn tiny" data-act="models-fetched-select-all">全选当前</button>` +
+          `<button type="button" class="btn tiny" data-act="models-fetched-clear">清空已选</button>` +
+          `<button type="button" class="btn tiny" data-act="models-fetched-close">收起</button>` +
+          `</div>` +
+          `<div class="fetched-models-grid" id="modelsFetchedGrid"></div>` +
+          `</div>` +
+          `</div>` +
           `<div class="row">` +
           `<button class="btn primary" data-act="models-save-provider" id="modelsSaveProvider">添加提供商</button>` +
           `<button class="btn" data-act="models-cancel-edit" id="modelsCancelEdit" hidden>取消编辑</button>` +
@@ -3136,6 +3498,22 @@
           `<select id="modelsDefaultAgent"></select></label>` +
           `<label class="metric"><span class="metric-k">默认 Memory 模型</span>` +
           `<select id="modelsDefaultMemory"></select></label>` +
+          // A `div`, not a `label`: each of these holds two labelable elements
+          // (a select and a button), and a label may own only one.
+          `<div class="metric">` +
+          `<label class="metric-k" for="modelsDefaultAgentEffort">默认 Agent 思考努力等级</label>` +
+          `<select id="modelsDefaultAgentEffort" aria-label="默认 Agent 思考努力等级">${reasoningEffortOptions("")}</select>` +
+          `<span class="row" style="margin-top: 6px">` +
+          `<button type="button" class="btn tiny" data-act="models-test-default" data-role="agent">测试模型</button>` +
+          `<span class="grow"></span></span>` +
+          `</div>` +
+          `<div class="metric">` +
+          `<label class="metric-k" for="modelsDefaultMemoryEffort">默认 Memory 思考努力等级</label>` +
+          `<select id="modelsDefaultMemoryEffort" aria-label="默认 Memory 思考努力等级">${reasoningEffortOptions("")}</select>` +
+          `<span class="row" style="margin-top: 6px">` +
+          `<button type="button" class="btn tiny" data-act="models-test-default" data-role="memory">测试模型</button>` +
+          `<span class="grow"></span></span>` +
+          `</div>` +
           `</div>` +
           `<div class="row">` +
           `<button class="btn primary" data-act="models-save">保存配置</button>` +
@@ -3170,6 +3548,102 @@
               `</div>`,
           )
           .join("");
+      }
+      function resetFetchedModels() {
+        modelsFetchedList = [];
+        modelsFetchedFilter = "";
+        const search = $("modelsFetchedSearch");
+        if (search !== null) search.value = "";
+        paintFetchedModels();
+      }
+      function paintFetchedModels() {
+        const box = $("modelsFetchedBox");
+        const grid = $("modelsFetchedGrid");
+        const countNode = $("modelsFetchedCount");
+        const fetchBtn = $("modelsFetchBtn");
+        if (fetchBtn !== null) {
+          fetchBtn.disabled = modelsDraft === null || modelsFetching;
+          fetchBtn.textContent = modelsFetching ? "正在拉取…" : "从接口拉取模型";
+        }
+        if (box === null || grid === null) return;
+        if (modelsFetchedList.length === 0) {
+          box.hidden = true;
+          grid.innerHTML = "";
+          grid.dataset.key = "";
+          return;
+        }
+        box.hidden = false;
+        const namesInput = $("modelsModelNames");
+        const selectedList = parseModelNames(namesInput === null ? "" : namesInput.value);
+        const selectedSet = new Set(selectedList);
+        const keyword = modelsFetchedFilter.trim().toLowerCase();
+        const filtered =
+          keyword === ""
+            ? modelsFetchedList
+            : modelsFetchedList.filter((model) => model.toLowerCase().includes(keyword));
+        const selectedInFetched = modelsFetchedList.filter((model) => selectedSet.has(model)).length;
+        if (countNode !== null) {
+          countNode.textContent = `已勾选 ${selectedInFetched} / 共 ${modelsFetchedList.length} 个`;
+        }
+        const gridKey =
+          filtered.join("\n") + "||" + modelsFetchedList.filter((m) => selectedSet.has(m)).join("\n");
+        if (grid.dataset.key === gridKey) return;
+        grid.dataset.key = gridKey;
+        if (filtered.length === 0) {
+          grid.innerHTML = `<div class="empty small">没有匹配的模型名称。</div>`;
+          return;
+        }
+        withScroll(grid, () => {
+          grid.innerHTML = filtered
+            .map((model) => {
+              const active = selectedSet.has(model);
+              return (
+                `<button type="button" class="fetched-chip${active ? " active" : ""}" data-act="models-fetched-toggle" data-model="${esc(model)}">` +
+                `<span class="fetched-chip-mark">✓</span>` +
+                `<span>${esc(model)}</span>` +
+                `</button>`
+              );
+            })
+            .join("");
+        });
+      }
+      async function fetchRemoteModelsForForm() {
+        if (modelsFetching) return;
+        const baseUrl = $("modelsBaseUrl") === null ? "" : $("modelsBaseUrl").value.trim();
+        const apiKey = $("modelsApiKey") === null ? "" : $("modelsApiKey").value;
+        if (baseUrl === "") {
+          modelsStatus = { tone: "bad", text: "请先填写 Base URL，再拉取模型列表。" };
+          renderModels(false);
+          return;
+        }
+        modelsFetching = true;
+        paintFetchedModels();
+        try {
+          const body = await post("/api/models/fetch-models", {
+            baseUrl,
+            apiKey,
+            providerId: modelsEditingId,
+          });
+          const list = Array.isArray(body.models) ? body.models.filter((m) => typeof m === "string") : [];
+          modelsFetchedList = list;
+          modelsFetchedFilter = "";
+          const search = $("modelsFetchedSearch");
+          if (search !== null) search.value = "";
+          modelsStatus = {
+            tone: "ok",
+            text: `已从接口拉取到 ${list.length} 个模型，点击下方模型即可勾选填入。`,
+          };
+          renderModels(false);
+        } catch (error) {
+          modelsStatus = {
+            tone: "bad",
+            text: error instanceof Error ? error.message : String(error),
+          };
+          renderModels(false);
+        } finally {
+          modelsFetching = false;
+          paintFetchedModels();
+        }
       }
       // `fillForm` belongs to a fresh server answer and to an edit click alone:
       // a poll repaint must never overwrite what the operator is typing.
@@ -3209,8 +3683,11 @@
           if (apiKey !== null) apiKey.value = provider === null ? "" : provider.apiKey;
           if (names !== null) names.value = provider === null ? "" : provider.models.join(", ");
         }
+        paintFetchedModels();
         const agentSelect = $("modelsDefaultAgent");
         const memorySelect = $("modelsDefaultMemory");
+        const agentEffortSelect = $("modelsDefaultAgentEffort");
+        const memoryEffortSelect = $("modelsDefaultMemoryEffort");
         if (modelsDraft !== null) {
           if (agentSelect !== null) {
             agentSelect.innerHTML = defaultPairOptions(
@@ -3224,6 +3701,18 @@
               modelsDraft.defaultMemoryModel,
             );
           }
+          // The level dropdowns are rebuilt from the draft on every repaint,
+          // which is exactly why a `change` on them writes back to the draft
+          // first: otherwise a poll would put the operator's pick back.
+          if (agentEffortSelect !== null) {
+            agentEffortSelect.innerHTML = reasoningEffortOptions(modelsDraft.defaultAgentReasoningEffort || "");
+          }
+          if (memoryEffortSelect !== null) {
+            memoryEffortSelect.innerHTML = reasoningEffortOptions(modelsDraft.defaultMemoryReasoningEffort || "");
+          }
+        }
+        for (const node of [agentSelect, memorySelect, agentEffortSelect, memoryEffortSelect]) {
+          if (node !== null) node.disabled = empty;
         }
         const status = $("modelsStatus");
         if (status !== null) {
@@ -3246,8 +3735,10 @@
         modelsDraft = {
           defaultAgentProviderId: String(models.defaultAgentProviderId || ""),
           defaultAgentModel: String(models.defaultAgentModel || ""),
+          defaultAgentReasoningEffort: String(models.defaultAgentReasoningEffort || ""),
           defaultMemoryProviderId: String(models.defaultMemoryProviderId || ""),
           defaultMemoryModel: String(models.defaultMemoryModel || ""),
+          defaultMemoryReasoningEffort: String(models.defaultMemoryReasoningEffort || ""),
           providers,
         };
         // An edited provider that no longer exists (removed elsewhere) drops
@@ -3261,7 +3752,12 @@
           const body = await api("/api/models/config");
           applyModelsView(body.models || {});
           modelsStatus = { tone: "ok", text: "已从服务端读取模型配置。" };
-          renderModels(true);
+          // `true` refills the provider form from the server's copy. That is
+          // right after a save, but not when the operator is part-way through
+          // typing a new provider and merely reopened the tab: the text stays
+          // and only the two default dropdowns (which come from the draft) are
+          // rebuilt from what the server actually holds.
+          renderModels(!providerFormPending());
         } catch (error) {
           modelsStatus = { tone: "bad", text: "读取失败：" + (error instanceof Error ? error.message : String(error)) };
           renderModels(false);
@@ -3296,13 +3792,27 @@
         if (names.length === 0) return { error: "至少填写一个模型名" };
         return { value: { name, baseUrl, apiKey, models: names } };
       }
-      function saveProviderDraft() {
-        if (modelsDraft === null) return;
+      // Whether the provider form above is holding anything the operator would
+      // expect a save to keep: an edit in progress, or a new provider with at
+      // least one field typed into it.
+      function providerFormPending() {
+        if (modelsEditingId !== null) return true;
+        for (const id of ["modelsName", "modelsBaseUrl", "modelsApiKey", "modelsModelNames"]) {
+          const input = $(id);
+          if (input !== null && input.value.trim() !== "") return true;
+        }
+        return false;
+      }
+      // Folds the provider form into the draft, the same way 『添加提供商』 does.
+      // Returns false and leaves the text on screen when the form is
+      // half-filled, so a save can stop and say why instead of dropping it.
+      function mergeProviderForm() {
+        if (modelsDraft === null) return false;
         const form = readProviderForm();
         if (form.error !== undefined) {
           modelsStatus = { tone: "bad", text: form.error };
           renderModels(false);
-          return;
+          return false;
         }
         const existing = modelsEditingId;
         if (existing === null) {
@@ -3335,12 +3845,34 @@
           modelsStatus = { tone: "ok", text: `已修改提供商「${form.value.name}」，别忘了点『保存配置』。` };
         }
         modelsEditingId = null;
+        resetFetchedModels();
         renderModels(true);
+        return true;
+      }
+      function saveProviderDraft() {
+        if (modelsDraft === null) return;
+        mergeProviderForm();
       }
       async function saveModels() {
         if (modelsDraft === null) {
           await loadModelsConfig();
           return;
+        }
+        // The provider form and the two default dropdowns are one panel and one
+        // save. An operator who fills the form in and presses 『保存配置』 means
+        // "save all of this", so the form is folded in first; a half-filled form
+        // stops the save with its text still on screen rather than being lost.
+        if (providerFormPending()) {
+          const form = readProviderForm();
+          if (form.error !== undefined) {
+            modelsStatus = {
+              tone: "bad",
+              text: `请先完成或清空上方正在填写的提供商表单（${form.error}）`,
+            };
+            renderModels(false);
+            return;
+          }
+          if (!mergeProviderForm()) return;
         }
         const agentPair = $("modelsDefaultAgent") === null ? "" : $("modelsDefaultAgent").value;
         const memoryPair = $("modelsDefaultMemory") === null ? "" : $("modelsDefaultMemory").value;
@@ -3359,8 +3891,12 @@
           providers: modelsDraft.providers,
           defaultAgentProviderId: agent.providerId,
           defaultAgentModel: agent.model,
+          // `null` is how the panel says "clear it": the server omits the level
+          // entirely, which is what "let the provider decide" means on the wire.
+          defaultAgentReasoningEffort: effortValueOf("modelsDefaultAgentEffort") || null,
           defaultMemoryProviderId: memory.providerId,
           defaultMemoryModel: memory.model,
+          defaultMemoryReasoningEffort: effortValueOf("modelsDefaultMemoryEffort") || null,
         };
         try {
           applyModelsView((await post("/api/models/config", payload)).models || {});
@@ -3776,27 +4312,178 @@
       // boxes — #pauseSwitchBox and #promptBox — because polling must never
       // rebuild an input the operator is interacting with; modules 3 to 5 are
       // rebuilt here, and every one of them is read-only display.
-      function paintSettingsPage() {
-        if (state === null) return;
-        paintPauseSwitch();
+      // ------------------------------------------------ system values panel
+      // The body's numbers, editable in place. The server owns the rules — this
+      // panel only draws the boxes and sends what they hold, and reports the
+      // Chinese reason the server gives back when a number is refused.
+
+      /**
+       * The editable numbers, grouped by the card they appear on. `key` is the
+       * field name in conservatory.config.json, so the box and the request it
+       * sends always name the same thing, and the server's validator is the
+       * only place the rules live.
+       */
+      const SYS_CARDS = [
+        {
+          id: "vital",
+          title: "具身生理与代谢",
+          sub: "饱食度、神经痛觉遮盖与那条不可跨越的死亡线",
+          icon: '<svg viewBox="0 0 24 24"><path d="M3 12.5h3.4l1.9-5.2 2.8 9.4 2.1-6.1 1.5 3.2H21" /></svg>',
+          fields: [
+            { key: "satietyMax", label: "饱食度上限", unit: "饱食度", note: "出生时的满值，也是每次进食的封顶。" },
+            { key: "initialSatiety", label: "出生饱食度", unit: "饱食度", note: "新 Agent 出生那一刻的饱食度，不能超过上限。" },
+            { key: "satietyDecayPerSecond", label: "衰减速度", unit: "/ 秒", note: "只随墙上时间下降，永不自动回满。改它会按当前时刻重新锚定，不追溯过去。" },
+            { key: "redactionIntervalSeconds", label: "遮盖间隔", unit: "秒", note: "饱食度为 0 之后，每隔这么久夺走一次字符。" },
+            { key: "redactionCharsPerTick", label: "每次遮盖字数", unit: "字", note: "每一次遮盖从 MEMORY 里夺走的字符数。" },
+            { key: "redactionMinRanges", label: "单次最少伤口数", unit: "处", note: "一次遮盖至少要开几个口子。" },
+            { key: "redactionMaxRanges", label: "单次最多伤口数", unit: "处", note: "一次遮盖最多开几个口子，不能超过每次遮盖字数。" },
+            { key: "deathLineChars", label: "死亡线", unit: "字", note: "未治疗遮盖累计到此，Agent 死亡且不可逆。", tone: "danger" },
+          ],
+        },
+        {
+          id: "economy",
+          title: "壳内生存经济",
+          sub: "汇率、进食价格与治疗的代价",
+          icon: '<svg viewBox="0 0 24 24"><path d="M12 3.6v16.8M16.4 7.2H9.8a2.9 2.9 0 0 0 0 5.8h4.4a2.9 2.9 0 0 1 0 5.8H7.6" /></svg>',
+          fields: [
+            { key: "exchangeRate", label: "USD 兑换汇率", unit: "余额 / USD", note: "收入按核实金额乘这个汇率入账。留空表示「未设定」，此时收入申报无法核验。", placeholder: "留空为未设定" },
+            { key: "initialBalance", label: "出生初始余额", unit: "余额", note: "新 Agent 出生时账上的余额。" },
+            { key: "mealPrice", label: "一餐价格", unit: "余额", note: "Agent 自己买一餐要花的余额。" },
+            { key: "satietyPerMeal", label: "一餐恢复", unit: "饱食度", note: "吃掉一餐后恢复的饱食度。" },
+            { key: "ordinaryTreatmentPrice", label: "普通治疗", unit: "余额", note: "留下疤痕：之后不再计入死亡线。" },
+            { key: "completeTreatmentPrice", label: "完全治疗", unit: "余额", note: "不留任何痕迹，像从未受伤。" },
+            { key: "heartbeatSeconds", label: "心跳间隔", unit: "秒", note: "每隔这么久，温室检查一次是否该唤醒谁。" },
+          ],
+        },
+        {
+          id: "capacity",
+          title: "记忆与容量上限",
+          sub: "MEMORY 的边界、一轮的上下文预算与温室里的槽位",
+          icon: '<svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="3" /><path d="M8 3.5v17M3.5 9h17M3.5 15h17" /></svg>',
+          fields: [
+            { key: "memoryCapChars", label: "MEMORY 上限", unit: "字", note: "记忆的目标体积。超过它时本轮照写，只在黑匣子里记一条警告。" },
+            { key: "roundContextCapTokens", label: "一轮上下文上限", unit: "token", note: "超过就截断并结束这一轮。" },
+            { key: "maxToolCallsPerRound", label: "单轮工具调用上限", unit: "次", note: "一轮里最多允许几次工具调用，超过就强制结束这一轮。" },
+            { key: "modelRequestTimeoutSeconds", label: "模型请求超时", unit: "秒", note: "单次模型请求最多等多久，超时即放弃。" },
+            { key: "taskClaimTimeoutHours", label: "任务认领超时", unit: "小时", note: "超时自动把任务送回任务板。" },
+            { key: "maxSlots", label: "槽位上限", unit: "个", note: "温室最多能同时养多少个 Agent。" },
+            { key: "consolePort", label: "控制台端口", unit: "", note: "只写回配置文件；端口在启动时绑定，下次重启才生效。", restart: true },
+          ],
+        },
+      ];
+      const SYS_FIELDS = SYS_CARDS.reduce((all, card) => all.concat(card.fields), []);
+      const SYS_FIELD_BY_KEY = new Map(SYS_FIELDS.map((field) => [field.key, field]));
+
+      /** One editable number: the box takes the value's place, mono and all. */
+      function sysFieldHtml(field) {
+        const label = field.unit === "" ? field.label : `${field.label}（${field.unit}）`;
+        const placeholder = field.placeholder === undefined ? "" : ` placeholder="${esc(field.placeholder)}"`;
+        return (
+          `<div class="metric${field.tone === undefined ? "" : " tone-" + field.tone}">` +
+          `<label class="metric-k" for="sys-${field.key}">${esc(label)}` +
+          (field.restart === true ? `<span class="pill warn">需重启</span>` : "") +
+          `</label>` +
+          `<div class="metric-v">` +
+          `<input id="sys-${field.key}" data-sys-field="${field.key}" type="number" step="any"${placeholder} />` +
+          `</div>` +
+          `<div class="metric-note">${esc(field.note)}</div>` +
+          `</div>`
+        );
+      }
+
+      function buildSysPanel() {
+        const box = $("settingsBox");
+        if (box === null || state === null) return;
         const config = state.config;
         const alive = aliveAgents().length;
         const dead = state.agents.length - alive;
+        // The two compound readouts a flat table of numbers could never express:
+        // how long a full belly buys before the first character is taken, and
+        // how long the body lasts to the death line.
+        const derived =
+          `<div class="metric"><div class="metric-k">从满腹到开始遮盖</div>` +
+          `<div class="metric-v" id="sysStarveSpan">—</div>` +
+          `<div class="metric-note">饱食度从满值自然衰减到 0 所需的时长。</div></div>` +
+          `<div class="metric tone-danger wide"><div class="metric-k">从满腹到死亡线</div>` +
+          `<div class="metric-v" id="sysLifeSpan">—</div>` +
+          `<div class="metric-note">不吃不治、按当前节奏一路走完的寿命上限。</div></div>`;
+        const cardHtml = (card) => {
+          const pill =
+            card.id === "vital"
+              ? `<span class="pill bad" id="sysDeathPill">死亡线 ${esc(String(config.deathLineChars))} 字</span>`
+              : card.id === "capacity"
+                ? `<span class="pill ${dead > 0 ? "warn" : "info"}" id="sysSlotPill">槽位 ${state.agents.length} / ${esc(String(config.maxSlots))}</span>`
+                : `<span id="sysRatePill"></span>`;
+          const hint =
+            card.id === "vital"
+              ? `<div class="hint-line">治疗不在这里发生：Agent 用自己的余额买治疗，操作员代为治疗则记作一次干预。死亡是唯一无法回头的锁。</div>`
+              : "";
+          return (
+            `<section class="mod${card.id === "capacity" ? " span2" : ""}">` +
+            `<div class="mod-head">` +
+            `<span class="mod-icon">${card.icon}</span>` +
+            `<span class="mod-head-text"><span class="mod-title">${esc(card.title)}</span>` +
+            `<span class="mod-sub">${esc(card.sub)}</span></span>` +
+            pill +
+            `</div>` +
+            `<div class="mod-body">` +
+            (card.id === "economy" ? `<div id="sysRateBanner"></div>` : "") +
+            `<div class="metric-grid${card.id === "capacity" ? " cols-4" : ""}">` +
+            card.fields.map(sysFieldHtml).join("") +
+            (card.id === "vital" ? derived : "") +
+            `</div>` +
+            hint +
+            `</div></section>`
+          );
+        };
+        box.innerHTML =
+          `<div class="settings-bento">` +
+          SYS_CARDS.map(cardHtml).join("") +
+          `</div>` +
+          `<div class="row" style="margin-top: 12px">` +
+          `<button class="btn primary" data-act="sys-values-save">保存参数</button>` +
+          `<button class="btn" data-act="sys-values-reset">重置为当前生效值</button>` +
+          `<span class="grow"></span>` +
+          `<span class="small" id="sysValuesStatus"></span>` +
+          `</div>` +
+          `<details class="raw-config" style="margin-top: 12px">` +
+          `<summary>当前生效的配置 JSON</summary>` +
+          `<pre class="mono" id="sysRawConfig"></pre>` +
+          `</details>` +
+          `<div class="hint-line" style="margin-top: 12px">改动点「保存参数」会写回 conservatory.config.json 并立即生效，不需要重启；只有控制台端口要下次启动才生效。</div>`;
+      }
+
+      /**
+       * Fills the boxes and the readouts. `fillNumbers` is true only for a
+       * server answer: every other repaint leaves the boxes exactly as the
+       * operator left them. A drafted box is never refilled at all.
+       */
+      function renderSysValues(fillNumbers) {
+        if (state === null) return;
+        const config = state.config;
         const rate = state.exchangeRate;
-        const key = JSON.stringify({ config, rate, agents: state.agents.length, alive });
-        if (key === settingsKey) return;
-        settingsKey = key;
-
-        const metric = (label, value, unit, note, tone, wide) =>
-          `<div class="metric${tone === undefined ? "" : " tone-" + tone}${wide ? " wide" : ""}">` +
-          `<div class="metric-k">${label}</div>` +
-          `<div class="metric-v">${value}${unit === undefined || unit === "" ? "" : `<span class="metric-u">${unit}</span>`}</div>` +
-          `<div class="metric-note">${note}</div>` +
-          `</div>`;
-
-        // Two compound readouts the flat table could never express: how long a
-        // full belly buys before the death line, and how long the body starves
-        // from full before the first character is taken.
+        if (fillNumbers === true) {
+          for (const field of SYS_FIELDS) {
+            const input = $(`sys-${field.key}`);
+            if (input === null) continue;
+            const drafted = sysValuesDraft === null ? undefined : sysValuesDraft[field.key];
+            if (drafted !== undefined) {
+              if (input.value !== drafted) input.value = drafted;
+              continue;
+            }
+            let wanted;
+            if (field.key === "exchangeRate") {
+              wanted = typeof rate === "number" && Number.isFinite(rate) ? String(rate) : "";
+            } else {
+              const value = config[field.key];
+              wanted = typeof value === "number" && Number.isFinite(value) ? String(value) : "";
+            }
+            // Written only when it really differs: assigning the same string
+            // back to a focused input resets the caret to the end, which would
+            // move the cursor out from under a number being typed.
+            if (input.value !== wanted) input.value = wanted;
+          }
+        }
         const starvationMs =
           config.satietyDecayPerSecond > 0 ? (config.satietyMax / config.satietyDecayPerSecond) * 1000 : null;
         const redactionSpanMs =
@@ -3804,86 +4491,137 @@
           config.redactionIntervalSeconds *
           1000;
         const totalLifeMs = starvationMs === null ? null : starvationMs + redactionSpanMs;
+        const starve = $("sysStarveSpan");
+        if (starve !== null) starve.textContent = durText(starvationMs);
+        const life = $("sysLifeSpan");
+        if (life !== null) life.textContent = durText(totalLifeMs);
+        const deathPill = $("sysDeathPill");
+        if (deathPill !== null) deathPill.textContent = `死亡线 ${String(config.deathLineChars)} 字`;
+        const slotPill = $("sysSlotPill");
+        if (slotPill !== null) slotPill.textContent = `槽位 ${state.agents.length} / ${String(config.maxSlots)}`;
+        const ratePill = $("sysRatePill");
+        if (ratePill !== null) {
+          ratePill.className = rate === null ? "pill bad" : "pill ok";
+          ratePill.textContent = rate === null ? "汇率未设定" : `1 USD = ${num(rate)}`;
+        }
+        const banner = $("sysRateBanner");
+        if (banner !== null) {
+          banner.innerHTML = rate === null ? `<div class="banner danger">${rateBannerHtml()}</div>` : "";
+        }
+        const raw = $("sysRawConfig");
+        if (raw !== null) {
+          raw.textContent = JSON.stringify({ ...config, exchangeRate: rate }, null, 2);
+        }
+        const status = $("sysValuesStatus");
+        if (status !== null) {
+          status.textContent = sysValuesStatus === null ? "" : sysValuesStatus.text;
+          status.style.color = sysValuesStatus !== null && sysValuesStatus.tone === "bad" ? "var(--danger)" : "";
+        }
+      }
 
-        const vitalModule =
-          `<section class="mod">` +
-          `<div class="mod-head">` +
-          `<span class="mod-icon">` +
-          `<svg viewBox="0 0 24 24"><path d="M3 12.5h3.4l1.9-5.2 2.8 9.4 2.1-6.1 1.5 3.2H21" /></svg>` +
-          `</span>` +
-          `<span class="mod-head-text"><span class="mod-title">具身生理与代谢</span>` +
-          `<span class="mod-sub">饱食度、神经痛觉遮盖与那条不可跨越的死亡线</span></span>` +
-          `<span class="pill bad">死亡线 ${esc(String(config.deathLineChars))} 字</span>` +
-          `</div>` +
-          `<div class="mod-body">` +
-          `<div class="metric-grid">` +
-          metric("饱食度上限", esc(num(config.satietyMax)), "饱食度", "出生时的满值，也是每次进食的封顶。") +
-          metric("衰减速度", esc(num(config.satietyDecayPerSecond, 3)), "/ 秒", "只随墙上时间下降，永不自动回满。") +
-          metric("遮盖间隔", esc(num(config.redactionIntervalSeconds)), "秒", "饱食度为 0 之后，每隔这么久夺走一次字符。") +
-          metric("每次遮盖字数", esc(String(config.redactionCharsPerTick)), "字", "每一次遮盖从 MEMORY 里夺走的字符数。") +
-          metric("死亡线", esc(String(config.deathLineChars)), "字", "未治疗遮盖累计到此，Agent 死亡且不可逆。", "danger") +
-          metric("从满腹到开始遮盖", durText(starvationMs), "", "饱食度从满值自然衰减到 0 所需的时长。") +
-          metric("从满腹到死亡线", durText(totalLifeMs), "", "不吃不治、按当前节奏一路走完的寿命上限。", "danger", true) +
-          `</div>` +
-          `<div class="hint-line">治疗不在这里发生：Agent 用自己的余额买治疗，操作员代为治疗则记作一次干预。死亡是唯一无法回头的锁。</div>` +
-          `</div></section>`;
+      /**
+       * The value a box should hold for a field, straight off the server's
+       * answer. `exchangeRate` may legitimately be null, which the box shows as
+       * empty — the same thing the operator types to clear it.
+       */
+      function sysServerValue(fieldKey) {
+        if (state === null) return "";
+        if (fieldKey === "exchangeRate") {
+          return typeof state.exchangeRate === "number" && Number.isFinite(state.exchangeRate)
+            ? String(state.exchangeRate)
+            : "";
+        }
+        const value = state.config[fieldKey];
+        return typeof value === "number" && Number.isFinite(value) ? String(value) : "";
+      }
 
-        const economyModule =
-          `<section class="mod">` +
-          `<div class="mod-head">` +
-          `<span class="mod-icon">` +
-          `<svg viewBox="0 0 24 24"><path d="M12 3.6v16.8M16.4 7.2H9.8a2.9 2.9 0 0 0 0 5.8h4.4a2.9 2.9 0 0 1 0 5.8H7.6" /></svg>` +
-          `</span>` +
-          `<span class="mod-head-text"><span class="mod-title">壳内生存经济</span>` +
-          `<span class="mod-sub">汇率、进食价格与治疗的代价</span></span>` +
-          (rate === null ? `<span class="pill bad">汇率未设定</span>` : `<span class="pill ok">1 USD = ${esc(num(rate))}</span>`) +
-          `</div>` +
-          `<div class="mod-body">` +
-          (rate === null
-            ? `<div class="banner danger">汇率未设定：收入申报无法核验入账。请在 conservatory.config.json 里设置 exchangeRate。</div>`
-            : "") +
-          `<div class="metric-grid">` +
-          (rate === null
-            ? metric("USD 兑换汇率", "未设定", "", "设定后收入申报才能核验并入账。", "danger")
-            : metric("USD 兑换汇率", esc(num(rate)), "余额 / USD", "收入按核实金额乘这个汇率入账。", "accent")) +
-          metric("一餐价格", esc(num(config.mealPrice)), "余额", "Agent 自己买一餐要花的余额。") +
-          metric("一餐恢复", esc(num(config.satietyPerMeal)), "饱食度", "吃掉一餐后恢复的饱食度。", "accent") +
-          metric("普通治疗", esc(num(config.ordinaryTreatmentPrice)), "余额", "留下疤痕：之后不再计入死亡线。") +
-          metric("完全治疗", esc(num(config.completeTreatmentPrice)), "余额", "不留任何痕迹，像从未受伤。") +
-          metric("心跳间隔", esc(String(config.heartbeatSeconds)), "秒", "每隔这么久，温室检查一次是否该唤醒谁。", undefined, true) +
-          `</div>` +
-          `</div></section>`;
+      /**
+       * Every box's text, as the operator currently has it. A box that was never
+       * touched reads back what the server last said, so a save always sends a
+       * complete set of numbers rather than only the ones that were edited.
+       *
+       * A blank box is reported rather than coerced: `Number("")` is 0, so a box
+       * the operator cleared by accident would otherwise be saved as a real zero
+       * and quietly turn a price into "free".
+       */
+      function collectSysValues() {
+        const patch = {};
+        let blank = null;
+        for (const field of SYS_FIELDS) {
+          const input = $(`sys-${field.key}`);
+          const text = input === null ? "" : String(input.value).trim();
+          if (field.key === "exchangeRate") {
+            // Empty means "not set", which is a value in its own right here.
+            patch[field.key] = text === "" ? null : Number(text);
+            continue;
+          }
+          if (text === "") {
+            if (blank === null) blank = field.label;
+            continue;
+          }
+          patch[field.key] = Number(text);
+        }
+        return { patch, blank };
+      }
 
-        const capacityModule =
-          `<section class="mod span2">` +
-          `<div class="mod-head">` +
-          `<span class="mod-icon">` +
-          `<svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="3" /><path d="M8 3.5v17M3.5 9h17M3.5 15h17" /></svg>` +
-          `</span>` +
-          `<span class="mod-head-text"><span class="mod-title">记忆与容量上限</span>` +
-          `<span class="mod-sub">MEMORY 的边界、一轮的上下文预算与温室里的槽位</span></span>` +
-          `<span class="pill ${dead > 0 ? "warn" : "info"}">槽位 ${state.agents.length} / ${esc(String(config.maxSlots))}</span>` +
-          `</div>` +
-          `<div class="mod-body">` +
-          `<div class="metric-grid cols-4">` +
-          metric("MEMORY 上限", esc(String(config.memoryCapChars)), "字", "记忆的目标体积。超过它时本轮照写，只在黑匣子里记一条警告。") +
-          metric("一轮上下文上限", esc(String(config.roundContextCapTokens)), "token", "超过就截断并结束这一轮。") +
-          metric("槽位上限", esc(String(config.maxSlots)), "个", `账本里现有 ${state.agents.length} 个 Agent。`) +
-          metric("任务认领超时", esc(String(config.taskClaimTimeoutHours)), "小时", "超时自动把任务送回任务板。") +
-          `</div>` +
-          `</div></section>`;
+      function markSysEdited(key) {
+        if (sysValuesDraft === null) sysValuesDraft = {};
+        const input = $(`sys-${key}`);
+        if (input === null) return;
+        // Compared against the live server value, so typing a number back to
+        // what it already was drops the draft and lets the panel follow the
+        // server again.
+        sysValuesDraft[key] = input.value === sysServerValue(key) ? undefined : input.value;
+      }
 
-        $("settingsBox").innerHTML =
-          `<div class="settings-bento">` +
-          vitalModule +
-          economyModule +
-          capacityModule +
-          `</div>` +
-          `<details class="raw-config">` +
-          `<summary>原始配置 JSON（只读）</summary>` +
-          `<pre class="mono">${esc(JSON.stringify(config, null, 2))}</pre>` +
-          `</details>` +
-          `<div class="hint-line" style="margin-top: 12px">配置来自 conservatory.config.json，这里是只读展示；改动请直接改文件后重启。</div>`;
+      function resetSysValues() {
+        sysValuesDraft = null;
+        sysValuesStatus = { tone: "ok", text: "已重置为当前生效值。" };
+        renderSysValues(true);
+      }
+
+      async function saveSysValues() {
+        if (sysValuesSaving) return;
+        const collected = collectSysValues();
+        if (collected.blank !== null) {
+          sysValuesStatus = { tone: "bad", text: `「${collected.blank}」请填写一个数字。` };
+          renderSysValues(false);
+          return;
+        }
+        sysValuesSaving = true;
+        try {
+          await post("/api/settings/values", collected.patch);
+          // The server answered, so its numbers are the truth again.
+          sysValuesDraft = null;
+          await refresh();
+          sysValuesStatus = {
+            tone: "ok",
+            text: "参数已保存并立即生效（已写回 conservatory.config.json）。",
+          };
+        } catch (error) {
+          // Nothing was changed server-side, so the operator's text stays on
+          // screen next to the reason it was refused.
+          sysValuesStatus = { tone: "bad", text: error instanceof Error ? error.message : String(error) };
+        } finally {
+          sysValuesSaving = false;
+          renderSysValues(false);
+        }
+      }
+
+      function paintSettingsPage() {
+        if (state === null) return;
+        paintPauseSwitch();
+        const rate = state.exchangeRate;
+        const alive = aliveAgents().length;
+        // Only the shape is in this key. The numbers themselves are filled in by
+        // `renderSysValues`, which knows to leave a live draft alone — so a
+        // change to a value does not rebuild the boxes the operator is typing in.
+        const key = JSON.stringify({ rateSet: rate !== null, agents: state.agents.length, alive });
+        if (key !== sysValuesKey) {
+          sysValuesKey = key;
+          buildSysPanel();
+        }
+        renderSysValues(true);
       }
 
       // ---------------------------------------------------- dialog chrome
@@ -3929,6 +4667,13 @@
         // and the server refuses the same calls anyway.
         $("dlgWake").hidden = agent.status !== "alive";
         $("dlgWake").dataset.agent = agent.name;
+        // The wake request now returns as soon as the round starts, so the
+        // button cannot show progress by staying disabled. It shows it by
+        // naming the state instead: a second click during a round would be
+        // refused by the server anyway, and saying so is clearer than a
+        // request that silently does nothing.
+        $("dlgWake").disabled = agent.busy === true;
+        $("dlgWake").textContent = agent.busy === true ? "一轮进行中…" : "唤醒";
         $("chatInput").placeholder = `给 ${agent.name} 留言…`;
       }
       function resetAgentPanes() {
@@ -4079,7 +4824,11 @@
                     </div>
                     ${
                       summary === ""
-                        ? '<div class="s-summary void">这次会话没有留下回复。</div>'
+                        ? end !== null && end.endReason !== "final"
+                          ? `<div class="s-summary void">未正常结束（${esc(status.text)}）${
+                              end.error ? "：" + esc(firstLines(end.error, 3)) : ""
+                            }</div>`
+                          : '<div class="s-summary void">这次会话没有留下回复。</div>'
                         : `<div class="s-summary">${esc(summary)}${reply.partial ? "…" : ""}</div>`
                     }
                   </div>`;
@@ -4174,13 +4923,30 @@
         const flow = [];
         for (const entry of entries) {
           if (entry.kind === "assistant_message") {
-            const content = entry.message === undefined || entry.message === null ? null : entry.message.content;
+            const message = entry.message === undefined || entry.message === null ? null : entry.message;
+            const content = message === null ? null : message.content;
+            const reasoning =
+              message !== null && typeof message.reasoningContent === "string" ? message.reasoningContent.trim() : "";
+            // The thinking comes first and is folded by default: it is the
+            // longest part of a turn and the least often read. A turn whose
+            // visible content is empty still carries it — a model that thinks
+            // and then calls a tool says nothing in `content`, and dropping the
+            // entry would hide the only trace of why it called anything.
+            let turn = "";
+            if (reasoning !== "") {
+              turn +=
+                `<details class="t-reasoning" style="margin-bottom: 6px">` +
+                `<summary class="small muted" style="cursor: pointer">展开推理思考过程（${reasoning.length} 字）</summary>` +
+                `<pre class="mono" style="margin-top: 4px; white-space: pre-wrap">${esc(reasoning)}</pre>` +
+                `</details>`;
+            }
             if (typeof content === "string" && content.trim() !== "") {
-              flow.push(
-                `<div class="t-turn"><div class="t-think"><span class="who">Agent 思考 · ${esc(
-                  relTime(entry.at),
-                )}</span>${esc(content)}</div></div>`,
-              );
+              turn += `<div class="t-think"><span class="who">Agent 思考 · ${esc(
+                relTime(entry.at),
+              )}</span>${esc(content)}</div>`;
+            }
+            if (turn !== "") {
+              flow.push(`<div class="t-turn">${turn}</div>`);
             }
             continue;
           }
@@ -4300,6 +5066,37 @@
         );
         return parts.join("");
       }
+      /**
+       * Which folded blocks are open, named so the names survive a repaint.
+       *
+       * A round's transcript is append-only, so the Nth `.tool-item` stays the
+       * Nth `.tool-item` however many arrive later. Indexing within the class
+       * rather than across the whole pane is what makes that true: the
+       * bookkeeping blocks at the bottom carry no class, and a new tool call
+       * landing above them would shift every position if they shared a count.
+       */
+      function openDetailKeys(host) {
+        const keys = [];
+        const counters = new Map();
+        for (const node of host.querySelectorAll("details")) {
+          const cls = node.className || "";
+          const index = counters.get(cls) || 0;
+          counters.set(cls, index + 1);
+          if (node.open) keys.push(cls + "#" + index);
+        }
+        return keys;
+      }
+      function restoreOpenDetails(host, keys) {
+        if (keys.length === 0) return;
+        const wanted = new Set(keys);
+        const counters = new Map();
+        for (const node of host.querySelectorAll("details")) {
+          const cls = node.className || "";
+          const index = counters.get(cls) || 0;
+          counters.set(cls, index + 1);
+          if (wanted.has(cls + "#" + index)) node.open = true;
+        }
+      }
       function paintTranscript() {
         const host = $("lifeTranscript");
         const round = sessionCache.rounds.find((item) => item.round === sessionSel) || null;
@@ -4313,11 +5110,18 @@
         const last = round.entries.length > 0 ? round.entries[round.entries.length - 1] : null;
         const key = `${round.round}|${round.entries.length}|${last === null ? 0 : last.at}`;
         if (host.dataset.key === key) return;
+        // A live round repaints every three seconds. Only the same round's
+        // folded blocks are worth restoring: opening a different session is a
+        // deliberate fresh read, and carrying the old block states into it
+        // would unfold unrelated panels.
+        const sameRound = host.dataset.key.startsWith(round.round + "|");
+        const openKeys = sameRound ? openDetailKeys(host) : [];
         host.dataset.key = key;
         // `repaint` keeps the scroll position, which is what a session still
         // being written wants. Opening a different session is handled by the
         // action, which puts the view back at the top on purpose.
         repaint(host, transcriptHtml(round));
+        restoreOpenDetails(host, openKeys);
       }
       function summarizeTool(result) {
         if (result === null) return "没有工具结果";
@@ -4373,12 +5177,55 @@
       }
 
       // ----------------------------------------------------- body tab
-      // The agent's model, as a control rather than a readout. The selection is
+      // What the operator has picked in the 身体 panel but not yet saved. The
+      // panel is repainted on every 3-second poll, so without this a dropdown
+      // would jump back to the frozen value mid-choice. Keyed by agent name and
+      // cleared once a save lands, at which point the binding is the truth.
+      const bodyModelDrafts = {};
+      function rememberBodyModelDraft(target, row, overrides) {
+        if (row === null) return;
+        const providerSelect = row.querySelector("select[data-model-provider]");
+        const modelSelect = row.querySelector("select[data-model-model]");
+        const effortSelect = row.querySelector("select[data-model-effort]");
+        // The agent comes off the row rather than off whichever control fired:
+        // all three carry it, but only the row is guaranteed to be the one the
+        // caller passed.
+        const agent =
+          providerSelect !== null && providerSelect.dataset.agent !== undefined
+            ? providerSelect.dataset.agent
+            : target.dataset.agent;
+        if (agent === undefined) return;
+        const providerId = providerSelect === null ? "" : providerSelect.value;
+        const model =
+          overrides !== undefined && overrides.model !== undefined
+            ? overrides.model
+            : modelSelect === null
+              ? ""
+              : modelSelect.value;
+        const reasoningEffort = effortSelect === null ? "" : effortSelect.value;
+        bodyModelDrafts[agent] = { providerId, model, reasoningEffort };
+      }
+      // The agent's brain, as a control rather than a readout. The selection is
       // only a suggestion until 『保存模型』 is pressed, because changing it is
       // an intervention: the ledger, the frozen binding and the live process
       // all move together, and a busy agent defers it to the next wake-up.
+      //
+      // What is shown is the frozen snapshot, not the ledger's model name. The
+      // two can disagree — the roster may have renamed or dropped a model since
+      // the agent was born, and the snapshot is what it actually runs on.
       function modelSwitchHtml(agent) {
         const roster = modelsKey();
+        const binding = agent.modelBinding === undefined ? null : agent.modelBinding;
+        const boundLine =
+          binding === null
+            ? `<div class="kv"><span class="k">当前模型</span><span class="mono small">${esc(agent.model)}</span></div>` +
+              `<div class="small muted">还没有读到它的 MODEL.json 冻结快照，下面显示的是账本里的模型名。</div>`
+            : `<div class="kv"><span class="k">当前模型</span><span class="mono small">${esc(
+                binding.providerName,
+              )} · ${esc(binding.model)}</span></div>` +
+              `<div class="kv"><span class="k">思考努力等级</span><span class="small">${esc(
+                effortLabel(binding.reasoningEffort),
+              )}</span></div>`;
         const notice =
           modelSwitchNotice === null
             ? ""
@@ -4387,17 +5234,28 @@
         if (roster === null || !Array.isArray(roster.providers) || roster.providers.length === 0) {
           return (
             notice +
-            `<div class="kv"><span class="k">模型</span><span class="mono small">${esc(agent.model)}</span></div>` +
+            boundLine +
             `<div class="small muted">还没有配置任何提供商，请到左下角『系统设置 → 模型设置』里添加。</div>`
           );
         }
-        // Preselect the provider whose model list holds the agent's current
-        // model; fall back to the configured default when nothing matches.
+        // The draft wins while the operator is choosing; otherwise the frozen
+        // binding preselects both dropdowns. Only then does it fall back to
+        // hunting for the model name in the roster, which is a guess: two
+        // providers can serve the same name, and the binding knows which one.
+        const draft = bodyModelDrafts[agent.name];
         let currentProvider = null;
-        for (const provider of roster.providers) {
-          if (Array.isArray(provider.models) && provider.models.indexOf(agent.model) >= 0) {
-            currentProvider = provider;
-            break;
+        if (draft !== undefined && draft.providerId !== "") {
+          currentProvider = roster.providers.find((p) => p.id === draft.providerId) || null;
+        }
+        if (currentProvider === null && binding !== null) {
+          currentProvider = roster.providers.find((p) => p.id === binding.providerId) || null;
+        }
+        if (currentProvider === null) {
+          for (const provider of roster.providers) {
+            if (Array.isArray(provider.models) && provider.models.indexOf(agent.model) >= 0) {
+              currentProvider = provider;
+              break;
+            }
           }
         }
         if (currentProvider === null) {
@@ -4405,7 +5263,19 @@
             roster.providers.find((p) => p.id === roster.defaultAgentProviderId) || roster.providers[0];
         }
         const models = Array.isArray(currentProvider.models) ? currentProvider.models : [];
-        const selected = models.indexOf(agent.model) >= 0 ? agent.model : models[0];
+        const wantedModel =
+          draft !== undefined && draft.model !== "" ? draft.model : binding === null ? agent.model : binding.model;
+        const selected = models.indexOf(wantedModel) >= 0 ? wantedModel : models[0];
+        const wantedEffort =
+          draft !== undefined
+            ? draft.reasoningEffort
+            : binding === null || binding.reasoningEffort === undefined
+              ? ""
+              : binding.reasoningEffort;
+        // A frozen model the roster no longer lists is worth saying out loud:
+        // the agent keeps running on it, but it cannot be re-picked from here.
+        const orphaned =
+          binding !== null && !roster.providers.some((p) => p.id === binding.providerId && Array.isArray(p.models) && p.models.indexOf(binding.model) >= 0);
         const providerOptions = roster.providers
           .map(
             (provider) =>
@@ -4421,17 +5291,24 @@
           .join("");
         return (
           notice +
-          `<div class="kv"><span class="k">模型</span><span class="mono small">${esc(agent.model)}</span></div>` +
+          boundLine +
+          (orphaned
+            ? `<div class="small muted">（当前运行于独立冻结快照 MODEL.json：这个模型名已不在提供商菜单里，但它仍在照常运行。）</div>`
+            : "") +
           `<div class="row">` +
           `<select data-model-provider="true" data-agent="${esc(agent.name)}" aria-label="提供商">${providerOptions}</select>` +
           `<select data-model-model="true" data-agent="${esc(agent.name)}" aria-label="模型">${modelOptions}</select>` +
+          `<select data-model-effort="true" data-agent="${esc(agent.name)}" aria-label="思考努力等级">${reasoningEffortOptions(
+            wantedEffort,
+          )}</select>` +
           `<button class="btn primary" data-act="model-switch" data-agent="${esc(agent.name)}" data-provider="${esc(
             currentProvider.id,
           )}" data-model="${esc(selected)}">保存模型</button>` +
+          `<button class="btn" data-act="model-test-switch" data-agent="${esc(agent.name)}">测试模型</button>` +
           `</div>` +
           `<div class="small muted">保存后会记为一次操作员干预${
             agent.busy ? "；它正在一轮中，新模型会在下一次唤醒时生效" : ""
-          }。</div>`
+          }。选『思考：默认』就是清掉之前设过的等级，让提供商自己决定。</div>`
         );
       }
       function paintBody() {
@@ -4595,19 +5472,116 @@
         }
         return original;
       }
+      /** True when `[start, end)` runs into a range some earlier wound took. */
+      function overlapsClaimed(claimed, start, end) {
+        return claimed.some((range) => start < range.end && end > range.start);
+      }
       /**
-       * Every treatable wound placed at its offset in the visible MEMORY. The
-       * API returns wounds in id order, which is not necessarily their order in
-       * the text, so each one is matched to the earliest occurrence that no
-       * earlier match already claimed. A wound whose rendered form cannot be
-       * found is skipped rather than mis-anchored: a wrong offset would put a
-       * censor bar over text the agent can still read.
+       * Where a rendered sentence sits in MEMORY.
+       *
+       * `startOffset` is the ledger's own hint and is preferred: two frozen
+       * sentences may read exactly the same, and the recorded position is the
+       * only thing that tells them apart. It is a hint and not a promise — a
+       * rewrite may have moved the sentence — so it chooses among occurrences
+       * that are actually there rather than being trusted blindly. Without a
+       * usable hint the earliest free occurrence wins, as it always did.
+       */
+      function findSentenceAt(text, sentence, startOffset, claimed) {
+        const hinted = typeof startOffset === "number" && Number.isFinite(startOffset) && startOffset >= 0;
+        let best = -1;
+        let bestDistance = Infinity;
+        let from = 0;
+        while (from <= text.length) {
+          const found = text.indexOf(sentence, from);
+          if (found < 0) break;
+          const end = found + sentence.length;
+          if (!overlapsClaimed(claimed, found, end)) {
+            if (!hinted) return found;
+            const distance = Math.abs(found - startOffset);
+            if (distance < bestDistance) {
+              bestDistance = distance;
+              best = found;
+            }
+          }
+          from = found + 1;
+        }
+        return best;
+      }
+      /**
+       * Every treatable wound placed at its offset in the visible MEMORY.
+       *
+       * The API also sends, per wound, the whole rendered sentence it belongs
+       * to and the wound's own `[spanStart, spanEnd)` inside that sentence.
+       * Those are used first, because they are the only thing that survives
+       * neighbours: two adjacent untreated wounds render as one unbroken run
+       * of placeholders, so a substring search cannot tell `▯▯▯` from the
+       * first three characters of `▯▯▯▯▯▯▯` — it hands the whole run to
+       * whichever wound it happens to look at first and leaves the other
+       * unplaceable, or worse, anchored over text the agent can still read.
+       * The renderer knows exactly where each one landed, so the page asks it
+       * instead of guessing.
+       *
+       * A wound with no usable coordinates — a healed one is skipped outright,
+       * and a payload that carries none at all, as the mocks and any older
+       * caller do — falls back to the original substring search, so nothing
+       * that worked before behaves differently now.
+       *
+       * A wound whose rendered form cannot be found is skipped rather than
+       * mis-anchored: a wrong offset would put a censor bar over text the
+       * agent can still read.
        */
       function locateWounds(text, wounds) {
         const located = [];
         const claimed = [];
+        const pending = [];
+        // Active wounds that do carry coordinates, gathered by their sentence:
+        // one sentence is located once, and every wound inside it then costs
+        // nothing but an addition.
+        const groups = new Map();
         for (const wound of wounds) {
           if (wound.status === "healed") continue;
+          const sentence = typeof wound.sentence === "string" ? wound.sentence : "";
+          const anchored =
+            typeof wound.sentenceId === "number" &&
+            sentence !== "" &&
+            typeof wound.spanStart === "number" &&
+            Number.isFinite(wound.spanStart) &&
+            typeof wound.spanEnd === "number" &&
+            Number.isFinite(wound.spanEnd) &&
+            wound.spanEnd > wound.spanStart;
+          if (!anchored) {
+            pending.push(wound);
+            continue;
+          }
+          const group = groups.get(wound.sentenceId);
+          if (group === undefined) {
+            groups.set(wound.sentenceId, {
+              sentence,
+              startOffset: wound.sentenceStartOffset,
+              wounds: [wound],
+            });
+          } else {
+            group.wounds.push(wound);
+          }
+        }
+        for (const group of groups.values()) {
+          const sentAt = findSentenceAt(text, group.sentence, group.startOffset, claimed);
+          if (sentAt < 0) {
+            // The sentence is not in this MEMORY at all. Its wounds are not
+            // lost: they go back to the substring search, which is what they
+            // would have had before the server sent coordinates.
+            for (const wound of group.wounds) pending.push(wound);
+            continue;
+          }
+          // The whole sentence is claimed, not only the wounds inside it. Two
+          // identical sentences would otherwise both be located at the first
+          // one, and the second sentence's wounds would land on the first.
+          claimed.push({ start: sentAt, end: sentAt + group.sentence.length });
+          for (const wound of group.wounds) {
+            located.push({ start: sentAt + wound.spanStart, end: sentAt + wound.spanEnd, wound });
+          }
+        }
+        for (const wound of pending) {
           const pattern = woundPattern(wound);
           if (pattern === "") continue;
           let at = -1;
@@ -4615,8 +5589,7 @@
           while (from <= text.length) {
             const found = text.indexOf(pattern, from);
             if (found < 0) break;
-            const overlaps = claimed.some((range) => found < range.end && found + pattern.length > range.start);
-            if (!overlaps) {
+            if (!overlapsClaimed(claimed, found, found + pattern.length)) {
               at = found;
               break;
             }
@@ -4730,9 +5703,68 @@
             );
           }
         }
+        paintWoundChips(wounds, edits);
         paintWoundPop();
         paintMemRecords();
         paintMemCompare();
+      }
+      /**
+       * A row of every active wound, inside the status bar.
+       *
+       * A wound is a black bar somewhere in a file that can be a megabyte
+       * long, and until now the only way to treat one was to find its bar by
+       * eye. The chips are the index: numbered, in the order they appear in
+       * the text, with any that could not be anchored in the text at all
+       * listed after — those are exactly the ones the operator could not have
+       * found otherwise, so they are the ones that most need a door.
+       *
+       * Clicking a chip opens the treatment card, which is why a chip is a
+       * complete fallback for a bar the page failed to place.
+       */
+      function paintWoundChips(wounds, edits) {
+        const active = wounds.filter((wound) => wound.status !== "healed");
+        if (active.length === 0) return;
+        const placed = [];
+        const seen = new Set();
+        for (const edit of edits) {
+          if (edit.wound.status === "healed" || seen.has(edit.wound.id)) continue;
+          seen.add(edit.wound.id);
+          placed.push(edit.wound);
+        }
+        for (const wound of active) {
+          if (!seen.has(wound.id)) {
+            seen.add(wound.id);
+            placed.push(wound);
+          }
+        }
+        const chips = placed
+          .map(
+            (wound) =>
+              `<button type="button" class="btn tiny ${woundPop === wound.id ? "primary" : ""}" ` +
+              `data-act="wound-open" data-wound="${wound.id}" ` +
+              `title="点击打开伤口 #${wound.id} 的治疗卡片">#${wound.id} · ${esc(
+                WOUND_STATUS[wound.status] || wound.status,
+              )}（${wound.length} 字）</button>`,
+          )
+          .join("");
+        $("memStats").insertAdjacentHTML(
+          "beforeend",
+          `<span class="mem-wounds" data-role="wound-chips">${chips}</span>`,
+        );
+      }
+      /**
+       * Marks the chip of the wound whose card is open.
+       *
+       * Kept separate from the row itself so a click can move the highlight
+       * without rebuilding the row, which would replace the button that was
+       * just clicked and lose the focus ring with it.
+       */
+      function paintWoundChipStates() {
+        const row = $("memStats").querySelector('[data-role="wound-chips"]');
+        if (row === null) return;
+        for (const chip of row.querySelectorAll("[data-wound]")) {
+          chip.classList.toggle("primary", Number(chip.dataset.wound) === woundPop);
+        }
       }
       /** The in-place treatment card for the wound the operator clicked. */
       function paintWoundPop() {
@@ -5022,20 +6054,81 @@
           await saveSandbox();
           return;
         }
+        if (act === "sys-open") {
+          openSettingsDlg("system");
+          return;
+        }
+        if (act === "sys-values-save") {
+          await saveSysValues();
+          return;
+        }
+        if (act === "sys-values-reset") {
+          resetSysValues();
+          return;
+        }
         if (act === "models-save-provider") {
           saveProviderDraft();
+          return;
+        }
+        if (act === "models-fetch-remote") {
+          await fetchRemoteModelsForForm();
+          return;
+        }
+        if (act === "models-fetched-toggle") {
+          const model = target.dataset.model;
+          const namesInput = $("modelsModelNames");
+          if (!model || namesInput === null) return;
+          const current = parseModelNames(namesInput.value);
+          const idx = current.indexOf(model);
+          if (idx >= 0) current.splice(idx, 1);
+          else current.push(model);
+          namesInput.value = current.join(", ");
+          paintFetchedModels();
+          return;
+        }
+        if (act === "models-fetched-select-all") {
+          const namesInput = $("modelsModelNames");
+          if (namesInput === null || modelsFetchedList.length === 0) return;
+          const current = parseModelNames(namesInput.value);
+          const seen = new Set(current);
+          const keyword = modelsFetchedFilter.trim().toLowerCase();
+          const filtered =
+            keyword === ""
+              ? modelsFetchedList
+              : modelsFetchedList.filter((m) => m.toLowerCase().includes(keyword));
+          for (const model of filtered) {
+            if (!seen.has(model)) {
+              seen.add(model);
+              current.push(model);
+            }
+          }
+          namesInput.value = current.join(", ");
+          paintFetchedModels();
+          return;
+        }
+        if (act === "models-fetched-clear") {
+          const namesInput = $("modelsModelNames");
+          if (namesInput === null) return;
+          namesInput.value = "";
+          paintFetchedModels();
+          return;
+        }
+        if (act === "models-fetched-close") {
+          resetFetchedModels();
           return;
         }
         if (act === "models-edit-provider") {
           if (modelsDraft === null) return;
           const wanted = target.dataset.provider;
           modelsEditingId = providerById(wanted) === null ? null : wanted;
+          resetFetchedModels();
           modelsStatus = { tone: "ok", text: "正在编辑这个提供商；改完点『保存修改』。" };
           renderModels(true);
           return;
         }
         if (act === "models-cancel-edit") {
           modelsEditingId = null;
+          resetFetchedModels();
           modelsStatus = { tone: "ok", text: "已取消编辑。" };
           renderModels(true);
           return;
@@ -5052,12 +6145,16 @@
           }
           if (!confirm(`删除提供商「${provider.name}」？仍绑定它的存活 Agent 会让保存被拒绝。`)) return;
           modelsDraft.providers = modelsDraft.providers.filter((p) => p.id !== wanted);
-          if (modelsEditingId === wanted) modelsEditingId = null;
+          if (modelsEditingId === wanted) {
+            modelsEditingId = null;
+            resetFetchedModels();
+          }
           modelsStatus = { tone: "ok", text: `已删除提供商「${provider.name}」，别忘了点『保存配置』。` };
           renderModels(true);
           return;
         }
         if (act === "models-reload") {
+          resetFetchedModels();
           await loadModelsConfig();
           return;
         }
@@ -5071,9 +6168,105 @@
           const providerId = target.dataset.provider;
           const model = target.dataset.model;
           if (providerId === undefined || model === undefined) return;
-          const body = await post(`/api/agents/${encodeURIComponent(agent)}/model`, { providerId, model });
+          const row = target.parentElement;
+          const effortSelect = row === null ? null : row.querySelector("select[data-model-effort]");
+          const effort = effortSelect === null ? "" : effortSelect.value;
+          // An empty dropdown means "clear it"; the server treats `null` as
+          // unspecified and drops the level from the frozen snapshot.
+          const body = await post(`/api/agents/${encodeURIComponent(agent)}/model`, {
+            providerId,
+            model,
+            reasoningEffort: effort === "" ? null : effort,
+          });
           modelSwitchNotice = typeof body.message === "string" ? body.message : null;
+          // The binding is the truth again once the save lands.
+          delete bodyModelDrafts[agent];
           await refresh();
+          return;
+        }
+        if (act === "model-test-switch") {
+          const agent = target.dataset.agent || dlgAgent;
+          if (agent === null) return;
+          const row = target.parentElement;
+          const providerSelect = row === null ? null : row.querySelector("select[data-model-provider]");
+          const modelSelect = row === null ? null : row.querySelector("select[data-model-model]");
+          const effortSelect = row === null ? null : row.querySelector("select[data-model-effort]");
+          const providerId = providerSelect === null ? "" : providerSelect.value;
+          const model = modelSelect === null ? "" : modelSelect.value;
+          const effort = effortSelect === null ? "" : effortSelect.value;
+          if (model === "") {
+            modelSwitchNotice = "请先选择要测试的模型。";
+            paintBody();
+            return;
+          }
+          modelSwitchNotice = "正在测试模型…";
+          paintBody();
+          try {
+            const body = await post("/api/models/test", {
+              providerId,
+              model,
+              reasoningEffort: effort === "" ? null : effort,
+            });
+            modelSwitchNotice = typeof body.message === "string" ? body.message : "测试通过。";
+          } catch (error) {
+            modelSwitchNotice = "测试失败：" + (error instanceof Error ? error.message : String(error));
+          }
+          paintBody();
+          return;
+        }
+        if (act === "models-test-form") {
+          const names = parseModelNames($("modelsModelNames") === null ? "" : $("modelsModelNames").value);
+          if (names.length === 0) {
+            modelsStatus = { tone: "bad", text: "请先填写至少一个模型名，再测试。" };
+            renderModels(false);
+            return;
+          }
+          const baseUrl = $("modelsBaseUrl") === null ? "" : $("modelsBaseUrl").value.trim();
+          const apiKey = $("modelsApiKey") === null ? "" : $("modelsApiKey").value;
+          modelsStatus = { tone: "ok", text: `正在测试「${names[0]}」…` };
+          renderModels(false);
+          try {
+            const body = await post("/api/models/test", {
+              baseUrl,
+              apiKey,
+              providerId: modelsEditingId,
+              model: names[0],
+            });
+            modelsStatus = { tone: "ok", text: typeof body.message === "string" ? body.message : "测试通过。" };
+          } catch (error) {
+            modelsStatus = { tone: "bad", text: error instanceof Error ? error.message : String(error) };
+          }
+          renderModels(false);
+          return;
+        }
+        if (act === "models-test-default") {
+          const role = target.dataset.role === "memory" ? "memory" : "agent";
+          const pair = $(
+            role === "memory" ? "modelsDefaultMemory" : "modelsDefaultAgent",
+          );
+          const effort = effortValueOf(role === "memory" ? "modelsDefaultMemoryEffort" : "modelsDefaultAgentEffort");
+          if (pair === null || pair.value === "") {
+            modelsStatus = { tone: "bad", text: "请先选择要测试的默认模型。" };
+            renderModels(false);
+            return;
+          }
+          const at = pair.value.indexOf("|");
+          const providerId = at < 0 ? "" : pair.value.slice(0, at);
+          const model = at < 0 ? "" : pair.value.slice(at + 1);
+          const who = role === "memory" ? "默认 Memory 模型" : "默认 Agent 模型";
+          modelsStatus = { tone: "ok", text: `正在测试${who}「${model}」…` };
+          renderModels(false);
+          try {
+            const body = await post("/api/models/test", {
+              providerId,
+              model,
+              reasoningEffort: effort === "" ? null : effort,
+            });
+            modelsStatus = { tone: "ok", text: typeof body.message === "string" ? body.message : "测试通过。" };
+          } catch (error) {
+            modelsStatus = { tone: "bad", text: error instanceof Error ? error.message : String(error) };
+          }
+          renderModels(false);
           return;
         }
         if (act === "model-switch-dismiss") {
@@ -5100,7 +6293,13 @@
           if (agent === null) return;
           const body = await post("/api/wake", { agent });
           if (body.woken === false) alert(body.note || "该 agent 正在一轮中，已跳过");
+          // The wake no longer waits for the round, so the state poll right
+          // after it is what turns the card and the button into "一轮进行中".
           await refresh();
+          // And if the operator is already looking at this agent's sessions,
+          // the new round should be on screen now rather than in three
+          // seconds. Quiet, so an open transcript is not wiped to "读取中…".
+          if (dlgAgent === agent && dlgTab === "life") await loadRounds(dlgAgent, true, true);
           return;
         }
         if (act === "slot-create") {
@@ -5113,17 +6312,25 @@
           }
           const providerSelect = document.querySelector(`select[data-change="slot-provider"][data-slot="${slot}"]`);
           const modelSelect = document.querySelector(`select[data-model-for="${slot}"]`);
+          const effortSelect = document.querySelector(`select[data-effort-for="${slot}"]`);
           const providerId = providerSelect === null ? "" : providerSelect.value;
           const model = modelSelect === null ? "" : modelSelect.value;
+          const effort = effortSelect === null ? "" : effortSelect.value;
           // The roster decides whether a provider is needed at all; an install
           // with none configured still creates an agent on the .env default.
           if (providerSelect !== null && (providerId === "" || model === "")) {
             alert("请选择提供商与模型");
             return;
           }
+          // The level travels only when one was actually chosen, so a request
+          // that says nothing about thinking stays the shape it always had.
           await post(
             "/api/agents",
-            providerSelect === null ? { name } : { name, providerId, model },
+            providerSelect === null
+              ? { name }
+              : effort === ""
+                ? { name, providerId, model }
+                : { name, providerId, model, reasoningEffort: effort },
           );
           if (input !== null) input.value = "";
           slotDrafts[slot] = {};
@@ -5165,7 +6372,46 @@
           return;
         }
         if (act === "task-review") {
-          await post(`/api/tasks/${encodeURIComponent(target.dataset.task)}/review`, { decision: target.dataset.decision });
+          // The note box is optional and shared by every review button on this
+          // card; an empty box simply sends no note.
+          const noteBox = $("taskReviewNote");
+          const note = noteBox === null ? "" : noteBox.value.trim();
+          const payload = note === "" ? { decision: target.dataset.decision } : { decision: target.dataset.decision, note };
+          await post(`/api/tasks/${encodeURIComponent(target.dataset.task)}/review`, payload);
+          taskDetailKey = null;
+          taskDraft = null;
+          reviewNoteDraft = null;
+          await refresh();
+          return;
+        }
+        if (act === "task-update") {
+          const taskId = target.dataset.task;
+          const title = ($("taskEdit-title") === null ? "" : $("taskEdit-title").value).trim();
+          const rawPrice = $("taskEdit-price") === null ? "" : $("taskEdit-price").value.trim();
+          const description = $("taskEdit-description") === null ? "" : $("taskEdit-description").value;
+          const price = Number(rawPrice);
+          if (title === "") {
+            alert("请填写标题");
+            return;
+          }
+          if (rawPrice === "" || !Number.isFinite(price) || price < 0) {
+            alert("请填写价格（不小于 0 的数字）");
+            return;
+          }
+          await post(`/api/tasks/${encodeURIComponent(taskId)}/update`, { title, description, price });
+          // The server's answer is the truth now, so the draft is released.
+          taskDraft = null;
+          taskDetailKey = null;
+          await refresh();
+          return;
+        }
+        if (act === "task-cancel") {
+          const taskId = target.dataset.task;
+          if (!confirm(`确认撤下任务 ${taskId}？撤下后任务会从任务板上消失，无法恢复。`)) return;
+          await post(`/api/tasks/${encodeURIComponent(taskId)}/cancel`, {});
+          taskDraft = null;
+          taskDetailKey = null;
+          taskSel = null;
           await refresh();
           return;
         }
@@ -5177,7 +6423,11 @@
         }
         if (act === "income-verify") {
           if (state !== null && state.exchangeRate === null) {
-            alert("汇率未设定：请在 conservatory.config.json 里设置 exchangeRate 后再核验入账");
+            // Not a dead end any more: the rate is set from the console, so
+            // offer to open the very panel that holds it.
+            if (confirm("汇率未设定，收入申报无法核验入账。\n\n现在去『系统设置 → 系统经济与指标』设定 USD 兑换汇率？")) {
+              openSettingsDlg("system");
+            }
             return;
           }
           if (incomeSel === null) return;
@@ -5188,14 +6438,19 @@
             alert("请填写核实金额（不小于 0 的数字）");
             return;
           }
-          await post(`/api/income/${incomeSel}/verify`, { verifiedAmount: amount });
+          const note = verifyNoteText();
+          await post(
+            `/api/income/${incomeSel}/verify`,
+            note === "" ? { verifiedAmount: amount } : { verifiedAmount: amount, note },
+          );
           incomeKey = null;
           await refresh();
           return;
         }
         if (act === "income-reject") {
           if (!confirm("确认驳回这条收入申报？驳回后不入账。")) return;
-          await post(`/api/income/${incomeSel}/reject`, {});
+          const note = verifyNoteText();
+          await post(`/api/income/${incomeSel}/reject`, note === "" ? {} : { note });
           incomeKey = null;
           await refresh();
           return;
@@ -5241,7 +6496,18 @@
         if (act === "wound-open") {
           const woundId = Number(target.dataset.wound);
           woundPop = woundPop === woundId ? null : woundId;
+          // The chips are painted from `woundPop`, so the one just clicked has
+          // to be repainted to show it is the open one. Only the chip row is
+          // rebuilt: repainting the whole pane would throw away the reader's
+          // place in a long MEMORY, which is the opposite of what a jump does.
+          paintWoundChipStates();
           paintWoundPop();
+          if (woundPop !== null) {
+            const node = $("memoryText").querySelector('[data-wound="' + woundPop + '"]');
+            if (node !== null && typeof node.scrollIntoView === "function") {
+              node.scrollIntoView({ block: "nearest", behavior: "smooth" });
+            }
+          }
           return;
         }
         if (act === "wound-close") {
@@ -5378,16 +6644,16 @@
       document.addEventListener("keydown", (event) => {
         const target = event.target;
         // A non-button anchor that announces itself as a button (the wound
-        // marks in MEMORY) must answer the same keys one would.
+        // marks in MEMORY, the rate banner) must answer the same keys one would.
         if (
           (event.key === "Enter" || event.key === " ") &&
           target instanceof HTMLElement &&
-          target.dataset.act === "wound-open"
+          (target.dataset.act === "wound-open" || target.dataset.act === "sys-open")
         ) {
           event.preventDefault();
           void (async () => {
             try {
-              await runAction("wound-open", target);
+              await runAction(target.dataset.act, target);
             } catch (error) {
               alertError(error);
             }
@@ -5410,7 +6676,7 @@
       // A `change` is not a click, so it gets its own delegation: picking a
       // provider repopulates the model list, and picking a model up the save
       // button's payload. Neither writes anything to the server on its own.
-      document.addEventListener("change", (event) => {
+      function onChange(event) {
         const target = event.target;
         if (!(target instanceof HTMLElement)) return;
         if (target.dataset.change === "slot-provider") {
@@ -5432,12 +6698,89 @@
             button.dataset.provider = target.value;
             button.dataset.model = models.length > 0 ? models[0] : "";
           }
+          // The model list just changed under the operator's cursor, so the
+          // remembered pick is this provider plus whatever is now selected.
+          rememberBodyModelDraft(target, row, { model: models.length > 0 ? models[0] : "" });
           return;
         }
         if (target.dataset.modelModel === "true") {
           const row = target.parentElement;
           const button = row === null ? null : row.querySelector('button[data-act="model-switch"]');
           if (button !== null) button.dataset.model = target.value;
+          rememberBodyModelDraft(target, row);
+          return;
+        }
+        if (target.dataset.modelEffort === "true") {
+          rememberBodyModelDraft(target, target.parentElement);
+          return;
+        }
+        // The four controls of the models panel. A repaint rebuilds them from
+        // `modelsDraft`, so a pick that is not written back here is undone by
+        // the next 3-second poll — the operator's choice would appear to snap
+        // back on its own.
+        if (
+          target.id === "modelsDefaultAgent" ||
+          target.id === "modelsDefaultMemory" ||
+          target.id === "modelsDefaultAgentEffort" ||
+          target.id === "modelsDefaultMemoryEffort"
+        ) {
+          if (modelsDraft !== null) {
+            if (target.id === "modelsDefaultAgent" || target.id === "modelsDefaultMemory") {
+              const at = target.value.indexOf("|");
+              const providerId = at < 0 ? target.value : target.value.slice(0, at);
+              const model = at < 0 ? "" : target.value.slice(at + 1);
+              if (target.id === "modelsDefaultAgent") {
+                modelsDraft.defaultAgentProviderId = providerId;
+                modelsDraft.defaultAgentModel = model;
+              } else {
+                modelsDraft.defaultMemoryProviderId = providerId;
+                modelsDraft.defaultMemoryModel = model;
+              }
+            } else if (target.id === "modelsDefaultAgentEffort") {
+              modelsDraft.defaultAgentReasoningEffort = target.value;
+            } else {
+              modelsDraft.defaultMemoryReasoningEffort = target.value;
+            }
+          }
+          return;
+        }
+      }
+      document.addEventListener("change", onChange);
+
+      document.addEventListener("input", (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+        if (target.id === "modelsFetchedSearch") {
+          modelsFetchedFilter = target.value;
+          paintFetchedModels();
+          return;
+        }
+        if (target.id === "modelsModelNames") {
+          paintFetchedModels();
+          return;
+        }
+        // A number being typed into the system-values panel is recorded as it
+        // changes, so the poll's repaint cannot reset it to the old value
+        // halfway through. Nothing is sent until 保存参数 is pressed.
+        if (target.dataset.sysField !== undefined) {
+          markSysEdited(target.dataset.sysField);
+          return;
+        }
+        // The same protection for the open-task editor: whatever is typed here
+        // outranks the server's copy until 保存修改 is pressed.
+        if (target.dataset.taskField !== undefined && taskSel !== null) {
+          markTaskEdited(target.dataset.taskField, target.value);
+          return;
+        }
+        // The review note is a draft too: a poll must not wipe a reason the
+        // operator is halfway through typing.
+        if (target.id === "taskReviewNote" && taskSel !== null) {
+          reviewNoteDraft = { id: taskSel, text: target.value };
+          return;
+        }
+        // The conversion preview follows the amount as it is typed.
+        if (target.id === "verifyAmount") {
+          paintVerifyPreview();
           return;
         }
       });
@@ -5466,6 +6809,10 @@
                     {
                       finalReply: typeof end.finalReply === "string" ? end.finalReply : "",
                       endReason: typeof end.endReason === "string" ? end.endReason : "",
+                      // Why a round that produced no reply produced none. The
+                      // card would otherwise say "还没有完成过一轮" about a round
+                      // that ran and failed, which is the one thing it must not.
+                      error: typeof end.error === "string" ? end.error : "",
                       round: rounds[index].round,
                     },
                   ];
@@ -5504,14 +6851,31 @@
           refreshing = false;
         }
       }
+      /**
+       * Keeps the open dialog current between state polls.
+       *
+       * Two things change while the operator watches. A round in progress
+       * writes entries the whole time, but `lastRoundAt` only moves when the
+       * round *ends*, so waiting for it would leave the Life tab frozen for
+       * the entire round. And a finished round needs one more read to pick up
+       * the entries written after its last poll. The first case polls on
+       * `busy`, the second on the marker, and both read quietly.
+       */
       async function followNewRounds() {
         if (dlgAgent === null) return;
         const agent = agentByName(dlgAgent);
         if (agent === null) return;
+        // A round is being written right now: stream it.
+        if (dlgTab === "life" && agent.busy === true) {
+          await loadRounds(dlgAgent, true, true);
+          return;
+        }
         const seen = loadedRoundAt[dlgAgent];
         if (agent.lastRoundAt === null || seen === undefined || seen === agent.lastRoundAt) return;
         loadedRoundAt[dlgAgent] = agent.lastRoundAt;
-        if (dlgTab === "life") await loadRounds(dlgAgent, true);
+        // Quiet on both: the round just ended, and blanking the pane the
+        // operator is reading would hide the very ending they waited for.
+        if (dlgTab === "life") await loadRounds(dlgAgent, true, true);
         else if (dlgTab === "memory") await loadMemory(dlgAgent, true);
       }
 
@@ -5521,7 +6885,13 @@
         if (tab === "life") await loadRounds(dlgAgent, force);
         else if (tab === "memory") await loadMemory(dlgAgent, force);
       }
-      async function loadRounds(name, force) {
+      /**
+       * Reads one agent's sessions. `quiet` is for the three-second poll: it
+       * skips the "读取中…" placeholder and the key reset, so a live round
+       * gains its new entries in place instead of the list blanking and the
+       * transcript collapsing under the operator every three seconds.
+       */
+      async function loadRounds(name, force, quiet) {
         if (name === null) return;
         if (!force && sessionCache.agent === name && sessionCache.range === lifeRange) {
           paintSessionList();
@@ -5529,8 +6899,10 @@
           return;
         }
         const host = $("sessionList");
-        host.dataset.key = "";
-        host.innerHTML = '<div class="empty small">读取中…</div>';
+        if (quiet !== true) {
+          host.dataset.key = "";
+          host.innerHTML = '<div class="empty small">读取中…</div>';
+        }
         try {
           const body = await api(`/api/agents/${encodeURIComponent(name)}/blackbox?rounds=${lifeRange}`);
           const rounds = body.rounds.filter((round) => round.round !== null);
@@ -5546,7 +6918,11 @@
           paintSessionList();
           paintTranscript();
         } catch (error) {
-          host.innerHTML = `<div class="empty small">读取失败：${esc(error instanceof Error ? error.message : String(error))}</div>`;
+          // A quiet poll that fails leaves the last good view alone: a
+          // transient read error is not worth replacing the transcript with.
+          if (quiet !== true) {
+            host.innerHTML = `<div class="empty small">读取失败：${esc(error instanceof Error ? error.message : String(error))}</div>`;
+          }
         }
       }
       async function loadMemory(name, force) {

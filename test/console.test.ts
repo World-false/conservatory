@@ -1,7 +1,9 @@
 import type { AddressInfo } from 'node:net';
-import type http from 'node:http';
+import { readFileSync, writeFileSync } from 'node:fs';
+import http from 'node:http';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { persistConservatoryValues, validateValuesPatch } from '../src/config';
 import { createConsoleServer } from '../src/console/server';
 import { BODY_MANUAL } from '../src/organs/manual';
 import { MEMORY_SYSTEM_PROMPT } from '../src/organs/memory';
@@ -13,7 +15,7 @@ import {
   type PromptLibrary,
   type PromptStatus,
 } from '../src/organs/prompts';
-import { claimTask, createTask, submitTask } from '../src/organs/taskboard';
+import { claimTask, createTask, reviewTask, submitTask } from '../src/organs/taskboard';
 import {
   createSandboxPolicyStore,
   DEFAULT_SANDBOX_POLICY,
@@ -21,6 +23,7 @@ import {
   type SandboxPolicyStore,
 } from '../src/organs/sandbox/policy';
 import type { ModelConfigStore } from '../src/organs/models/store';
+import { writeModelBinding } from '../src/organs/models/binding';
 import { birthAgent, createHarness, testModelStore, testPrompts, twoProviderModels, writePrompts, type Harness } from './helpers';
 
 interface RunningConsole {
@@ -74,6 +77,12 @@ interface SwitchCall {
   name: string;
   providerId: string;
   model: string;
+  /**
+   * Present only when the request actually carried a level. It is recorded
+   * even as `null`, so a console that wrongly forwarded "cleared" as an
+   * explicit value would be visible rather than silently dropped.
+   */
+  reasoningEffort?: string | null;
 }
 
 
@@ -88,6 +97,9 @@ async function startConsole(
   modelStore: ModelConfigStore = testModelStore(h).store,
   switches: SwitchCall[] = [],
   erased: { agent: string; confirmName: string }[] = [],
+  updateValues?: (
+    patch: unknown,
+  ) => { ok: true; values: typeof h.values } | { ok: false; error: string },
 ): Promise<RunningConsole> {
   // The real pause organ, wired to the harness ledger, so the console tests
   // exercise the same freeze/resume path the supervisor uses.
@@ -121,12 +133,18 @@ async function startConsole(
       lastRoundEndReason: null,
       lastError: null,
     }),
-    createAgent: async (name, providerId, model) => {
-      created.push(providerId === undefined && model === undefined ? name : `${name}:${providerId}/${model}`);
+    createAgent: async (name, providerId, model, reasoningEffort) => {
+      // Only a request that actually carried a level appends one, so the
+      // records for the pre-existing calls stay byte-identical.
+      const label = providerId === undefined && model === undefined ? name : `${name}:${providerId}/${model}`;
+      created.push(reasoningEffort === undefined ? label : `${label}:${reasoningEffort}`);
       return { ok: true };
     },
-    switchAgentModel: (name, providerId, model) => {
-      switches.push({ name, providerId, model });
+    switchAgentModel: (name, providerId, model, reasoningEffort) => {      switches.push(
+        reasoningEffort === undefined
+          ? { name, providerId, model }
+          : { name, providerId, model, reasoningEffort },
+      );
       return registry.isBusy(name)
         ? {
             ok: true,
@@ -136,6 +154,9 @@ async function startConsole(
         : { ok: true, deferred: false, message: '模型修改已保存，将在下次唤醒时生效。' };
     },
     wakeAgent: async () => ({ ok: true, woken: false, reason: '该 agent 正在一轮中，本次唤醒已跳过' }),
+    // Only injected when a test wants to watch the patch reach a supervisor
+    // callback; without it the console validates and applies it itself.
+    ...(updateValues === undefined ? {} : { updateValues }),
     setPaused: (paused) => ({
       ok: true,
       changed: pause.set(paused, h.clock.now()).changed,
@@ -767,6 +788,452 @@ describe('the model roster in the console', () => {
 
     expect(switches).toEqual([]);
   });
+
+  it('fetches remote model lists from an OpenAI-compatible /models endpoint and falls back to stored provider key', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    const seenHeaders: { url: string; auth: string | undefined }[] = [];
+    const remote = http.createServer((req, res) => {
+      seenHeaders.push({ url: req.url ?? '', auth: req.headers['authorization'] });
+      if (req.url === '/v1/models') {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(
+          JSON.stringify({
+            object: 'list',
+            data: [{ id: 'deepseek-chat' }, { id: 'deepseek-reasoner' }, { id: 'deepseek-chat' }],
+          }),
+        );
+        return;
+      }
+      res.statusCode = 401;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ error: { message: 'Invalid API key' } }));
+    });
+    await new Promise<void>((resolve) => remote.listen(0, '127.0.0.1', () => resolve()));
+    servers.push(remote);
+    const remotePort = (remote.address() as AddressInfo).port;
+    const remoteBase = `http://127.0.0.1:${remotePort}/v1/`;
+
+    const console = await startConsole(
+      h,
+      [],
+      testPrompts(h),
+      [],
+      [],
+      new RoundRegistry(),
+      testSandboxPolicy(h).policy,
+      testModelStore(h, { data: twoProviderModels() }).store,
+    );
+
+    // 1. Explicit apiKey + trailing slash on baseUrl
+    const okResp = await postJson(console.base, '/api/models/fetch-models', {
+      baseUrl: remoteBase,
+      apiKey: 'sk-fresh-key',
+    });
+    expect(okResp.status).toBe(200);
+    expect(okResp.body['ok']).toBe(true);
+    expect(okResp.body['models']).toEqual(['deepseek-chat', 'deepseek-reasoner']);
+    expect(seenHeaders[0]).toEqual({ url: '/v1/models', auth: 'Bearer sk-fresh-key' });
+
+    // 2. Empty apiKey with providerId falls back to stored provider key ('sk-deepseek' in twoProviderModels)
+    const fallbackResp = await postJson(console.base, '/api/models/fetch-models', {
+      baseUrl: remoteBase,
+      apiKey: '',
+      providerId: 'deepseek',
+    });
+    expect(fallbackResp.status).toBe(200);
+    expect(fallbackResp.body['models']).toEqual(['deepseek-chat', 'deepseek-reasoner']);
+    expect(seenHeaders[1]?.auth).toBe('Bearer sk-deepseek');
+
+    // 3. Upstream HTTP error surfaces in Chinese with status code and message
+    const errResp = await postJson(console.base, '/api/models/fetch-models', {
+      baseUrl: `http://127.0.0.1:${remotePort}/wrong`,
+      apiKey: 'sk-bad',
+    });
+    expect(errResp.status).toBe(400);
+    expect(errResp.body['ok']).toBe(false);
+    expect(String(errResp.body['error'])).toContain('401');
+    expect(String(errResp.body['error'])).toContain('Invalid API key');
+
+    // 4. Missing baseUrl is refused in Chinese
+    const missingUrl = await postJson(console.base, '/api/models/fetch-models', {
+      baseUrl: '   ',
+    });
+    expect(missingUrl.status).toBe(400);
+    expect(String(missingUrl.body['error'])).toContain('Base URL');
+  });
+});
+
+describe('the thinking level in the console', () => {
+  it('reports each agent frozen MODEL.json snapshot, and never the key', async () => {
+    const h = createHarness({ values: { maxSlots: 2 } });
+    birthAgent(h, 'ada');
+    birthAgent(h, 'bob');
+    writeModelBinding(h.paths, 'ada', {
+      providerId: 'deepseek',
+      providerName: 'DeepSeek',
+      baseUrl: 'https://api.deepseek.com/v1',
+      apiKey: 'sk-must-not-travel',
+      model: 'deepseek-reasoner',
+      reasoningEffort: 'high',
+      boundAt: 1700000000000,
+    });
+    // `bob` keeps no binding at all: the page has to cope with a null one.
+    const console = await startConsole(h, []);
+
+    const state = await getJson(console.base, '/api/state');
+    expect(state.status).toBe(200);
+    const agents = state.body['agents'] as {
+      name: string;
+      modelBinding: Record<string, unknown> | null;
+    }[];
+    const ada = agents.find((agent) => agent.name === 'ada');
+    const bob = agents.find((agent) => agent.name === 'bob');
+    expect(ada?.modelBinding).toEqual({
+      providerId: 'deepseek',
+      providerName: 'DeepSeek',
+      model: 'deepseek-reasoner',
+      reasoningEffort: 'high',
+      boundAt: 1700000000000,
+    });
+    expect(bob?.modelBinding).toBeNull();
+    // The frozen snapshot holds the key, and the operator's page never gets it.
+    expect(JSON.stringify(state.body)).not.toContain('sk-must-not-travel');
+    expect(Object.keys(ada?.modelBinding ?? {})).not.toContain('apiKey');
+    expect(Object.keys(ada?.modelBinding ?? {})).not.toContain('baseUrl');
+  });
+
+  it('omits the level from a binding that never chose one', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    writeModelBinding(h.paths, 'ada', {
+      providerId: 'main',
+      providerName: '主提供商',
+      baseUrl: 'http://127.0.0.1:1/v1',
+      apiKey: 'k',
+      model: 'agent-model',
+      boundAt: 1,
+    });
+    const console = await startConsole(h, []);
+    const state = await getJson(console.base, '/api/state');
+    const agents = state.body['agents'] as { modelBinding: Record<string, unknown> }[];
+    // Absent, not `undefined`: a key that exists with no value would read as a
+    // level the operator cleared rather than one that was never set.
+    expect('reasoningEffort' in agents[0].modelBinding).toBe(false);
+  });
+
+  it('carries a chosen level through birth and switch, and clears it on request', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    const created: string[] = [];
+    const switches: SwitchCall[] = [];
+    const console = await startConsole(
+      h,
+      created,
+      testPrompts(h),
+      [],
+      [],
+      new RoundRegistry(),
+      testSandboxPolicy(h).policy,
+      testModelStore(h, { data: twoProviderModels() }).store,
+      switches,
+    );
+
+    const born = await postJson(console.base, '/api/agents', {
+      name: 'cleo',
+      providerId: 'deepseek',
+      model: 'deepseek-chat',
+      reasoningEffort: 'high',
+    });
+    expect(born.status).toBe(200);
+    expect(created).toEqual(['cleo:deepseek/deepseek-chat:high']);
+
+    // A level the operator never chose must not appear on the call at all: the
+    // supervisor distinguishes "not chosen" from "cleared".
+    const plain = await postJson(console.base, '/api/agents', {
+      name: 'dora',
+      providerId: 'deepseek',
+      model: 'deepseek-chat',
+    });
+    expect(plain.status).toBe(200);
+    expect(created).toEqual(['cleo:deepseek/deepseek-chat:high', 'dora:deepseek/deepseek-chat']);
+
+    const set = await postJson(console.base, '/api/agents/ada/model', {
+      providerId: 'deepseek',
+      model: 'deepseek-chat',
+      reasoningEffort: 'medium',
+    });
+    expect(set.status).toBe(200);
+    expect(switches).toEqual([
+      { name: 'ada', providerId: 'deepseek', model: 'deepseek-chat', reasoningEffort: 'medium' },
+    ]);
+
+    // `null` is how the panel says "back to the provider's own default".
+    const cleared = await postJson(console.base, '/api/agents/ada/model', {
+      providerId: 'deepseek',
+      model: 'deepseek-chat',
+      reasoningEffort: null,
+    });
+    expect(cleared.status).toBe(200);
+    expect(switches[1]).toEqual({ name: 'ada', providerId: 'deepseek', model: 'deepseek-chat' });
+
+    // `'default'` and `''` mean the same thing and travel the same way.
+    const asDefault = await postJson(console.base, '/api/agents/ada/model', {
+      providerId: 'deepseek',
+      model: 'deepseek-chat',
+      reasoningEffort: 'default',
+    });
+    expect(asDefault.status).toBe(200);
+    expect(switches[2]).toEqual({ name: 'ada', providerId: 'deepseek', model: 'deepseek-chat' });
+
+    // A typo is refused rather than quietly read as "unset".
+    const bogus = await postJson(console.base, '/api/agents/ada/model', {
+      providerId: 'deepseek',
+      model: 'deepseek-chat',
+      reasoningEffort: 'extreme',
+    });
+    expect(bogus.status).toBe(400);
+    expect(bogus.body['ok']).toBe(false);
+    expect(String(bogus.body['error'])).toContain('思考努力等级');
+    expect(switches).toHaveLength(3);
+
+    const bogusBirth = await postJson(console.base, '/api/agents', {
+      name: 'eve',
+      providerId: 'deepseek',
+      model: 'deepseek-chat',
+      reasoningEffort: 'extreme',
+    });
+    expect(bogusBirth.status).toBe(400);
+    expect(String(bogusBirth.body['error'])).toContain('思考努力等级');
+    expect(created).toHaveLength(2);
+  });
+
+  it('tests a model end to end and reports the token usage it came back with', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    const seen: { url: string; auth: string | undefined; body: Record<string, unknown> }[] = [];
+    const remote = http.createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (chunk: Buffer) => chunks.push(chunk));
+      req.on('end', () => {
+        seen.push({
+          url: req.url ?? '',
+          auth: req.headers['authorization'],
+          body: JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>,
+        });
+        if (req.url !== '/v1/chat/completions') {
+          res.statusCode = 404;
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify({ error: { message: 'no such route' } }));
+          return;
+        }
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(
+          JSON.stringify({
+            id: 'chatcmpl-1',
+            choices: [{ index: 0, message: { role: 'assistant', content: 'pong' } }],
+            usage: { prompt_tokens: 7, completion_tokens: 2, total_tokens: 9 },
+          }),
+        );
+      });
+    });
+    await new Promise<void>((resolve) => remote.listen(0, '127.0.0.1', () => resolve()));
+    servers.push(remote);
+    const remoteBase = `http://127.0.0.1:${(remote.address() as AddressInfo).port}/v1/`;
+
+    const console = await startConsole(
+      h,
+      [],
+      testPrompts(h),
+      [],
+      [],
+      new RoundRegistry(),
+      testSandboxPolicy(h).policy,
+      // The roster's `deepseek` provider points at the local mock, so the
+      // provider-id-only call below stays on loopback instead of reaching the
+      // real internet.
+      testModelStore(h, {
+        data: {
+          ...twoProviderModels(),
+          providers: twoProviderModels().providers.map((provider) =>
+            provider.id === 'deepseek' ? { ...provider, baseUrl: remoteBase } : provider,
+          ),
+        },
+      }).store,
+    );
+
+    // An explicit Base URL, with a trailing slash, and a chosen level.
+    const ok = await postJson(console.base, '/api/models/test', {
+      baseUrl: remoteBase,
+      apiKey: 'sk-fresh',
+      model: 'deepseek-chat',
+      reasoningEffort: 'high',
+    });
+    expect(ok.status).toBe(200);
+    expect(ok.body['ok']).toBe(true);
+    expect(ok.body['model']).toBe('deepseek-chat');
+    expect(ok.body['reasoningEffort']).toBe('high');
+    expect(ok.body['usage']).toEqual({ promptTokens: 7, completionTokens: 2 });
+    expect(String(ok.body['message'])).toContain('提示 7');
+    expect(String(ok.body['message'])).toContain('生成 2');
+    expect(seen[0].url).toBe('/v1/chat/completions');
+    expect(seen[0].auth).toBe('Bearer sk-fresh');
+    expect(seen[0].body['reasoning_effort']).toBe('high');
+    expect(seen[0].body['max_tokens']).toBe(8);
+    expect(seen[0].body['messages']).toEqual([{ role: 'user', content: 'ping' }]);
+
+    // No level chosen: the field must not appear in the request at all, so the
+    // provider decides, exactly as it does for a normal round.
+    const noLevel = await postJson(console.base, '/api/models/test', {
+      baseUrl: remoteBase,
+      apiKey: 'sk-fresh',
+      model: 'deepseek-chat',
+    });
+    expect(noLevel.status).toBe(200);
+    expect(noLevel.body['reasoningEffort']).toBeNull();
+    expect('reasoning_effort' in seen[1].body).toBe(false);
+
+    // A provider already in the roster supplies both URL and key when the
+    // request names only the provider, which is what the panel sends.
+    const rosterTest = await postJson(console.base, '/api/models/test', {
+      providerId: 'deepseek',
+      model: 'deepseek-chat',
+    });
+    expect(rosterTest.status).toBe(200);
+    expect(rosterTest.body['usage']).toEqual({ promptTokens: 7, completionTokens: 2 });
+    // No key was typed into the form, so the roster's stored key was used.
+    expect(seen[2].auth).toBe('Bearer sk-deepseek');
+
+    const noModel = await postJson(console.base, '/api/models/test', { baseUrl: remoteBase });
+    expect(noModel.status).toBe(400);
+    expect(String(noModel.body['error'])).toContain('模型名');
+
+    const noUrl = await postJson(console.base, '/api/models/test', { model: 'deepseek-chat' });
+    expect(noUrl.status).toBe(400);
+    expect(String(noUrl.body['error'])).toContain('Base URL');
+
+    const bogusEffort = await postJson(console.base, '/api/models/test', {
+      baseUrl: remoteBase,
+      model: 'deepseek-chat',
+      reasoningEffort: 'extreme',
+    });
+    expect(bogusEffort.status).toBe(400);
+    expect(String(bogusEffort.body['error'])).toContain('思考努力等级');
+  });
+
+  it('refuses a model that answers but reports no usage, because it cannot be metered', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    const remote = http.createServer((req, res) => {
+      res.statusCode = 200;
+      res.setHeader('content-type', 'application/json');
+      // A perfectly good answer with no token counts: reachable, but unusable
+      // to a harness that meters on what the provider reports.
+      res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'pong' } }] }));
+    });
+    await new Promise<void>((resolve) => remote.listen(0, '127.0.0.1', () => resolve()));
+    servers.push(remote);
+    const remoteBase = `http://127.0.0.1:${(remote.address() as AddressInfo).port}/v1`;
+
+    const console = await startConsole(h, []);
+    const missing = await postJson(console.base, '/api/models/test', {
+      baseUrl: remoteBase,
+      apiKey: 'sk-x',
+      model: 'deepseek-chat',
+    });
+    expect(missing.status).toBe(400);
+    expect(missing.body['ok']).toBe(false);
+    expect(String(missing.body['error'])).toContain('usage');
+    expect(String(missing.body['error'])).toContain('温室无法使用该模型');
+  });
+
+  it('refuses a half-reported usage rather than reading a missing count as zero', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    const remote = http.createServer((req, res) => {
+      res.statusCode = 200;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ choices: [], usage: { prompt_tokens: 7 } }));
+    });
+    await new Promise<void>((resolve) => remote.listen(0, '127.0.0.1', () => resolve()));
+    servers.push(remote);
+    const remoteBase = `http://127.0.0.1:${(remote.address() as AddressInfo).port}/v1`;
+
+    const console = await startConsole(h, []);
+    const partial = await postJson(console.base, '/api/models/test', {
+      baseUrl: remoteBase,
+      model: 'deepseek-chat',
+    });
+    expect(partial.status).toBe(400);
+    expect(String(partial.body['error'])).toContain('usage');
+  });
+
+  it('surfaces an upstream HTTP failure with its status and message', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    const remote = http.createServer((req, res) => {
+      res.statusCode = 401;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ error: { message: 'Invalid API key' } }));
+    });
+    await new Promise<void>((resolve) => remote.listen(0, '127.0.0.1', () => resolve()));
+    servers.push(remote);
+    const remoteBase = `http://127.0.0.1:${(remote.address() as AddressInfo).port}/v1`;
+
+    const console = await startConsole(h, []);
+    const failed = await postJson(console.base, '/api/models/test', {
+      baseUrl: remoteBase,
+      apiKey: 'sk-bad',
+      model: 'deepseek-chat',
+    });
+    expect(failed.status).toBe(400);
+    expect(String(failed.body['error'])).toContain('401');
+    expect(String(failed.body['error'])).toContain('Invalid API key');
+  });
+
+  it('persists a default thinking level and clears it with null', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    const fixture = testModelStore(h, { data: twoProviderModels() });
+    const console = await startConsole(
+      h,
+      [],
+      testPrompts(h),
+      [],
+      [],
+      new RoundRegistry(),
+      testSandboxPolicy(h).policy,
+      fixture.store,
+    );
+
+    const set = await postJson(console.base, '/api/models/config', {
+      defaultAgentReasoningEffort: 'high',
+      defaultMemoryReasoningEffort: 'low',
+    });
+    expect(set.status).toBe(200);
+    const stored = set.body['models'] as Record<string, unknown>;
+    expect(stored['defaultAgentReasoningEffort']).toBe('high');
+    expect(stored['defaultMemoryReasoningEffort']).toBe('low');
+    expect(fixture.written[0].defaultAgentReasoningEffort).toBe('high');
+
+    const cleared = await postJson(console.base, '/api/models/config', {
+      defaultAgentReasoningEffort: null,
+    });
+    expect(cleared.status).toBe(200);
+    const after = cleared.body['models'] as Record<string, unknown>;
+    expect('defaultAgentReasoningEffort' in after).toBe(false);
+    // Clearing one leaves the other where it was.
+    expect(after['defaultMemoryReasoningEffort']).toBe('low');
+
+    const bogus = await postJson(console.base, '/api/models/config', {
+      defaultAgentReasoningEffort: 'extreme',
+    });
+    expect(bogus.status).toBe(400);
+    expect(String(bogus.body['error'])).toContain('思考努力等级');
+    expect(fixture.written).toHaveLength(2);
+  });
 });
 
 describe('the conservatory-wide pause switch', () => {
@@ -1078,5 +1545,672 @@ describe('the sandbox security policy in the console', () => {
     expect(after.status).toBe(200);
     expect((after.body['config'] as Record<string, unknown>)['readMode']).toBe('blacklist');
     expect(policy.current().readMode).toBe('blacklist');
+  });
+});
+
+describe('the running parameters in the console', () => {
+  /**
+   * The 21 tunables `/api/state` must carry. `exchangeRate` is not in this list
+   * because it travels at the top level of the state as well, where the income
+   * page reads it; it is asserted separately.
+   */
+  const CONFIG_KEYS = [
+    'satietyMax',
+    'satietyDecayPerSecond',
+    'initialSatiety',
+    'initialBalance',
+    'mealPrice',
+    'satietyPerMeal',
+    'heartbeatSeconds',
+    'memoryCapChars',
+    'roundContextCapTokens',
+    'maxToolCallsPerRound',
+    'modelRequestTimeoutSeconds',
+    'taskClaimTimeoutHours',
+    'maxSlots',
+    'redactionIntervalSeconds',
+    'redactionCharsPerTick',
+    'redactionMinRanges',
+    'redactionMaxRanges',
+    'deathLineChars',
+    'ordinaryTreatmentPrice',
+    'completeTreatmentPrice',
+    // Shown and editable like the rest, but the listener binds at boot, so the
+    // panel marks it "needs a restart" rather than promising it is live.
+    'consolePort',
+  ] as const;
+
+  it('reports every running parameter, including the six the panel used to hide', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    const console = await startConsole(h, []);
+
+    const state = await getJson(console.base, '/api/state');
+    expect(state.status).toBe(200);
+    const config = state.body['config'] as Record<string, unknown>;
+
+    // Exactly the tunables, no more and no less: a field that quietly stopped
+    // being sent would leave the panel drawing an empty box.
+    expect(Object.keys(config).sort()).toEqual([...CONFIG_KEYS].sort());
+    for (const key of CONFIG_KEYS) {
+      expect(typeof config[key], key).toBe('number');
+      expect(config[key], key).toBe(h.values[key as keyof typeof h.values]);
+    }
+    // The six this stage exists to surface.
+    expect(config['initialSatiety']).toBe(100);
+    expect(config['initialBalance']).toBe(100);
+    expect(config['maxToolCallsPerRound']).toBe(50);
+    expect(config['modelRequestTimeoutSeconds']).toBe(120);
+    expect(config['redactionMinRanges']).toBe(1);
+    expect(config['redactionMaxRanges']).toBe(3);
+    // The rate travels at the top level, where the income page reads it.
+    expect(state.body['exchangeRate']).toBeNull();
+  });
+
+  it('sets, clears and re-sets the exchange rate from the console', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    const console = await startConsole(h, []);
+
+    const reportId = h.ledger.insertIncomeReport({
+      agent: 'ada',
+      where: 'upwork',
+      work: 'translation',
+      amount: 10,
+      currency: 'USD',
+      at: h.clock.now(),
+    });
+
+    // Refused while unset — the state the operator starts in.
+    const before = await postJson(console.base, `/api/income/${reportId}/verify`, { verifiedAmount: 10 });
+    expect(before.status).toBe(400);
+    expect(String(before.body['error'])).toContain('汇率未设定');
+    expect(h.ledger.getBalance('ada')).toBe(100);
+
+    // Setting the rate in the console makes the very next verify succeed: no
+    // restart, no hand-editing the file.
+    const set = await postJson(console.base, '/api/settings/values', { exchangeRate: 7.2 });
+    expect(set.status).toBe(200);
+    expect(set.body['exchangeRate']).toBe(7.2);
+    expect((set.body['config'] as Record<string, unknown>)['heartbeatSeconds']).toBe(300);
+
+    const state = await getJson(console.base, '/api/state');
+    expect(state.body['exchangeRate']).toBe(7.2);
+
+    const credited = await postJson(console.base, `/api/income/${reportId}/verify`, { verifiedAmount: 10 });
+    expect(credited.status).toBe(200);
+    expect(h.ledger.getBalance('ada')).toBe(100 + 72);
+
+    // Clearing it back to null is a real value, not a missing field, and it
+    // closes the door again.
+    const cleared = await postJson(console.base, '/api/settings/values', { exchangeRate: null });
+    expect(cleared.status).toBe(200);
+    expect(cleared.body['exchangeRate']).toBeNull();
+    expect((await getJson(console.base, '/api/state')).body['exchangeRate']).toBeNull();
+
+    const report2 = h.ledger.insertIncomeReport({
+      agent: 'ada',
+      where: 'upwork',
+      work: 'again',
+      amount: 5,
+      currency: 'USD',
+      at: h.clock.now(),
+    });
+    const refused = await postJson(console.base, `/api/income/${report2}/verify`, { verifiedAmount: 5 });
+    expect(refused.status).toBe(400);
+    expect(String(refused.body['error'])).toContain('汇率未设定');
+  });
+
+  it('updates the other numbers and shows them on the next state read', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    const console = await startConsole(h, []);
+
+    const response = await postJson(console.base, '/api/settings/values', {
+      mealPrice: 42,
+      heartbeatSeconds: 60,
+      satietyPerMeal: 7,
+      completeTreatmentPrice: 3,
+    });
+    expect(response.status).toBe(200);
+    const config = response.body['config'] as Record<string, unknown>;
+    expect(config['mealPrice']).toBe(42);
+    expect(config['heartbeatSeconds']).toBe(60);
+    expect(config['satietyPerMeal']).toBe(7);
+    expect(config['completeTreatmentPrice']).toBe(3);
+
+    // In memory, so the supervisor's own reads see it too.
+    expect(h.values.mealPrice).toBe(42);
+    expect(h.values.heartbeatSeconds).toBe(60);
+
+    const state = await getJson(console.base, '/api/state');
+    expect((state.body['config'] as Record<string, unknown>)['mealPrice']).toBe(42);
+
+    // The agent's card is painted from the live values too, so the new ceiling
+    // reaches the page without a restart.
+    const agents = state.body['agents'] as { name: string; satietyMax: number }[];
+    expect(agents[0].satietyMax).toBe(h.values.satietyMax);
+  });
+
+  it('refuses an illegal patch with a Chinese reason and changes nothing', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    const console = await startConsole(h, []);
+
+    const cases: { patch: Record<string, unknown>; contains: string }[] = [
+      { patch: { mealPrice: -5 }, contains: 'mealPrice' },
+      { patch: { initialSatiety: 200, satietyMax: 100 }, contains: 'initialSatiety' },
+      { patch: { memoryCapChars: 1000, deathLineChars: 2000 }, contains: 'memoryCapChars' },
+      { patch: { redactionMaxRanges: 1, redactionMinRanges: 3 }, contains: 'redactionMaxRanges' },
+      { patch: { redactionMaxRanges: 500, redactionCharsPerTick: 20 }, contains: 'redactionMaxRanges' },
+      { patch: { maxToolCallsPerRound: 2.5 }, contains: 'maxToolCallsPerRound' },
+      { patch: { heartbeatSeconds: 0 }, contains: 'heartbeatSeconds' },
+      { patch: { exchangeRate: 0 }, contains: 'exchangeRate' },
+      { patch: { nope: 1 }, contains: '没有需要更新的参数字段' },
+      { patch: {}, contains: '参数格式不合法' },
+    ];
+    for (const entry of cases) {
+      const response = await postJson(console.base, '/api/settings/values', entry.patch);
+      expect(response.status, JSON.stringify(entry.patch)).toBe(400);
+      expect(String(response.body['error']), JSON.stringify(entry.patch)).toContain(entry.contains);
+    }
+
+    // Nothing moved, in memory or in what the page is told.
+    expect(h.values.mealPrice).toBe(15);
+    expect(h.values.memoryCapChars).toBe(8000);
+    expect(h.values.exchangeRate).toBeNull();
+    const state = await getJson(console.base, '/api/state');
+    const config = state.body['config'] as Record<string, unknown>;
+    expect(config['mealPrice']).toBe(15);
+    expect(config['maxToolCallsPerRound']).toBe(50);
+  });
+
+  it('lets a patch that does not touch the context budget through', async () => {
+    // The harness default `roundContextCapTokens: 60000` is below what the
+    // memory rule demands for an 8000-character MEMORY. A live config may
+    // predate the rule, so an unrelated edit must not be refused for it.
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    const console = await startConsole(h, []);
+
+    const allowed = await postJson(console.base, '/api/settings/values', { exchangeRate: 7.2 });
+    expect(allowed.status).toBe(200);
+
+    // But an edit that does touch either half is checked, and refused.
+    const refused = await postJson(console.base, '/api/settings/values', { memoryCapChars: 9000 });
+    expect(refused.status).toBe(400);
+    expect(String(refused.body['error'])).toContain('roundContextCapTokens');
+
+    const alsoRefused = await postJson(console.base, '/api/settings/values', { roundContextCapTokens: 60000 });
+    expect(alsoRefused.status).toBe(400);
+    expect(String(alsoRefused.body['error'])).toContain('roundContextCapTokens');
+
+    // Raising it enough goes through.
+    const fine = await postJson(console.base, '/api/settings/values', { roundContextCapTokens: 152000 });
+    expect(fine.status).toBe(200);
+    expect(h.values.roundContextCapTokens).toBe(152000);
+  });
+
+  it('hands the patch to the supervisor callback when one is injected', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    const seen: unknown[] = [];
+    const console = await startConsole(h, [], testPrompts(h), [], [], new RoundRegistry(), testSandboxPolicy(h).policy, testModelStore(h).store, [], [], (patch) => {
+      seen.push(patch);
+      // The real supervisor persists and retunes here; the test only proves the
+      // route reached it and that its answer is what the page is given.
+      h.values.exchangeRate = 3.5;
+      return { ok: true, values: h.values };
+    });
+
+    const response = await postJson(console.base, '/api/settings/values', { exchangeRate: 3.5 });
+    expect(response.status).toBe(200);
+    expect(seen).toEqual([{ exchangeRate: 3.5 }]);
+    expect(response.body['exchangeRate']).toBe(3.5);
+    expect((response.body['config'] as Record<string, unknown>)['mealPrice']).toBe(15);
+  });
+
+  it('reports a refused supervisor callback as a 400 with its own wording', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    const console = await startConsole(h, [], testPrompts(h), [], [], new RoundRegistry(), testSandboxPolicy(h).policy, testModelStore(h).store, [], [], () => ({
+      ok: false,
+      error: '配置文件写回失败：read-only file',
+    }));
+
+    const response = await postJson(console.base, '/api/settings/values', { mealPrice: 20 });
+    expect(response.status).toBe(400);
+    expect(String(response.body['error'])).toContain('配置文件写回失败');
+    expect(h.values.mealPrice).toBe(15);
+  });
+});
+
+describe('validating and persisting a partial values patch', () => {
+  it('reports which keys a patch really changed', () => {
+    const h = createHarness();
+    const result = validateValuesPatch(h.values, { mealPrice: 42, heartbeatSeconds: h.values.heartbeatSeconds });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.next.mealPrice).toBe(42);
+      // The unchanged field is named as unchanged, so a caller can tell an edit
+      // from a re-send.
+      expect(result.changedKeys).toEqual(['mealPrice']);
+    }
+    h.cleanup();
+  });
+
+  it('writes the numbers back without losing the sandbox block', () => {
+    const h = createHarness();
+    writeFileSync(
+      h.paths.configPath,
+      JSON.stringify({ ...h.values, sandbox: { readMode: 'whitelist' }, handWritten: 'keep me' }, null, 2),
+      'utf8',
+    );
+    persistConservatoryValues(h.paths.configPath, { ...h.values, mealPrice: 99 });
+
+    const written = JSON.parse(readFileSync(h.paths.configPath, 'utf8')) as Record<string, unknown>;
+    expect(written['mealPrice']).toBe(99);
+    expect(written['sandbox']).toEqual({ readMode: 'whitelist' });
+    expect(written['handWritten']).toBe('keep me');
+    // No secret may reach a tracked file: the values object holds none, and the
+    // writer must not invent any.
+    expect(readFileSync(h.paths.configPath, 'utf8')).not.toContain('apiKey');
+    h.cleanup();
+  });
+
+  it('refuses a patch that is not an object and one with no recognised field', () => {
+    const h = createHarness();
+    for (const bad of [null, 'nope', 7, [], true]) {
+      const result = validateValuesPatch(h.values, bad);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toBe('参数格式不合法');
+      }
+    }
+    const unknown = validateValuesPatch(h.values, { notAField: 1 });
+    expect(unknown.ok).toBe(false);
+    if (!unknown.ok) {
+      expect(unknown.error).toBe('没有需要更新的参数字段');
+    }
+    h.cleanup();
+  });
+});
+
+/** The English system notices an agent has waiting, oldest first. */
+function systemNotices(h: Harness, agent: string): string[] {
+  return h.ledger
+    .listUnreadMessages(agent)
+    .filter((message) => message.sender === 'system')
+    .map((message) => message.body);
+}
+
+describe('editing and withdrawing tasks from the console', () => {
+  it('edits an open task and withdraws it, refusing both once it is claimed', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    const console = await startConsole(h, []);
+
+    const posted = await postJson(console.base, '/api/tasks', {
+      title: 'Count the clouds',
+      description: 'How many did you see?',
+      price: 25,
+    });
+    expect(posted.status).toBe(200);
+    const taskId = (posted.body['task'] as { id: string }).id;
+
+    const edited = await postJson(console.base, `/api/tasks/${taskId}/update`, {
+      title: 'Count the stars',
+      description: 'A harder job.',
+      price: 60,
+    });
+    expect(edited.status).toBe(200);
+    const editedTask = edited.body['task'] as Record<string, unknown>;
+    expect(editedTask['title']).toBe('Count the stars');
+    expect(editedTask['description']).toBe('A harder job.');
+    expect(editedTask['price']).toBe(60);
+    // The state read agrees, so the list is not showing a stale title.
+    const state = await getJson(console.base, '/api/state');
+    const fromState = (state.body['tasks'] as Record<string, unknown>[]).find((row) => row['id'] === taskId);
+    expect(fromState?.['title']).toBe('Count the stars');
+
+    // An illegal edit is refused in Chinese and changes nothing.
+    const badPrice = await postJson(console.base, `/api/tasks/${taskId}/update`, {
+      title: 'x',
+      description: 'x',
+      price: -5,
+    });
+    expect(badPrice.status).toBe(400);
+    expect(String(badPrice.body['error'])).toContain('价格');
+    expect(h.ledger.getTask(taskId)?.price).toBe(60);
+
+    // Once claimed, the terms are frozen: no edit, no withdrawal.
+    claimTask(h.ledger, 'ada', taskId, h.clock.now());
+    const afterClaim = await postJson(console.base, `/api/tasks/${taskId}/update`, {
+      title: 'Cheaper',
+      description: 'x',
+      price: 1,
+    });
+    expect(afterClaim.status).toBe(400);
+    expect(String(afterClaim.body['error'])).toContain('只有开放中的任务可以修改或撤下');
+    const cancelClaimed = await postJson(console.base, `/api/tasks/${taskId}/cancel`, {});
+    expect(cancelClaimed.status).toBe(400);
+    expect(h.ledger.getTask(taskId)?.title).toBe('Count the stars');
+    expect(h.ledger.getTask(taskId)?.status).toBe('claimed');
+
+    // Returned to the board, it can be withdrawn for real.
+    reviewTask(h.ledger, taskId, 'return', h.clock.now());
+    const cancelled = await postJson(console.base, `/api/tasks/${taskId}/cancel`, {});
+    expect(cancelled.status).toBe(200);
+    expect(cancelled.body['id']).toBe(taskId);
+    expect(h.ledger.getTask(taskId)).toBeNull();
+
+    // Withdrawing something that is already gone reports it rather than lying.
+    const missing = await postJson(console.base, `/api/tasks/${taskId}/cancel`, {});
+    expect(missing.status).toBe(400);
+    expect(String(missing.body['error'])).toContain('任务不存在');
+  });
+});
+
+describe('the submission history in the console', () => {
+  it('reports every attempt in order after a rework', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    const console = await startConsole(h, []);
+
+    const posted = await postJson(console.base, '/api/tasks', {
+      title: 'Work',
+      description: 'Do it.',
+      price: 30,
+    });
+    const taskId = (posted.body['task'] as { id: string }).id;
+    claimTask(h.ledger, 'ada', taskId, h.clock.now());
+
+    submitTask(h.ledger, 'ada', taskId, 'first try', h.clock.now());
+    const afterFirst = await getJson(console.base, '/api/tasks');
+    const firstTask = (afterFirst.body['tasks'] as Record<string, unknown>[]).find((row) => row['id'] === taskId);
+    const firstSubs = firstTask?.['submissions'] as Record<string, unknown>[];
+    expect(firstSubs.length).toBe(1);
+    expect(firstSubs[0]['deliverable']).toBe('first try');
+    expect(firstSubs[0]['agent']).toBe('ada');
+
+    reviewTask(h.ledger, taskId, 'rework', h.clock.now(), 'Not good enough');
+    submitTask(h.ledger, 'ada', taskId, 'second try', h.clock.now());
+
+    // The state read carries the same list, so the page needs no extra call.
+    const state = await getJson(console.base, '/api/state');
+    const task = (state.body['tasks'] as Record<string, unknown>[]).find((row) => row['id'] === taskId);
+    const subs = task?.['submissions'] as Record<string, unknown>[];
+    expect(subs.map((sub) => sub['deliverable'])).toEqual(['first try', 'second try']);
+    // Oldest first, so "第 1 次 / 第 2 次" on the page counts up.
+    expect(Number(subs[0]['id'])).toBeLessThan(Number(subs[1]['id']));
+    expect(Number(subs[0]['at'])).toBeLessThanOrEqual(Number(subs[1]['at']));
+  });
+});
+
+describe('the operator note on a review and on an income decision', () => {
+  it('sends the task note to the agent as an English system notice', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    const console = await startConsole(h, []);
+
+    const posted = await postJson(console.base, '/api/tasks', { title: 'Work', description: 'Do it.', price: 30 });
+    const taskId = (posted.body['task'] as { id: string }).id;
+    claimTask(h.ledger, 'ada', taskId, h.clock.now());
+    submitTask(h.ledger, 'ada', taskId, 'done', h.clock.now());
+
+    const reviewed = await postJson(console.base, `/api/tasks/${taskId}/review`, {
+      decision: 'rework',
+      note: 'Please add tests',
+    });
+    expect(reviewed.status).toBe(200);
+
+    const notices = systemNotices(h, 'ada');
+    expect(notices.length).toBe(1);
+    expect(notices[0]).toContain('was sent back for rework');
+    expect(notices[0]).toContain('Note from operator: Please add tests');
+  });
+
+  it('returns a claimed task to the board through the review route', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    const console = await startConsole(h, []);
+
+    const posted = await postJson(console.base, '/api/tasks', { title: 'Work', description: 'Do it.', price: 30 });
+    const taskId = (posted.body['task'] as { id: string }).id;
+    claimTask(h.ledger, 'ada', taskId, h.clock.now());
+
+    // The whole point: the agent stalled, and the operator does not wait for
+    // the claim to time out.
+    const returned = await postJson(console.base, `/api/tasks/${taskId}/review`, {
+      decision: 'return',
+      note: 'Taking too long',
+    });
+    expect(returned.status).toBe(200);
+    expect((returned.body['task'] as Record<string, unknown>)['status']).toBe('open');
+    expect(h.ledger.getTask(taskId)?.claimedBy).toBeNull();
+
+    const notices = systemNotices(h, 'ada');
+    expect(notices.length).toBe(1);
+    expect(notices[0]).toContain('was returned to the task board by the operator');
+    expect(notices[0]).toContain('Note from operator: Taking too long');
+  });
+
+  it('sends the income note on both a verification and a rejection', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    const console = await startConsole(h, []);
+    h.values.exchangeRate = 7;
+
+    const verifiedId = h.ledger.insertIncomeReport({
+      agent: 'ada',
+      where: 'upwork',
+      work: 'translation',
+      amount: 10,
+      currency: 'USD',
+      at: h.clock.now(),
+    });
+    const verified = await postJson(console.base, `/api/income/${verifiedId}/verify`, {
+      verifiedAmount: 10,
+      note: 'Confirmed with the client',
+    });
+    expect(verified.status).toBe(200);
+    expect(h.ledger.getBalance('ada')).toBe(100 + 70);
+
+    const verifiedNotices = systemNotices(h, 'ada');
+    expect(verifiedNotices.length).toBe(1);
+    expect(verifiedNotices[0]).toContain('was verified: verified amount 10, credited +70 balance');
+    expect(verifiedNotices[0]).toContain('Note from operator: Confirmed with the client');
+
+    const rejectedId = h.ledger.insertIncomeReport({
+      agent: 'ada',
+      where: 'fiverr',
+      work: 'logo',
+      amount: 3,
+      currency: 'USD',
+      at: h.clock.now(),
+    });
+    const rejected = await postJson(console.base, `/api/income/${rejectedId}/reject`, {
+      note: 'No proof of payment',
+    });
+    expect(rejected.status).toBe(200);
+
+    const all = systemNotices(h, 'ada');
+    expect(all.length).toBe(2);
+    expect(all[1]).toContain('was rejected (0 credited)');
+    expect(all[1]).toContain('Note from operator: No proof of payment');
+    // A rejection never credits anything.
+    expect(h.ledger.getBalance('ada')).toBe(100 + 70);
+  });
+
+  it('omits the note suffix when the operator left the box empty', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    const console = await startConsole(h, []);
+
+    const posted = await postJson(console.base, '/api/tasks', { title: 'Work', description: 'Do it.', price: 30 });
+    const taskId = (posted.body['task'] as { id: string }).id;
+    claimTask(h.ledger, 'ada', taskId, h.clock.now());
+    submitTask(h.ledger, 'ada', taskId, 'done', h.clock.now());
+
+    // A blank string and an absent field must behave identically: no dangling
+    // "Note from operator:" on the end.
+    const reviewed = await postJson(console.base, `/api/tasks/${taskId}/review`, { decision: 'accept', note: '  ' });
+    expect(reviewed.status).toBe(200);
+    const notices = systemNotices(h, 'ada');
+    expect(notices.length).toBe(1);
+    expect(notices[0]).not.toContain('Note from operator');
+    expect(notices[0].endsWith('(no payment).')).toBe(false);
+    expect(notices[0].endsWith('balance).')).toBe(true);
+  });
+});
+
+/** One wound entry as `/api/state` publishes it. */
+interface WoundView {
+  id: number;
+  status: string;
+  length: number;
+  originalText: string;
+  sentence: string;
+  sentenceId: number;
+  offset: number;
+  sentenceStartOffset: number | null;
+  spanStart: number | null;
+  spanEnd: number | null;
+}
+
+async function woundViews(base: string): Promise<WoundView[]> {
+  const state = await getJson(base, '/api/state');
+  const agents = state.body['agents'] as { wounds: WoundView[] }[];
+  return agents[0].wounds;
+}
+
+describe('the coordinates a wound carries to the memory page (#11)', () => {
+  it('publishes the sentence, the span, and the sentence position for every wound', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    const original = 'The vault code is 4471 and it matters.';
+    const sentenceId = h.ledger.insertFrozenSentence('ada', original, h.clock.now(), 0);
+    h.ledger.insertWound({
+      agent: 'ada',
+      sentenceId,
+      offset: 18,
+      length: 4,
+      originalText: '4471',
+      starvationSince: 1,
+      tickIndex: 1,
+      createdAt: h.clock.now(),
+    });
+    const console = await startConsole(h, []);
+
+    const wounds = await woundViews(console.base);
+    expect(wounds.length).toBe(1);
+    expect(wounds[0].sentenceId).toBe(sentenceId);
+    expect(wounds[0].offset).toBe(18);
+    expect(wounds[0].sentenceStartOffset).toBe(0);
+    // Four placeholders starting where "4471" was, inside the sentence the
+    // page also receives, which is what makes the bar clickable in place.
+    expect(wounds[0].spanStart).toBe(18);
+    expect(wounds[0].spanEnd).toBe(22);
+    expect(wounds[0].sentence).toBe('The vault code is \u25AE\u25AE\u25AE\u25AE and it matters.');
+    expect(wounds[0].sentence.slice(wounds[0].spanStart as number, wounds[0].spanEnd as number)).toBe(
+      '\u25AE\u25AE\u25AE\u25AE',
+    );
+  });
+
+  it('gives two adjacent wounds separate spans even when the later one was made first', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    const original = 'The vault code is 4471 and it matters.';
+    const sentenceId = h.ledger.insertFrozenSentence('ada', original, h.clock.now(), 0);
+    // The wound at 20 is created first, so it takes the lower id; the one at
+    // 18 arrives second. In the rendered text they are one unbroken run of
+    // four placeholders, which is exactly what a substring search cannot
+    // split — and why the server has to send the spans.
+    const later = h.ledger.insertWound({
+      agent: 'ada',
+      sentenceId,
+      offset: 20,
+      length: 2,
+      originalText: '71',
+      starvationSince: 1,
+      tickIndex: 1,
+      createdAt: h.clock.now(),
+    });
+    const earlier = h.ledger.insertWound({
+      agent: 'ada',
+      sentenceId,
+      offset: 18,
+      length: 2,
+      originalText: '44',
+      starvationSince: 1,
+      tickIndex: 2,
+      createdAt: h.clock.now(),
+    });
+    expect(earlier).toBeGreaterThan(later);
+    const console = await startConsole(h, []);
+
+    const wounds = await woundViews(console.base);
+    const byId = new Map(wounds.map((wound) => [wound.id, wound]));
+    expect(byId.get(earlier)?.spanStart).toBe(18);
+    expect(byId.get(earlier)?.spanEnd).toBe(20);
+    expect(byId.get(later)?.spanStart).toBe(20);
+    expect(byId.get(later)?.spanEnd).toBe(22);
+    // The two spans tile the run exactly: no overlap, no gap, nothing shared.
+    expect(byId.get(earlier)?.spanEnd).toBe(byId.get(later)?.spanStart);
+    expect(byId.get(earlier)?.sentence).toBe(byId.get(later)?.sentence);
+    expect(byId.get(earlier)?.sentence).toContain('\u25AE\u25AE\u25AE\u25AE');
+  });
+
+  it('measures the span against the scarred rendering, which is wider than the text', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    const original = 'The vault code is 4471 and it matters.';
+    const sentenceId = h.ledger.insertFrozenSentence('ada', original, h.clock.now(), 0);
+    const woundId = h.ledger.insertWound({
+      agent: 'ada',
+      sentenceId,
+      offset: 18,
+      length: 2,
+      originalText: '44',
+      starvationSince: 1,
+      tickIndex: 1,
+      createdAt: h.clock.now(),
+    });
+    h.ledger.setWoundStatus(woundId, 'untreated', 'scarred', h.clock.now());
+    const console = await startConsole(h, []);
+
+    const wounds = await woundViews(console.base);
+    expect(wounds[0].status).toBe('scarred');
+    // One placeholder, then "(4)placeholder" twice: nine characters for the
+    // two it hides.
+    expect(wounds[0].spanStart).toBe(18);
+    expect(wounds[0].spanEnd).toBe(27);
+    expect(wounds[0].sentence.slice(18, 27)).toBe('\u25AE(4)\u25AE(4)\u25AE');
+  });
+
+  it('sends null coordinates rather than guessing when the sentence is gone', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    // A sentence id that was never inserted: the wound still exists, but
+    // there is no text to place it in. The page falls back to its own search.
+    const woundId = h.ledger.insertWound({
+      agent: 'ada',
+      sentenceId: 9999,
+      offset: 3,
+      length: 2,
+      originalText: 'ab',
+      starvationSince: 1,
+      tickIndex: 1,
+      createdAt: h.clock.now(),
+    });
+    const console = await startConsole(h, []);
+
+    const wounds = await woundViews(console.base);
+    expect(wounds.length).toBe(1);
+    expect(wounds[0].id).toBe(woundId);
+    expect(wounds[0].sentence).toBe('');
+    expect(wounds[0].sentenceStartOffset).toBeNull();
+    expect(wounds[0].spanStart).toBeNull();
+    expect(wounds[0].spanEnd).toBeNull();
   });
 });

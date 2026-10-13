@@ -6,9 +6,14 @@ import {
   ConfigError,
   agentHomeDir,
   ensureRuntimeDirs,
+  isReasoningEffort,
   loadAppConfig,
+  persistConservatoryValues,
+  validateValuesPatch,
   type AppConfig,
+  type ConservatoryValues,
   type ModelSettings,
+  type ReasoningEffort,
 } from '../config';
 import { createConsoleServer, type ConsoleNotice, type RuntimeInfo } from '../console/server';
 import { OpenAICompatibleClient, type ModelClient } from '../model/client';
@@ -20,6 +25,7 @@ import { Heartbeat } from '../organs/heartbeat';
 import {
   Ledger,
   PAUSED_SETTING_AGENT,
+  type AgentRecord,
   type DeathCause,
   type InterventionKind,
   type TreatmentTier,
@@ -33,7 +39,7 @@ import {
 import { grantSatiety, readSatiety } from '../organs/metabolism';
 import { readModelBinding, writeModelBinding } from '../organs/models/binding';
 import { switchAgentModel, type SwitchModelOutcome } from '../organs/models/switch';
-import { shouldRetireProcess } from '../organs/models/reconcile';
+import { modelFingerprint, shouldRetireProcess } from '../organs/models/reconcile';
 import {
   createModelConfigStore,
   resolveAgentModel,
@@ -97,10 +103,19 @@ function parseChildMessage(raw: unknown): ChildToParentMessage | null {
     if (content !== null && typeof content !== 'string') {
       return null;
     }
+    // The model's thinking is carried through untouched. It is validated the
+    // same way as the answer, but a malformed one is not worth refusing the
+    // whole message over: the answer is what the round depends on, so a bad
+    // reasoning field is dropped and the rest is kept.
+    const reasoning = message['reasoningContent'];
     return {
       type: 'assistant_message',
       roundId,
-      message: { role: 'assistant', content: content === undefined ? null : content },
+      message: {
+        role: 'assistant',
+        content: content === undefined ? null : content,
+        ...(typeof reasoning === 'string' ? { reasoningContent: reasoning } : {}),
+      },
     };
   }
   if (type === 'usage') {
@@ -176,6 +191,12 @@ function parseChildMessage(raw: unknown): ChildToParentMessage | null {
   return null;
 }
 
+interface RoundLimits {
+  roundContextCapTokens: number;
+  maxToolCallsPerRound: number;
+  modelRequestTimeoutSeconds: number;
+}
+
 interface AgentProcessDeps {
   workerPath: string;
   loaderUrl: string;
@@ -189,6 +210,17 @@ interface AgentProcessDeps {
   roundContextCapTokens: number;
   maxToolCallsPerRound: number;
   modelRequestTimeoutSeconds: number;
+  /**
+   * The round limits as they stand right now, read at the moment the child is
+   * initialized rather than captured above. The operator can retune all three
+   * in the console, and a process forked before the change must not keep
+   * sending the old numbers; the supervisor retires such a process so the next
+   * wake-up reads the new ones.
+   *
+   * Optional so a caller that only ever runs with one fixed set of limits —
+   * the process-lifecycle tests — can keep passing the three numbers above.
+   */
+  limits?(): { roundContextCapTokens: number; maxToolCallsPerRound: number; modelRequestTimeoutSeconds: number };
   onProblem(agent: string, message: string): void;
 }
 
@@ -206,6 +238,8 @@ export class AgentProcess implements WorkerTransport {
   private activeRoundId: number | null = null;
   /** The model name this process was started with; null before it starts. */
   private startedModel: string | null = null;
+  /** The round limits this process was started with; null before it starts. */
+  private startedLimits: RoundLimits | null = null;
 
   constructor(agent: string, deps: AgentProcessDeps) {
     this.agent = agent;
@@ -220,11 +254,31 @@ export class AgentProcess implements WorkerTransport {
     return this.startedModel;
   }
 
+  /**
+   * The round limits this process is actually running with. The supervisor
+   * compares them with the live values after every round, the same way it
+   * compares the model, so a limit retuned mid-round is noticed once the round
+   * is over instead of cutting it in half.
+   */
+  currentLimits(): RoundLimits | null {
+    return this.startedLimits;
+  }
+
   async ensureStarted(): Promise<void> {
     if (this.child !== null) {
       return;
     }
     const resolved = this.deps.resolveModel();
+    // Read here, not at construction: the operator may have retuned the three
+    // round limits between the last round and this start.
+    const limits =
+      this.deps.limits?.() ??
+      {
+        roundContextCapTokens: this.deps.roundContextCapTokens,
+        maxToolCallsPerRound: this.deps.maxToolCallsPerRound,
+        modelRequestTimeoutSeconds: this.deps.modelRequestTimeoutSeconds,
+      };
+    this.startedLimits = limits;
     const child = fork(this.deps.workerPath, [], {
       cwd: this.deps.homeDir,
       execArgv: ['--import', this.deps.loaderUrl],
@@ -276,6 +330,7 @@ export class AgentProcess implements WorkerTransport {
       }
       this.handler = null;
       this.startedModel = null;
+      this.startedLimits = null;
     });
 
     await new Promise<void>((resolve) => {
@@ -284,9 +339,9 @@ export class AgentProcess implements WorkerTransport {
     this.send({
       type: 'init',
       model: resolved.settings,
-      roundContextCapTokens: this.deps.roundContextCapTokens,
-      maxToolCallsPerRound: this.deps.maxToolCallsPerRound,
-      modelRequestTimeoutSeconds: this.deps.modelRequestTimeoutSeconds,
+      roundContextCapTokens: limits.roundContextCapTokens,
+      maxToolCallsPerRound: limits.maxToolCallsPerRound,
+      modelRequestTimeoutSeconds: limits.modelRequestTimeoutSeconds,
     });
   }
 
@@ -327,6 +382,7 @@ export class AgentProcess implements WorkerTransport {
     }
     this.child = null;
     this.startedModel = null;
+    this.startedLimits = null;
     const resolve = this.readyResolve;
     this.readyResolve = null;
     if (resolve !== null) {
@@ -339,6 +395,8 @@ export class AgentProcess implements WorkerTransport {
     const child = this.child;
     this.child = null;
     this.handler = null;
+    this.startedModel = null;
+    this.startedLimits = null;
     if (child !== null) {
       child.send({ type: 'shutdown' });
       child.kill();
@@ -423,10 +481,22 @@ function main(): void {
           }).providerId,
         })),
   });
-  const memoryModel: ModelClient = new OpenAICompatibleClient(
-    models.memory,
-    values.modelRequestTimeoutSeconds * 1000,
-  );
+  // The memory brain is resolved per request, not fixed at boot. An operator
+  // who changes the default memory model in the console expects the very next
+  // round to use it; capturing the `.env` settings here would keep the old
+  // endpoint alive until a restart, which is a setting that silently does
+  // nothing.
+  const memoryModel: ModelClient = {
+    chat: async (request) => {
+      const selection = modelStore.defaultMemorySelection();
+      const activeSettings = modelStore.settingsFor(selection) ?? models.memory;
+      const client = new OpenAICompatibleClient(
+        activeSettings,
+        values.modelRequestTimeoutSeconds * 1000,
+      );
+      return client.chat(request);
+    },
+  };
   const now = (): number => Date.now();
   // One library for the whole process: it carries the load mode, the cached
   // text, the built-in fallbacks, and the status the console reports.
@@ -543,11 +613,21 @@ function main(): void {
       // wake-ups must reach the next process, and this object is cached.
       resolveModel: () => {
         const resolved = resolveModelFor(agent);
-        return { settings: resolved.settings, modelName: resolved.settings.model };
+        return {
+          settings: resolved.settings,
+          modelName: modelFingerprint(resolved.settings, resolved.providerId),
+        };
       },
       roundContextCapTokens: values.roundContextCapTokens,
       maxToolCallsPerRound: values.maxToolCallsPerRound,
       modelRequestTimeoutSeconds: values.modelRequestTimeoutSeconds,
+      // The live numbers, so a limit retuned in the console reaches the next
+      // process without a restart. The three above are only a fallback.
+      limits: () => ({
+        roundContextCapTokens: values.roundContextCapTokens,
+        maxToolCallsPerRound: values.maxToolCallsPerRound,
+        modelRequestTimeoutSeconds: values.modelRequestTimeoutSeconds,
+      }),
       onProblem: (name, message) => {
         runtimeOf(name).lastError = message;
         blackbox.append(name, 'worker_problem', now(), null, { message });
@@ -558,6 +638,17 @@ function main(): void {
     return created;
   }
 
+  /**
+   * The operator's "wake up now". It answers immediately.
+   *
+   * A round can take minutes, and the console's HTTP request used to wait for
+   * all of it — the button stayed stuck and the page could not even show that
+   * something had started. So the checks and the bookkeeping happen here, the
+   * round itself is handed to `runWakeRound`, and the caller is told "yes,
+   * woken" the moment the round is actually under way. The registry is marked
+   * before returning, which is what makes the very next state poll show
+   * `busy: true`.
+   */
   async function wakeAgent(
     name: string,
   ): Promise<{ ok: true; woken: boolean; reason: string | null } | { ok: false; error: string }> {
@@ -576,6 +667,17 @@ function main(): void {
     const runtime = runtimeOf(name);
     registry.markStarted(name);
     runtime.lastWakeAt = now();
+    // Deliberately not awaited: the round is the agent's time, not the
+    // operator's. `runWakeRound` ends the round on every path, including its
+    // own failures, so nothing here can leave an agent marked busy forever.
+    void runWakeRound(agent);
+    return { ok: true, woken: true, reason: null };
+  }
+
+  /** One wake-up's worth of work, run after `wakeAgent` has already answered. */
+  async function runWakeRound(agent: AgentRecord): Promise<void> {
+    const name = agent.name;
+    const runtime = runtimeOf(name);
     try {
       // Before the process starts, so a legacy agent is frozen on the brain it
       // is about to run with rather than on whatever the roster says later.
@@ -604,7 +706,6 @@ function main(): void {
     } finally {
       registry.markEnded(name);
     }
-    return { ok: true, woken: true, reason: null };
   }
 
   /**
@@ -647,17 +748,50 @@ function main(): void {
    * The running process is carrying an old brain: the model it started with is
    * no longer what the binding and roster resolve to. Stopping it here means
    * the next wake-up forks a fresh process on the new model.
+   *
+   * The comparison is over the whole fingerprint, not the model name: retuning
+   * a provider's base URL, rotating its key, or changing the thinking level is
+   * as much a new brain as renaming the model, and a process left running on
+   * the old endpoint would answer to a configuration that no longer exists.
    */
   function retireProcessIfModelChanged(name: string): boolean {
     const running = state.processes.get(name);
     if (running === undefined) {
       return false;
     }
+    const resolved = resolveModelFor(name);
     const outdated = shouldRetireProcess({
       startedModel: running.currentModel(),
-      resolvedModel: resolveModelFor(name).settings.model,
+      resolvedModel: modelFingerprint(resolved.settings, resolved.providerId),
     });
     if (!outdated) {
+      return retireProcessIfLimitsChanged(name, running);
+    }
+    stopAgentProcess(name);
+    return true;
+  }
+
+  /**
+   * The running process was initialized with round limits the operator has
+   * since changed. The child is told its caps once, at startup, so a process
+   * left running would keep enforcing the old numbers — a limit the operator
+   * set and cannot see taking effect. Retiring it means the next wake-up forks
+   * a fresh process that reads the live values.
+   *
+   * Only the three limits the child is told about are compared. Everything else
+   * in `values` is read by the supervisor itself, on every use, and needs no
+   * process restart.
+   */
+  function retireProcessIfLimitsChanged(name: string, running: AgentProcess): boolean {
+    const started = running.currentLimits();
+    if (started === null) {
+      return false;
+    }
+    if (
+      started.roundContextCapTokens === values.roundContextCapTokens &&
+      started.maxToolCallsPerRound === values.maxToolCallsPerRound &&
+      started.modelRequestTimeoutSeconds === values.modelRequestTimeoutSeconds
+    ) {
       return false;
     }
     stopAgentProcess(name);
@@ -688,6 +822,9 @@ function main(): void {
         baseUrl: resolved.settings.baseUrl,
         apiKey: resolved.settings.apiKey,
         model: resolved.settings.model,
+        ...(resolved.settings.reasoningEffort === undefined
+          ? {}
+          : { reasoningEffort: resolved.settings.reasoningEffort }),
         boundAt: now(),
       });
       addNotice(
@@ -706,7 +843,12 @@ function main(): void {
    * and the deferred-vs-immediate answer all live in the organ; this only hands
    * it the live process map and the notice channel.
    */
-  function switchModel(name: string, providerId: string, model: string): SwitchModelOutcome {
+  function switchModel(
+    name: string,
+    providerId: string,
+    model: string,
+    reasoningEffort?: ReasoningEffort | null,
+  ): SwitchModelOutcome {
     // Checked here as well so an unknown agent answers with a code the console
     // has a translation for, rather than a bare string it would echo raw.
     if (ledger.getAgent(name) === null) {
@@ -728,6 +870,7 @@ function main(): void {
       name,
       providerId,
       model,
+      reasoningEffort,
     );
   }
 
@@ -928,6 +1071,83 @@ function main(): void {
     });
   }
 
+  /**
+   * The operator edits the body's numbers from the console. This is the whole
+   * hot-apply path: validate, protect the past, persist, then put the new
+   * numbers in force — and it is deliberately ordered so that a failure at any
+   * step leaves the running conservatory exactly as it was.
+   *
+   * The one subtle step is the decay rate. Satiety is stored as an anchor (a
+   * value plus the instant it was true) and derived from wall-clock time, so
+   * changing the rate without touching the anchors would silently re-price
+   * every second an agent has already lived: raising the rate would make a
+   * living agent retroactively starve. Re-anchoring each agent at the current
+   * instant with its current satiety makes the new rate apply from now on and
+   * from nothing earlier.
+   */
+  function updateValues(
+    patch: unknown,
+  ): { ok: true; values: ConservatoryValues } | { ok: false; error: string } {
+    const result = validateValuesPatch(values, patch);
+    if (!result.ok) {
+      return { ok: false, error: result.error };
+    }
+    const next = result.next;
+
+    // A paused conservatory has time stopped: its anchors already hold the
+    // frozen values, and re-anchoring them at `now` would quietly charge the
+    // paused span to the agents' hunger.
+    const decayChanged = next.satietyDecayPerSecond !== values.satietyDecayPerSecond;
+    if (decayChanged && !ledger.getPauseState().paused) {
+      const at = now();
+      // The OLD values, so each agent's satiety is read under the rule that
+      // was actually in force up to this instant.
+      ledger.transaction(() => {
+        for (const agent of ledger.listAgents()) {
+          if (agent.status !== 'alive') {
+            continue;
+          }
+          if (ledger.getSatietyAnchor(agent.name) === null) {
+            continue;
+          }
+          const current = readSatiety(ledger, values, agent.name, at);
+          ledger.setSatietyAnchor(agent.name, current, at);
+        }
+      });
+    }
+
+    // Written before the in-memory swap: a file that cannot be written is a
+    // refusal, not a change that vanishes on the next restart.
+    try {
+      persistConservatoryValues(paths.configPath, next);
+    } catch (error) {
+      return { ok: false, error: `配置文件写回失败：${messageOf(error)}` };
+    }
+
+    Object.assign(values, next);
+
+    // The two clocks take the new period immediately; a heartbeat that kept
+    // beating at the old interval would be a setting that only looks applied.
+    heartbeat.setIntervalSeconds(values.heartbeatSeconds);
+    redactionHeartbeat.setIntervalSeconds(values.redactionIntervalSeconds);
+
+    // The child is told its three round limits once, at startup. An idle
+    // process is retired here so the next wake-up reads the new numbers; a busy
+    // one is left alone and retired at the end of its round, so a running round
+    // is never cut in half.
+    for (const name of Array.from(state.processes.keys())) {
+      if (registry.isBusy(name)) {
+        continue;
+      }
+      const running = state.processes.get(name);
+      if (running !== undefined) {
+        retireProcessIfLimitsChanged(name, running);
+      }
+    }
+
+    return { ok: true, values };
+  }
+
   const heartbeat = new Heartbeat({
     intervalSeconds: values.heartbeatSeconds,
     now,
@@ -980,27 +1200,53 @@ function main(): void {
         lastError: runtime.lastError,
       };
     },
-    createAgent: async (name, providerId, model) => {
+    createAgent: async (name, providerId, model, reasoningEffort) => {
       // A new agent's brain: the operator's choice when they made one, else the
       // configured default. Either way it is resolved to a concrete endpoint
       // before birth, and frozen into the agent's home.
+      const chosenEffort: ReasoningEffort | undefined = isReasoningEffort(reasoningEffort)
+        ? reasoningEffort
+        : undefined;
       let resolved: ResolvedAgentModel;
       if (providerId !== undefined || model !== undefined) {
-        const wantedProvider = providerId ?? modelStore.defaultAgentSelection().providerId;
+        const defaultSelection = modelStore.defaultAgentSelection();
+        const wantedProvider = providerId ?? defaultSelection.providerId;
         const provider = modelStore.getProvider(wantedProvider);
         if (provider === null) {
           return { ok: false, error: 'unknown_provider' };
         }
-        const wantedModel = model ?? modelStore.defaultAgentSelection().model;
+        const wantedModel = model ?? defaultSelection.model;
         if (!provider.models.includes(wantedModel)) {
           return { ok: false, error: 'unknown_model' };
         }
+        // An explicit level wins. With none given, the default's level follows
+        // the default's model name, exactly as `resolveAgentModel` does for a
+        // legacy agent — so the panel's "thinking" column is not a lie about
+        // the brain an agent born on that same model actually got.
+        const effort =
+          chosenEffort ??
+          (wantedModel === defaultSelection.model ? defaultSelection.reasoningEffort : undefined);
         resolved = {
-          settings: { baseUrl: provider.baseUrl, apiKey: provider.apiKey, model: wantedModel },
+          settings: {
+            baseUrl: provider.baseUrl,
+            apiKey: provider.apiKey,
+            model: wantedModel,
+            ...(effort === undefined ? {} : { reasoningEffort: effort }),
+          },
           providerId: provider.id,
           providerName: provider.name,
           source: 'roster',
         };
+      } else if (chosenEffort !== undefined) {
+        // No model was named, but a level was: keep whatever brain the defaults
+        // resolve to and only change how hard it is asked to think.
+        const fallback = resolveAgentModel({
+          binding: null,
+          store: modelStore,
+          ledgerModel: '',
+          fallback: models.agent,
+        });
+        resolved = { ...fallback, settings: { ...fallback.settings, reasoningEffort: chosenEffort } };
       } else {
         const fallback = resolveAgentModel({
           binding: null,
@@ -1029,6 +1275,9 @@ function main(): void {
           baseUrl: resolved.settings.baseUrl,
           apiKey: resolved.settings.apiKey,
           model: resolved.settings.model,
+          ...(resolved.settings.reasoningEffort === undefined
+            ? {}
+            : { reasoningEffort: resolved.settings.reasoningEffort }),
           boundAt: at,
         });
       } catch (error) {
@@ -1046,6 +1295,7 @@ function main(): void {
     },
     wakeAgent,
     switchAgentModel: switchModel,
+    updateValues,
     setPaused: (paused) => {
       const outcome = state.pause.set(paused, now());
       state.paused = outcome.paused;

@@ -321,9 +321,21 @@ function parseParentMessage(raw: unknown): ParentToChildMessage | null {
     ) {
       return null;
     }
+    // A level the supervisor could not have meant is a protocol error, not
+    // something to quietly drop: the worker would otherwise run a round at a
+    // different effort than the operator chose and nobody would know.
+    const effort = model['reasoningEffort'];
+    if (effort !== undefined && effort !== 'low' && effort !== 'medium' && effort !== 'high') {
+      return null;
+    }
     return {
       type: 'init',
-      model: { baseUrl: model['baseUrl'], apiKey: model['apiKey'], model: model['model'] },
+      model: {
+        baseUrl: model['baseUrl'],
+        apiKey: model['apiKey'],
+        model: model['model'],
+        ...(effort === undefined ? {} : { reasoningEffort: effort }),
+      },
       roundContextCapTokens: cap,
       maxToolCallsPerRound: maxToolCalls,
       modelRequestTimeoutSeconds: timeoutSeconds,

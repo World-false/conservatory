@@ -15,6 +15,8 @@
  * frozen binding are always written together, so either both moved or neither.
  */
 
+import type { ModelSettings } from '../../config';
+
 export interface ProcessModelState {
   /** The model name the running process was started with, or null if none. */
   startedModel: string | null;
@@ -36,4 +38,28 @@ export function shouldRetireProcess(state: ProcessModelState): boolean {
     return false;
   }
   return startedModel !== resolvedModel;
+}
+
+/**
+ * The full identity of the brain a process is carrying, as one comparable
+ * string.
+ *
+ * The model *name* is not enough. Two providers can serve a model with the same
+ * name at different endpoints, on different keys, and the operator can retune a
+ * provider's base URL or rotate its key without renaming anything. Changing the
+ * thinking level changes the brain too. Comparing only the name would leave a
+ * live process running on a brain the operator has already replaced — the exact
+ * silent divergence this module exists to catch.
+ *
+ * `providerId` is last-resort information: an agent resolved from `.env` has no
+ * provider at all, and the empty string is then a correct part of its identity.
+ */
+export function modelFingerprint(settings: ModelSettings, providerId = ''): string {
+  return [
+    providerId,
+    settings.baseUrl,
+    settings.apiKey,
+    settings.model,
+    settings.reasoningEffort ?? '',
+  ].join('|');
 }

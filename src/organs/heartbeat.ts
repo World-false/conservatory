@@ -46,6 +46,23 @@ export class Heartbeat {
     this.handle = null;
   }
 
+  /**
+   * Retunes the period of the beat. A running heartbeat is stopped and started
+   * again so the new interval takes effect now rather than after the old timer
+   * next fires; the counters are about what has already happened, so they are
+   * deliberately carried across the restart.
+   */
+  setIntervalSeconds(seconds: number): void {
+    if (seconds === this.options.intervalSeconds) {
+      return;
+    }
+    this.options.intervalSeconds = seconds;
+    if (this.handle !== null) {
+      this.stop();
+      this.start();
+    }
+  }
+
   get isRunning(): boolean {
     return this.handle !== null;
   }

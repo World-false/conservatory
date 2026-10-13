@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { readSandboxPolicy, type SandboxPolicyConfig } from './organs/sandbox/policy';
@@ -43,10 +43,27 @@ export interface ConservatoryValues {
   consolePort: number;
 }
 
+/**
+ * How hard the model is asked to think before answering. The three levels every
+ * OpenAI-compatible endpoint agrees on; a provider that does not support the
+ * parameter simply ignores it.
+ */
+export type ReasoningEffort = 'low' | 'medium' | 'high';
+
+export function isReasoningEffort(value: unknown): value is ReasoningEffort {
+  return value === 'low' || value === 'medium' || value === 'high';
+}
+
 export interface ModelSettings {
   baseUrl: string;
   apiKey: string;
   model: string;
+  /**
+   * Absent means "let the provider decide". It is left off rather than set to
+   * `undefined`, so a settings object built from a default still compares equal
+   * to one written before this field existed.
+   */
+  reasoningEffort?: ReasoningEffort;
 }
 
 export interface ModelsConfig {
@@ -239,6 +256,202 @@ function readValues(source: Record<string, unknown>, errors: string[]): Conserva
     );
   }
   return values;
+}
+
+/**
+ * The tunable numbers the operator may edit from the console, each with the
+ * rule it must satisfy. This is the same table `readValues` applies, kept as
+ * data so a partial update and a whole-file read can never disagree about what
+ * a legal number is. `exchangeRate` is absent on purpose: it is the one field
+ * that may also be `null`, so it is validated on its own below.
+ */
+const TUNABLE_NUMBER_RULES: readonly (readonly [string, NumberRule])[] = [
+  ['satietyDecayPerSecond', { min: 0, exclusiveMin: true }],
+  ['satietyMax', { min: 0, exclusiveMin: true }],
+  ['initialSatiety', { min: 0 }],
+  ['initialBalance', { min: 0 }],
+  ['mealPrice', { min: 0 }],
+  ['satietyPerMeal', { min: 0, exclusiveMin: true }],
+  ['heartbeatSeconds', { min: 0, exclusiveMin: true }],
+  ['maxSlots', { integer: true, min: 1 }],
+  ['memoryCapChars', { integer: true, min: 1 }],
+  ['roundContextCapTokens', { integer: true, min: 1 }],
+  ['maxToolCallsPerRound', { integer: true, min: 1 }],
+  ['modelRequestTimeoutSeconds', { min: 0, exclusiveMin: true }],
+  ['taskClaimTimeoutHours', { min: 0, exclusiveMin: true }],
+  ['redactionIntervalSeconds', { min: 0, exclusiveMin: true }],
+  ['redactionCharsPerTick', { integer: true, min: 1 }],
+  ['redactionMinRanges', { integer: true, min: 1 }],
+  ['redactionMaxRanges', { integer: true, min: 1 }],
+  ['deathLineChars', { integer: true, min: 1 }],
+  ['ordinaryTreatmentPrice', { min: 0 }],
+  ['completeTreatmentPrice', { min: 0 }],
+  // The port can be stored, but the listener is bound once at boot; the console
+  // says so rather than pretending the change is live.
+  ['consolePort', { integer: true, min: 1, max: 65535 }],
+];
+
+const EXCHANGE_RATE_KEY = 'exchangeRate';
+const TUNABLE_KEYS: readonly string[] = [
+  ...TUNABLE_NUMBER_RULES.map(([key]) => key),
+  EXCHANGE_RATE_KEY,
+];
+const TUNABLE_RULE_BY_KEY = new Map<string, NumberRule>(TUNABLE_NUMBER_RULES);
+
+/** One field's value, described in the operator's own language. */
+function describeNumberProblem(key: string, rule: NumberRule): string {
+  if (rule.integer === true) {
+    return `「${key}」必须是整数`;
+  }
+  if (rule.exclusiveMin === true) {
+    return `「${key}」必须是大于 ${rule.min ?? 0} 的数字`;
+  }
+  if (rule.min !== undefined) {
+    return `「${key}」不能小于 ${rule.min}`;
+  }
+  if (rule.max !== undefined) {
+    return `「${key}」不能大于 ${rule.max}`;
+  }
+  return `「${key}」必须是数字`;
+}
+
+/** The rule check for one field, returning a Chinese reason or null. */
+function checkTunableNumber(key: string, raw: unknown, rule: NumberRule): string | null {
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) {
+    return `「${key}」必须是数字`;
+  }
+  if (rule.integer === true && !Number.isInteger(raw)) {
+    return `「${key}」必须是整数`;
+  }
+  if (rule.exclusiveMin === true) {
+    if (rule.min !== undefined && raw <= rule.min) {
+      return `「${key}」必须是大于 ${rule.min} 的数字`;
+    }
+  } else if (rule.min !== undefined && raw < rule.min) {
+    return `「${key}」不能小于 ${rule.min}`;
+  }
+  if (rule.max !== undefined && raw > rule.max) {
+    return `「${key}」不能大于 ${rule.max}`;
+  }
+  return null;
+}
+
+function checkExchangeRate(raw: unknown): string | null {
+  if (raw === null) {
+    return null;
+  }
+  if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) {
+    return null;
+  }
+  return '「exchangeRate」必须是 null（未设定）或大于 0 的数字';
+}
+
+export type ValuesPatchResult =
+  | { ok: true; next: ConservatoryValues; changedKeys: (keyof ConservatoryValues)[] }
+  | { ok: false; error: string };
+
+/**
+ * A partial update of the body's numbers, checked with the same rules the whole
+ * file is read with, and then checked again as a whole.
+ *
+ * The cross-field rules are the reason this cannot be a per-field check: they
+ * only make sense against the merged result. Two of them are special-cased.
+ * `memoryCapChars`/`roundContextCapTokens` are only re-checked when the patch
+ * touches one of them, because a config that is already live may predate the
+ * rule and an unrelated edit must not be refused for it. Everything else is
+ * always enforced, since a patch that leaves those numbers alone cannot have
+ * broken them.
+ */
+export function validateValuesPatch(current: ConservatoryValues, patch: unknown): ValuesPatchResult {
+  if (typeof patch !== 'object' || patch === null || Array.isArray(patch)) {
+    return { ok: false, error: '参数格式不合法' };
+  }
+  const source = patch as Record<string, unknown>;
+  const ownKeys = Object.keys(source);
+  if (ownKeys.length === 0) {
+    return { ok: false, error: '参数格式不合法' };
+  }
+  const recognised = ownKeys.filter((key) => TUNABLE_KEYS.includes(key));
+  if (recognised.length === 0) {
+    return { ok: false, error: '没有需要更新的参数字段' };
+  }
+
+  const next: ConservatoryValues = { ...current };
+  // Walked in the table's order rather than the request's, so the same two bad
+  // fields always produce the same first complaint.
+  for (const key of TUNABLE_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(source, key)) {
+      continue;
+    }
+    const raw = source[key];
+    if (key === EXCHANGE_RATE_KEY) {
+      const problem = checkExchangeRate(raw);
+      if (problem !== null) {
+        return { ok: false, error: problem };
+      }
+      next.exchangeRate = raw === null ? null : (raw as number);
+      continue;
+    }
+    const rule = TUNABLE_RULE_BY_KEY.get(key);
+    if (rule === undefined) {
+      continue;
+    }
+    const problem = checkTunableNumber(key, raw, rule);
+    if (problem !== null) {
+      return { ok: false, error: problem };
+    }
+    (next as unknown as Record<string, unknown>)[key] = raw;
+  }
+
+  const touched = (key: string): boolean => Object.prototype.hasOwnProperty.call(source, key);
+  if (next.initialSatiety > next.satietyMax) {
+    return { ok: false, error: '出生饱食度（initialSatiety）不能超过饱食度上限（satietyMax）' };
+  }
+  if (next.redactionMaxRanges < next.redactionMinRanges) {
+    return { ok: false, error: '单次最多伤口数（redactionMaxRanges）不能小于最少伤口数（redactionMinRanges）' };
+  }
+  if (next.redactionMaxRanges > next.redactionCharsPerTick) {
+    return { ok: false, error: '单次最多伤口数（redactionMaxRanges）不能超过每次遮盖字数（redactionCharsPerTick）' };
+  }
+  if (next.memoryCapChars <= next.deathLineChars) {
+    return { ok: false, error: 'MEMORY 上限（memoryCapChars）必须大于死亡线（deathLineChars）' };
+  }
+  if (touched('memoryCapChars') || touched('roundContextCapTokens')) {
+    const minimumContextTokens = Math.ceil(next.memoryCapChars / 4) + 150000;
+    if (next.roundContextCapTokens < minimumContextTokens) {
+      return {
+        ok: false,
+        error: `一轮上下文上限（roundContextCapTokens）不能小于 ${minimumContextTokens}（MEMORY 上限 ÷ 4 向上取整 + 150000）`,
+      };
+    }
+  }
+
+  const changedKeys = TUNABLE_KEYS.filter(
+    (key) => next[key as keyof ConservatoryValues] !== current[key as keyof ConservatoryValues],
+  ) as (keyof ConservatoryValues)[];
+  return { ok: true, next, changedKeys };
+}
+
+/**
+ * Writes the body's numbers back into the config file, keeping every other
+ * top-level key (the sandbox policy, and anything an operator added by hand)
+ * exactly as it was.
+ *
+ * `ConservatoryValues` holds no secret — it is all numbers plus the exchange
+ * rate — so nothing here can put an API key into a tracked file. The model
+ * roster lives in its own gitignored file and is never read or written here.
+ */
+export function persistConservatoryValues(configPath: string, values: ConservatoryValues): void {
+  let existing: Record<string, unknown> = {};
+  if (existsSync(configPath)) {
+    const parsed: unknown = JSON.parse(readFileSync(configPath, 'utf8'));
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      throw new Error(`config file ${configPath} must contain a JSON object`);
+    }
+    existing = { ...(parsed as Record<string, unknown>) };
+  }
+  const next: Record<string, unknown> = { ...existing, ...values };
+  writeFileSync(configPath, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
 }
 
 function readEnvString(env: Record<string, string | undefined>, key: string, errors: string[]): string {

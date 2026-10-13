@@ -3,7 +3,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { CONFIG_FILE_NAME } from '../src/config';
+import {
+  CONFIG_FILE_NAME,
+  isReasoningEffort,
+  type ModelSettings,
+} from '../src/config';
 import {
   MODEL_BINDING_FILE,
   modelBindingPath,
@@ -24,7 +28,7 @@ import {
   IMMEDIATE_NOTICE,
   switchAgentModel,
 } from '../src/organs/models/switch';
-import { shouldRetireProcess } from '../src/organs/models/reconcile';
+import { modelFingerprint, shouldRetireProcess } from '../src/organs/models/reconcile';
 import {
   birthAgent,
   createHarness,
@@ -487,6 +491,359 @@ describe('reconciling a running process against the ledger', () => {
   it('never retires a process that has not started, or one with no resolvable model', () => {
     expect(shouldRetireProcess({ startedModel: null, resolvedModel: 'gpt-4o' })).toBe(false);
     expect(shouldRetireProcess({ startedModel: 'gpt-4o', resolvedModel: null })).toBe(false);
+  });
+});
+
+describe('the fingerprint that decides whether a process is out of date', () => {
+  const base: ModelSettings = {
+    baseUrl: 'https://api.deepseek.com/v1',
+    apiKey: 'sk-deepseek',
+    model: 'deepseek-chat',
+  };
+
+  it('is stable for the same brain and provider', () => {
+    expect(modelFingerprint(base, 'deepseek')).toBe(modelFingerprint({ ...base }, 'deepseek'));
+  });
+
+  it('changes when the provider changes, even under the same model name', () => {
+    // The same model name on two endpoints is two different brains; comparing
+    // names alone would let a process keep answering on the old one.
+    const other = { ...base, baseUrl: 'https://api.other.com/v1', apiKey: 'sk-other' };
+    expect(modelFingerprint(base, 'deepseek')).not.toBe(modelFingerprint(other, 'deepseek'));
+    expect(modelFingerprint(base, 'deepseek')).not.toBe(modelFingerprint(base, 'openai'));
+  });
+
+  it('changes when the base URL or the key is retuned without renaming anything', () => {
+    const retunedUrl = { ...base, baseUrl: 'https://new.example.com/v1' };
+    const rotatedKey = { ...base, apiKey: 'sk-rotated' };
+    const renamed = { ...base, model: 'deepseek-reasoner' };
+    const fingerprint = modelFingerprint(base, 'deepseek');
+    expect(modelFingerprint(retunedUrl, 'deepseek')).not.toBe(fingerprint);
+    expect(modelFingerprint(rotatedKey, 'deepseek')).not.toBe(fingerprint);
+    expect(modelFingerprint(renamed, 'deepseek')).not.toBe(fingerprint);
+  });
+
+  it('changes when the thinking level changes, and reads "unset" as its own level', () => {
+    const low = { ...base, reasoningEffort: 'low' as const };
+    const high = { ...base, reasoningEffort: 'high' as const };
+    expect(modelFingerprint(low, 'deepseek')).not.toBe(modelFingerprint(high, 'deepseek'));
+    // Unset is not the same as any level: it is a different request to the model.
+    expect(modelFingerprint(base, 'deepseek')).not.toBe(modelFingerprint(low, 'deepseek'));
+  });
+
+  it('treats a missing provider id as part of the identity, not as a missing value', () => {
+    // `.env`-resolved agents carry no provider at all, and that is a fact about
+    // their brain rather than a gap to be filled in.
+    expect(modelFingerprint(base)).toBe(modelFingerprint(base, ''));
+    expect(modelFingerprint(base, '')).not.toBe(modelFingerprint(base, 'deepseek'));
+  });
+});
+
+describe('the operator\u2019s thinking level on the roster', () => {
+  it('stores a chosen level and hands it to every settings lookup', () => {
+    const configPath = tempConfigPath();
+    const store = fileStore(configPath, TWO_PROVIDERS);
+
+    const set = store.update({
+      defaultAgentReasoningEffort: 'high',
+      defaultMemoryReasoningEffort: 'low',
+    });
+    expect(set.ok).toBe(true);
+    expect(store.view().defaultAgentReasoningEffort).toBe('high');
+    expect(store.view().defaultMemoryReasoningEffort).toBe('low');
+    expect(store.defaultAgentSelection()).toEqual({
+      providerId: 'openai',
+      model: 'gpt-4o',
+      reasoningEffort: 'high',
+    });
+    expect(store.defaultMemorySelection()).toEqual({
+      providerId: 'deepseek',
+      model: 'deepseek-chat',
+      reasoningEffort: 'low',
+    });
+    expect(store.settingsFor(store.defaultAgentSelection())).toEqual({
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: 'sk-openai',
+      model: 'gpt-4o',
+      reasoningEffort: 'high',
+    });
+
+    // It reached the file, so the choice survives a restart.
+    const reread = readModelsConfig(modelsFilePath(configPath));
+    expect(reread?.defaultAgentReasoningEffort).toBe('high');
+    expect(reread?.defaultMemoryReasoningEffort).toBe('low');
+  });
+
+  it('omits the level entirely when none was chosen, so old shapes still compare equal', () => {
+    const configPath = tempConfigPath();
+    const store = fileStore(configPath, TWO_PROVIDERS);
+
+    // The property is absent, not present-and-undefined: a caller that spreads
+    // these settings must not gain a key it never asked for.
+    expect('reasoningEffort' in store.defaultAgentSelection()).toBe(false);
+    expect('reasoningEffort' in store.defaultMemorySelection()).toBe(false);
+    expect('reasoningEffort' in (store.settingsFor(store.defaultAgentSelection()) ?? {})).toBe(false);
+    expect(store.settingsFor({ providerId: 'openai', model: 'gpt-4o' })).toEqual({
+      baseUrl: 'https://api.openai.com/v1',
+      apiKey: 'sk-openai',
+      model: 'gpt-4o',
+    });
+  });
+
+  it('clears a level with null or with "default", and that is a real change', () => {
+    const configPath = tempConfigPath();
+    const store = fileStore(configPath, TWO_PROVIDERS);
+    expect(store.update({ defaultAgentReasoningEffort: 'medium' }).ok).toBe(true);
+
+    // Clearing is recognised work: an otherwise-empty patch must not be
+    // reported as "nothing to update", or the panel could never reset a level.
+    const cleared = store.update({ defaultAgentReasoningEffort: null });
+    expect(cleared.ok).toBe(true);
+    expect('reasoningEffort' in store.defaultAgentSelection()).toBe(false);
+    expect(readModelsConfig(modelsFilePath(configPath))?.defaultAgentReasoningEffort).toBeUndefined();
+
+    expect(store.update({ defaultMemoryReasoningEffort: 'high' }).ok).toBe(true);
+    const byName = store.update({ defaultMemoryReasoningEffort: 'default' });
+    expect(byName.ok).toBe(true);
+    expect('reasoningEffort' in store.defaultMemorySelection()).toBe(false);
+
+    // Clearing one that was never set is still a recognised field.
+    expect(store.update({ defaultMemoryReasoningEffort: '' }).ok).toBe(true);
+  });
+
+  it('refuses an unknown level with a code the console can translate', () => {
+    const configPath = tempConfigPath();
+    const store = fileStore(configPath, TWO_PROVIDERS);
+    expect(store.update({ defaultAgentReasoningEffort: 'medium' }).ok).toBe(true);
+    const before = store.view();
+
+    // A typo must not be quietly read as "unset": that would look like success.
+    expect(store.update({ defaultAgentReasoningEffort: 'very-high' })).toEqual({
+      ok: false,
+      error: 'invalid_reasoning_effort',
+    });
+    expect(store.update({ defaultMemoryReasoningEffort: 3 })).toEqual({
+      ok: false,
+      error: 'invalid_reasoning_effort',
+    });
+    expect(store.view()).toEqual(before);
+    expect(readModelsConfig(modelsFilePath(configPath))?.defaultAgentReasoningEffort).toBe('medium');
+  });
+
+  it('treats a hand-edited level as unconfigured rather than guessing', () => {
+    const configPath = tempConfigPath();
+    writeFileSync(configPath, JSON.stringify({ satietyMax: 100 }, null, 2), 'utf8');
+    const file = modelsFilePath(configPath);
+
+    persistModelsConfig(file, { ...TWO_PROVIDERS, defaultAgentReasoningEffort: 'high' });
+    expect(readModelsConfig(file)?.defaultAgentReasoningEffort).toBe('high');
+
+    // `'default'` and an absent field both read as "no level", and the property
+    // is left off so a roster written before this feature round-trips. Written
+    // as raw JSON because `'default'` is not a level the typed API would accept
+    // — it is exactly the hand-edited spelling this reader has to survive.
+    writeFileSync(
+      file,
+      JSON.stringify({ ...TWO_PROVIDERS, defaultAgentReasoningEffort: 'default' }, null, 2),
+      'utf8',
+    );
+    const asDefault = readModelsConfig(file);
+    expect(asDefault?.defaultAgentReasoningEffort).toBeUndefined();
+    expect('defaultAgentReasoningEffort' in (asDefault ?? {})).toBe(false);
+
+    // A level nobody defined is a torn file: unconfigured, never guessed at.
+    writeFileSync(
+      file,
+      JSON.stringify({ ...TWO_PROVIDERS, defaultMemoryReasoningEffort: 'turbo' }, null, 2),
+      'utf8',
+    );
+    expect(readModelsConfig(file)).toBeNull();
+  });
+
+  it('knows the three levels and nothing else', () => {
+    expect(['low', 'medium', 'high'].every((value) => isReasoningEffort(value))).toBe(true);
+    for (const value of [undefined, null, '', 'default', 'none', 'minimal', 'xhigh', 1, {}]) {
+      expect(isReasoningEffort(value)).toBe(false);
+    }
+  });
+});
+
+describe('the thinking level in a frozen binding and a live switch', () => {
+  it('round-trips a level and leaves the property off when there is none', () => {
+    const h = createHarness();
+    try {
+      birthAgent(h, 'ada');
+      writeModelBinding(h.paths, 'ada', {
+        providerId: 'deepseek',
+        providerName: 'DeepSeek',
+        baseUrl: 'https://api.deepseek.com/v1',
+        apiKey: 'sk-deepseek',
+        model: 'deepseek-chat',
+        reasoningEffort: 'high',
+        boundAt: h.clock.now(),
+      });
+      expect(readModelBinding(h.paths, 'ada')?.reasoningEffort).toBe('high');
+
+      // A snapshot without a level reads back without the key, so a binding
+      // written before this feature still compares equal to itself.
+      writeModelBinding(h.paths, 'ada', {
+        providerId: 'deepseek',
+        providerName: 'DeepSeek',
+        baseUrl: 'https://api.deepseek.com/v1',
+        apiKey: 'sk-deepseek',
+        model: 'deepseek-chat',
+        boundAt: h.clock.now(),
+      });
+      const plain = readModelBinding(h.paths, 'ada');
+      expect('reasoningEffort' in (plain ?? {})).toBe(false);
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  it('ignores a level in the file that is not one of the three', () => {
+    const h = createHarness();
+    try {
+      birthAgent(h, 'ada');
+      const file = modelBindingPath(h.paths, 'ada');
+      writeFileSync(
+        file,
+        JSON.stringify({
+          providerId: 'deepseek',
+          providerName: 'DeepSeek',
+          baseUrl: 'https://api.deepseek.com/v1',
+          apiKey: 'sk-deepseek',
+          model: 'deepseek-chat',
+          reasoningEffort: 'turbo',
+          boundAt: 1,
+        }),
+        'utf8',
+      );
+      const binding = readModelBinding(h.paths, 'ada');
+      // The rest of the binding is still usable; only the bogus level is dropped.
+      expect(binding?.model).toBe('deepseek-chat');
+      expect('reasoningEffort' in (binding ?? {})).toBe(false);
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  it('freezes the level the operator chose, records it, and says so in the notice', () => {
+    const h = createHarness();
+    try {
+      birthAgent(h, 'ada', 'gpt-4o');
+      const fixture = testModelStore(h, { data: TWO_PROVIDERS });
+      const retires: string[] = [];
+      const notices: { agent: string; message: string }[] = [];
+      const deps = {
+        ledger: h.ledger,
+        paths: h.paths,
+        blackbox: h.blackbox,
+        store: fixture.store,
+        now: h.clock.now,
+        isBusy: () => false,
+        retireProcess: (agent: string) => {
+          retires.push(agent);
+        },
+        onNotice: (agent: string, message: string) => {
+          notices.push({ agent, message });
+        },
+      };
+
+      const outcome = switchAgentModel(deps, 'ada', 'deepseek', 'deepseek-chat', 'high');
+      expect(outcome.ok).toBe(true);
+      expect(readModelBinding(h.paths, 'ada')?.reasoningEffort).toBe('high');
+
+      // The permanent record names the level, so the operator can later tell a
+      // switch that set one from a switch that cleared one.
+      expect(h.ledger.listInterventions('ada')[0].detail).toBe(
+        '切换模型为 DeepSeek · deepseek-chat（思考：high）',
+      );
+      expect(notices[0].message).toContain('（思考：high）');
+
+      // And the black box carries it as a field, not only inside prose.
+      const entries = h.blackbox.readDay('ada', new Date(h.clock.now()).toISOString().slice(0, 10));
+      const switched = entries.find((entry) => entry.kind === 'intervention');
+      expect(switched?.['reasoningEffort']).toBe('high');
+      expect(retires).toEqual(['ada']);
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  it('leaves the wording and the snapshot exactly as before when no level is given', () => {
+    const h = createHarness();
+    try {
+      birthAgent(h, 'ada', 'gpt-4o');
+      const fixture = testModelStore(h, { data: TWO_PROVIDERS });
+      const deps = {
+        ledger: h.ledger,
+        paths: h.paths,
+        blackbox: h.blackbox,
+        store: fixture.store,
+        now: h.clock.now,
+        isBusy: () => false,
+        retireProcess: () => undefined,
+        onNotice: () => undefined,
+      };
+
+      expect(switchAgentModel(deps, 'ada', 'deepseek', 'deepseek-chat').ok).toBe(true);
+      expect(h.ledger.listInterventions('ada')[0].detail).toBe('切换模型为 DeepSeek · deepseek-chat');
+      expect('reasoningEffort' in (readModelBinding(h.paths, 'ada') ?? {})).toBe(false);
+
+      // A switch is a full rewrite, so passing null clears a level set earlier
+      // rather than silently leaving the old one in place.
+      switchAgentModel(deps, 'ada', 'deepseek', 'deepseek-chat', 'high');
+      expect(readModelBinding(h.paths, 'ada')?.reasoningEffort).toBe('high');
+      switchAgentModel(deps, 'ada', 'deepseek', 'deepseek-chat', null);
+      expect('reasoningEffort' in (readModelBinding(h.paths, 'ada') ?? {})).toBe(false);
+      expect(h.ledger.listInterventions('ada')[2].detail).toBe('切换模型为 DeepSeek · deepseek-chat');
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  it('resolves the level out of a binding, and out of the roster for a legacy agent', () => {
+    const h = createHarness();
+    try {
+      const fixture = testModelStore(h, { data: TWO_PROVIDERS });
+      const fromBinding = resolveAgentModel({
+        binding: {
+          providerId: 'deepseek',
+          providerName: 'DeepSeek',
+          baseUrl: 'https://api.deepseek.com/v1',
+          apiKey: 'sk-deepseek',
+          model: 'deepseek-chat',
+          reasoningEffort: 'low',
+        },
+        store: fixture.store,
+        ledgerModel: 'gpt-4o',
+        fallback: TEST_ENV_MODELS.agent,
+      });
+      expect(fromBinding.settings.reasoningEffort).toBe('low');
+
+      // A legacy agent has only a model name, so the level chosen for that same
+      // model name is the one it gets.
+      expect(fixture.store.update({ defaultAgentReasoningEffort: 'high' }).ok).toBe(true);
+      const legacy = resolveAgentModel({
+        binding: null,
+        store: fixture.store,
+        ledgerModel: 'gpt-4o',
+        fallback: TEST_ENV_MODELS.agent,
+      });
+      expect(legacy.settings.reasoningEffort).toBe('high');
+
+      // A different model name carries no level: none was ever chosen for it.
+      const other = resolveAgentModel({
+        binding: null,
+        store: fixture.store,
+        ledgerModel: 'gpt-4o-mini',
+        fallback: TEST_ENV_MODELS.agent,
+      });
+      expect('reasoningEffort' in other.settings).toBe(false);
+    } finally {
+      h.cleanup();
+    }
   });
 });
 

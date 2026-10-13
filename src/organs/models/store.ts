@@ -24,7 +24,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import type { ModelSettings } from '../../config';
+import { isReasoningEffort, type ModelSettings, type ReasoningEffort } from '../../config';
 
 export interface ModelProvider {
   id: string;
@@ -38,8 +38,10 @@ export interface ModelProvider {
 export interface ModelsConfigData {
   defaultAgentProviderId: string;
   defaultAgentModel: string;
+  defaultAgentReasoningEffort?: ReasoningEffort;
   defaultMemoryProviderId: string;
   defaultMemoryModel: string;
+  defaultMemoryReasoningEffort?: ReasoningEffort;
   providers: ModelProvider[];
 }
 
@@ -47,6 +49,7 @@ export interface ModelsConfigData {
 export interface ModelSelection {
   providerId: string;
   model: string;
+  reasoningEffort?: ReasoningEffort;
 }
 
 export type ModelStorePatchResult =
@@ -139,6 +142,27 @@ function copyData(data: ModelsConfigData): ModelsConfigData {
 }
 
 /**
+ * Reads one optional reasoning-effort field. `undefined`, `null`, `''` and
+ * `'default'` all mean "not chosen" and are reported as absent — the property
+ * is then left off the object entirely, so a roster written before this field
+ * existed still round-trips byte-for-byte. Anything else that is not one of the
+ * three levels is a typo, and a typo must not be silently ignored.
+ */
+function readOptionalEffort(
+  source: Record<string, unknown>,
+  key: string,
+): { ok: true; value: ReasoningEffort | undefined } | { ok: false } {
+  const raw = source[key];
+  if (raw === undefined || raw === null || raw === '' || raw === 'default') {
+    return { ok: true, value: undefined };
+  }
+  if (isReasoningEffort(raw)) {
+    return { ok: true, value: raw };
+  }
+  return { ok: false };
+}
+
+/**
  * Reads a `"models"` block off disk. Anything missing or ill-typed yields null,
  * which the caller treats as "not configured yet" and seeds from the
  * environment — a hand-edited file must not brick the console.
@@ -190,11 +214,18 @@ function parseModelsBlock(raw: unknown): ModelsConfigData | null {
   ) {
     return null;
   }
+  const agentEffort = readOptionalEffort(block, 'defaultAgentReasoningEffort');
+  const memoryEffort = readOptionalEffort(block, 'defaultMemoryReasoningEffort');
+  if (!agentEffort.ok || !memoryEffort.ok) {
+    return null;
+  }
   return {
     defaultAgentProviderId,
     defaultAgentModel,
+    ...(agentEffort.value === undefined ? {} : { defaultAgentReasoningEffort: agentEffort.value }),
     defaultMemoryProviderId,
     defaultMemoryModel,
+    ...(memoryEffort.value === undefined ? {} : { defaultMemoryReasoningEffort: memoryEffort.value }),
     providers,
   };
 }
@@ -348,15 +379,28 @@ export function createModelConfigStore(options: ModelConfigStoreOptions): ModelC
       if (provider === undefined || !provider.models.includes(selection.model)) {
         return null;
       }
-      return { baseUrl: provider.baseUrl, apiKey: provider.apiKey, model: selection.model };
+      return {
+        baseUrl: provider.baseUrl,
+        apiKey: provider.apiKey,
+        model: selection.model,
+        ...(isReasoningEffort(selection.reasoningEffort)
+          ? { reasoningEffort: selection.reasoningEffort }
+          : {}),
+      };
     },
     defaultAgentSelection: () => ({
       providerId: data.defaultAgentProviderId,
       model: data.defaultAgentModel,
+      ...(data.defaultAgentReasoningEffort === undefined
+        ? {}
+        : { reasoningEffort: data.defaultAgentReasoningEffort }),
     }),
     defaultMemorySelection: () => ({
       providerId: data.defaultMemoryProviderId,
       model: data.defaultMemoryModel,
+      ...(data.defaultMemoryReasoningEffort === undefined
+        ? {}
+        : { reasoningEffort: data.defaultMemoryReasoningEffort }),
     }),
     update: (patch: unknown): ModelStorePatchResult => {
       const body = asRecord(patch);
@@ -407,6 +451,27 @@ export function createModelConfigStore(options: ModelConfigStoreOptions): ModelC
           return { ok: false, error: 'invalid_models_patch' };
         }
         next[key] = value;
+      }
+
+      // The reasoning-effort fields are the only ones a patch may clear: an
+      // operator who picks a level and then wants the provider's own default
+      // back has no other way to say so. `null`, `''` and `'default'` all mean
+      // that, and each is a real change rather than an empty patch.
+      for (const key of ['defaultAgentReasoningEffort', 'defaultMemoryReasoningEffort'] as const) {
+        const raw = body[key];
+        if (raw === undefined) {
+          continue;
+        }
+        if (raw === null || raw === '' || raw === 'default') {
+          recognised += 1;
+          delete next[key];
+          continue;
+        }
+        if (!isReasoningEffort(raw)) {
+          return { ok: false, error: 'invalid_reasoning_effort' };
+        }
+        recognised += 1;
+        next[key] = raw;
       }
 
       if (recognised === 0) {
@@ -460,7 +525,14 @@ export function resolveAgentModel(input: {
   const { binding, store, ledgerModel, fallback } = input;
   if (binding !== null) {
     return {
-      settings: { baseUrl: binding.baseUrl, apiKey: binding.apiKey, model: binding.model },
+      settings: {
+        baseUrl: binding.baseUrl,
+        apiKey: binding.apiKey,
+        model: binding.model,
+        ...(isReasoningEffort(binding.reasoningEffort)
+          ? { reasoningEffort: binding.reasoningEffort }
+          : {}),
+      },
       providerId: binding.providerId,
       providerName: binding.providerName,
       source: 'binding',
@@ -468,8 +540,20 @@ export function resolveAgentModel(input: {
   }
   const provider = store.providerOfModel(ledgerModel);
   if (provider !== null) {
+    // An agent born before the roster has only a model name on its ledger row,
+    // so the operator's chosen thinking level for that same model is the only
+    // place it can come from. A different model name carries no effort: the
+    // level was never chosen for it.
+    const defaultSelection = store.defaultAgentSelection();
+    const effort =
+      ledgerModel === defaultSelection.model ? defaultSelection.reasoningEffort : undefined;
     return {
-      settings: { baseUrl: provider.baseUrl, apiKey: provider.apiKey, model: ledgerModel },
+      settings: {
+        baseUrl: provider.baseUrl,
+        apiKey: provider.apiKey,
+        model: ledgerModel,
+        ...(isReasoningEffort(effort) ? { reasoningEffort: effort } : {}),
+      },
       providerId: provider.id,
       providerName: provider.name,
       source: 'roster',
@@ -496,4 +580,5 @@ export interface AgentModelBindingLike {
   baseUrl: string;
   apiKey: string;
   model: string;
+  reasoningEffort?: ReasoningEffort;
 }

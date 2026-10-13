@@ -20,6 +20,7 @@ import {
   redactAgent,
   redactOnce,
   renderSentence,
+  renderSentenceWithSpans,
   resolveFrozenLocations,
   restoreFrozenSentences,
   sentenceUnits,
@@ -124,6 +125,107 @@ describe('rendering a sentence from the ledger', () => {
 
   it('renders the spaces and the punctuation inside a wound too', () => {
     expect(renderSentence('a b', [woundAt(1, 2, 'untreated')])).toBe(`a${PLACEHOLDER}${PLACEHOLDER}`);
+  });
+});
+
+/**
+ * The coordinates the console needs to click the right wound.
+ *
+ * `woundAt` derives the id from the offset, which is fine for the rendering
+ * tests above but cannot express the case that matters here: two neighbouring
+ * wounds whose ids run opposite to their offsets, because the later one was
+ * made first.
+ */
+function woundWithId(id: number, offset: number, length: number, status: WoundRecord['status']): WoundRecord {
+  return {
+    id,
+    agent: 'ada',
+    sentenceId: 1,
+    offset,
+    length,
+    originalText: 'x'.repeat(length),
+    status,
+    starvationSince: 0,
+    tickIndex: 1,
+    createdAt: 0,
+    treatedAt: null,
+  };
+}
+
+describe('the span each wound occupies in the rendered sentence (#11)', () => {
+  const ORIGINAL = 'abcdefghijklmnopqrst';
+  /** Wound #2 sits *before* wound #1, and was created first. */
+  const reversed = (first: WoundRecord['status'], second: WoundRecord['status']): WoundRecord[] => [
+    woundWithId(1, 10, 4, first),
+    woundWithId(2, 6, 4, second),
+  ];
+  const spanOf = (spans: { woundId: number; start: number; end: number }[], id: number): { start: number; end: number } => {
+    const found = spans.find((span) => span.woundId === id);
+    if (found === undefined) {
+      throw new Error(`no span for wound #${id}`);
+    }
+    return { start: found.start, end: found.end };
+  };
+
+  it('splits two adjacent untreated wounds instead of merging them into one run', () => {
+    const rendered = renderSentenceWithSpans(ORIGINAL, reversed('untreated', 'untreated'));
+    // Eight placeholders in a row: indistinguishable by their own text, which
+    // is exactly why the renderer has to say where each one is.
+    expect(rendered.text).toBe(`abcdef${PLACEHOLDER.repeat(8)}opqrst`);
+    expect(spanOf(rendered.spans, 2)).toEqual({ start: 6, end: 10 });
+    expect(spanOf(rendered.spans, 1)).toEqual({ start: 10, end: 14 });
+  });
+
+  it('keeps the spans in text order even though the ids run the other way', () => {
+    const rendered = renderSentenceWithSpans(ORIGINAL, reversed('untreated', 'untreated'));
+    // Sorted by offset, not by id: the caller that walks the text needs them
+    // in the order the text has them.
+    expect(rendered.spans.map((span) => span.woundId)).toEqual([2, 1]);
+  });
+
+  it('never lets two neighbouring spans overlap or leave a gap between them', () => {
+    const rendered = renderSentenceWithSpans(ORIGINAL, reversed('untreated', 'untreated'));
+    const first = spanOf(rendered.spans, 2);
+    const second = spanOf(rendered.spans, 1);
+    expect(first.end).toBe(second.start);
+    expect(first.start).toBeLessThan(first.end);
+    expect(second.start).toBeLessThan(second.end);
+  });
+
+  it('measures the scarred rendering, which is longer than the text it hides', () => {
+    const rendered = renderSentenceWithSpans(ORIGINAL, reversed('untreated', 'scarred'));
+    // A scar is one placeholder, then "(char)placeholder" per surviving
+    // character — so its span is far wider than the four characters taken.
+    expect(spanOf(rendered.spans, 2)).toEqual({ start: 6, end: 23 });
+    expect(spanOf(rendered.spans, 1)).toEqual({ start: 23, end: 27 });
+    expect(rendered.text.slice(6, 23)).toBe(
+      `${PLACEHOLDER}(g)${PLACEHOLDER}(h)${PLACEHOLDER}(i)${PLACEHOLDER}(j)${PLACEHOLDER}`,
+    );
+    expect(rendered.text.slice(23, 27)).toBe(PLACEHOLDER.repeat(4));
+  });
+
+  it('still reports a span when both neighbours are scarred', () => {
+    const rendered = renderSentenceWithSpans(ORIGINAL, reversed('scarred', 'scarred'));
+    expect(spanOf(rendered.spans, 2)).toEqual({ start: 6, end: 23 });
+    expect(spanOf(rendered.spans, 1)).toEqual({ start: 23, end: 40 });
+    expect(rendered.text.slice(23, 40)).toBe(
+      `${PLACEHOLDER}(k)${PLACEHOLDER}(l)${PLACEHOLDER}(m)${PLACEHOLDER}(n)${PLACEHOLDER}`,
+    );
+  });
+
+  it('reports a healed wound over the text it gave back, not over a bar', () => {
+    const rendered = renderSentenceWithSpans(ORIGINAL, [woundWithId(1, 10, 4, 'healed')]);
+    // A healed wound leaves the original characters in place, so its span
+    // covers exactly those. The console skips healed wounds when it places
+    // clickable bars, so this is bookkeeping rather than something it draws.
+    expect(spanOf(rendered.spans, 1)).toEqual({ start: 10, end: 14 });
+    expect(rendered.text.slice(10, 14)).toBe('klmn');
+    expect(rendered.text).toBe(ORIGINAL);
+  });
+
+  it('agrees with renderSentence on the text, span bookkeeping aside', () => {
+    const wounds = reversed('untreated', 'scarred');
+    expect(renderSentenceWithSpans(ORIGINAL, wounds).text).toBe(renderSentence(ORIGINAL, wounds));
   });
 });
 

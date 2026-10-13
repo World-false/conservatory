@@ -1,4 +1,4 @@
-import type { IncomeReportRecord, Ledger } from './ledger';
+import { withOperatorNote, type IncomeReportRecord, type Ledger } from './ledger';
 
 export type IncomeErrorCode =
   | 'report_not_found'
@@ -49,7 +49,8 @@ export function reportIncome(
 /**
  * The operator verifies an outside-income report and it is credited at the
  * configured exchange rate. When the rate is unset the credit is refused: no
- * default, no guess.
+ * default, no guess. The reporter is told what was credited, in the same
+ * transaction, so the notice and the balance can never disagree.
  */
 export function verifyIncome(
   ledger: Ledger,
@@ -57,6 +58,7 @@ export function verifyIncome(
   verifiedAmount: number,
   exchangeRate: number | null,
   at: number,
+  note?: string,
 ): IncomeResult {
   if (exchangeRate === null) {
     return { ok: false, code: 'exchange_rate_unset' };
@@ -91,6 +93,15 @@ export function verifyIncome(
       return false;
     }
     ledger.appendBalanceEvent(existing.agent, credited, 'income_credit', String(reportId), at);
+    ledger.appendMessage(
+      'system',
+      existing.agent,
+      withOperatorNote(
+        `Income report #${reportId} (${existing.where}) was verified: verified amount ${verifiedAmount}, credited +${credited} balance.`,
+        note,
+      ),
+      at,
+    );
     return true;
   });
   if (!changed) {
@@ -103,7 +114,16 @@ export function verifyIncome(
   return { ok: true, report, credited };
 }
 
-export function rejectIncome(ledger: Ledger, reportId: number, at: number): IncomeResult {
+/**
+ * The operator refuses a report. The reporter is told, in the same transaction
+ * as the refusal, so a rejected claim is never left looking merely unanswered.
+ */
+export function rejectIncome(
+  ledger: Ledger,
+  reportId: number,
+  at: number,
+  note?: string,
+): IncomeResult {
   const existing = ledger.getIncomeReport(reportId);
   if (existing === null) {
     return { ok: false, code: 'report_not_found' };
@@ -111,7 +131,19 @@ export function rejectIncome(ledger: Ledger, reportId: number, at: number): Inco
   if (existing.status !== 'pending') {
     return { ok: false, code: 'report_not_pending' };
   }
-  const changed = ledger.resolveIncomeReport(reportId, 'rejected', null, null, null, at);
+  const changed = ledger.transaction(() => {
+    const resolved = ledger.resolveIncomeReport(reportId, 'rejected', null, null, null, at);
+    if (!resolved) {
+      return false;
+    }
+    ledger.appendMessage(
+      'system',
+      existing.agent,
+      withOperatorNote(`Income report #${reportId} (${existing.where}) was rejected (0 credited).`, note),
+      at,
+    );
+    return true;
+  });
   if (!changed) {
     return { ok: false, code: 'report_not_pending' };
   }

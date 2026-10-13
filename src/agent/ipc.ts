@@ -19,6 +19,12 @@ export interface SerializedToolCall {
 export interface SerializedMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string | null;
+  /**
+   * The model's own thinking, when the provider reports it separately from the
+   * answer. It is carried for the operator to read and is never sent back to
+   * the provider: a reasoning trace is not part of the conversation.
+   */
+  reasoningContent?: string | null;
   toolCalls?: SerializedToolCall[];
   toolCallId?: string;
 }

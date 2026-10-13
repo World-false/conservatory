@@ -9,6 +9,19 @@ export class LedgerError extends Error {
   }
 }
 
+/**
+ * The operator's words are appended to an English harness notice, never
+ * substituted for it: the message is injected into the agent's next round
+ * under `# SYSTEM REMINDERS`, and that injection is English by rule. The note
+ * itself travels verbatim, in whatever language the operator typed.
+ */
+export function withOperatorNote(body: string, note: string | undefined): string {
+  if (note === undefined || note.trim() === '') {
+    return body;
+  }
+  return `${body} Note from operator: ${note.trim()}`;
+}
+
 export type AgentStatus = 'alive' | 'dead';
 
 export interface AgentRecord {
@@ -1291,9 +1304,44 @@ export class Ledger {
     return changesOf(result) > 0;
   }
 
-  /** Returns to open, and clears the claim. */
+  /**
+   * Guarded: only a task that is still open can be edited. A claimed or
+   * submitted task's terms are frozen, because an agent may already be working
+   * against them.
+   */
+  updateOpenTask(id: string, title: string, description: string, price: number, at: number): boolean {
+    const result = this.db
+      .prepare(
+        `UPDATE tasks SET title = ?, description = ?, price = ?, updated_at = ?
+         WHERE id = ? AND status = 'open'`,
+      )
+      .run(title, description, price, at, id);
+    return changesOf(result) > 0;
+  }
+
+  /** Guarded: only a task that is still open can be taken off the board. */
+  deleteOpenTask(id: string): boolean {
+    const result = this.db.prepare(`DELETE FROM tasks WHERE id = ? AND status = 'open'`).run(id);
+    return changesOf(result) > 0;
+  }
+
+  /**
+   * Returns to open, and clears the claim entirely.
+   *
+   * `claimed` and `rework` are accepted alongside `submitted`: the operator must
+   * be able to pull back a task an agent has stalled on without waiting for the
+   * claim to time out. Clearing `claimed_at` as well as `claimed_by` keeps the
+   * claim-timeout sweep from ever seeing this row again.
+   */
   returnTaskToBoard(id: string, at: number): boolean {
-    return this.reviewTask(id, ['submitted'], 'open', 'returned', at, null, true);
+    const result = this.db
+      .prepare(
+        `UPDATE tasks SET status = 'open', claimed_by = NULL, claimed_at = NULL,
+           decision = 'returned', decided_at = ?, updated_at = ?
+         WHERE id = ? AND status IN ('submitted', 'claimed', 'rework')`,
+      )
+      .run(at, at, id);
+    return changesOf(result) > 0;
   }
 
   /**

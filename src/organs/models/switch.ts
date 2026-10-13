@@ -16,7 +16,7 @@
 
 import { modelBindingPath, writeModelBinding, type AgentModelBinding } from './binding';
 import type { ModelConfigStore } from './store';
-import type { RuntimePaths } from '../../config';
+import { isReasoningEffort, type ReasoningEffort, type RuntimePaths } from '../../config';
 import type { Blackbox } from '../blackbox';
 import type { Ledger } from '../ledger';
 
@@ -46,6 +46,7 @@ export function switchAgentModel(
   agent: string,
   providerId: string,
   model: string,
+  reasoningEffort?: ReasoningEffort | null,
 ): SwitchModelOutcome {
   const record = deps.ledger.getAgent(agent);
   if (record === null) {
@@ -62,6 +63,15 @@ export function switchAgentModel(
     return { ok: false, error: 'unknown_model' };
   }
 
+  // A switch rewrites the whole snapshot, so leaving the level off is how the
+  // operator clears one: the new binding carries no level and the next process
+  // asks the provider to decide for itself. `null` and `undefined` both mean
+  // that, and neither is a level.
+  const effort: ReasoningEffort | undefined = isReasoningEffort(reasoningEffort)
+    ? reasoningEffort
+    : undefined;
+  const suffix = effort === undefined ? '' : `（思考：${effort}）`;
+
   const at = deps.now();
   const binding: AgentModelBinding = {
     providerId: provider.id,
@@ -69,6 +79,7 @@ export function switchAgentModel(
     baseUrl: provider.baseUrl,
     apiKey: provider.apiKey,
     model,
+    ...(effort === undefined ? {} : { reasoningEffort: effort }),
     boundAt: at,
   };
 
@@ -82,13 +93,14 @@ export function switchAgentModel(
   deps.ledger.appendIntervention(
     'model_switched',
     agent,
-    `切换模型为 ${provider.name} · ${model}`,
+    `切换模型为 ${provider.name} · ${model}${suffix}`,
     at,
   );
   deps.blackbox.append(agent, 'intervention', at, null, {
     kind: 'model_switched',
     providerId: provider.id,
     model,
+    ...(effort === undefined ? {} : { reasoningEffort: effort }),
     bindingFile: modelBindingPath(deps.paths, agent),
   });
 
@@ -96,7 +108,7 @@ export function switchAgentModel(
   if (deferred) {
     deps.onNotice(
       agent,
-      `${agent} 的模型已改为 ${provider.name} · ${model}；当前一轮跑完后，下一次唤醒生效。`,
+      `${agent} 的模型已改为 ${provider.name} · ${model}${suffix}；当前一轮跑完后，下一次唤醒生效。`,
       at,
     );
     return { ok: true, deferred: true, message: DEFERRED_NOTICE };
@@ -104,6 +116,6 @@ export function switchAgentModel(
   // Idle: drop the cached process now, so the very next wake-up forks a process
   // on the new brain instead of reusing one built for the old.
   deps.retireProcess(agent);
-  deps.onNotice(agent, `${agent} 的模型已改为 ${provider.name} · ${model}；下次唤醒生效。`, at);
+  deps.onNotice(agent, `${agent} 的模型已改为 ${provider.name} · ${model}${suffix}；下次唤醒生效。`, at);
   return { ok: true, deferred: false, message: IMMEDIATE_NOTICE };
 }

@@ -5,7 +5,7 @@ import type {
   TokenUsage,
   ToolSchema,
 } from '../agent/ipc';
-import type { ModelSettings } from '../config';
+import type { ModelSettings, ReasoningEffort } from '../config';
 
 export class ModelRequestError extends Error {
   constructor(message: string) {
@@ -110,6 +110,7 @@ function extractToolCalls(
 export class OpenAICompatibleClient implements ModelClient {
   private readonly client: OpenAI;
   private readonly model: string;
+  private readonly reasoningEffort: ReasoningEffort | undefined;
 
   constructor(settings: ModelSettings, requestTimeoutMs: number) {
     this.client = new OpenAI({
@@ -118,6 +119,7 @@ export class OpenAICompatibleClient implements ModelClient {
       timeout: requestTimeoutMs,
     });
     this.model = settings.model;
+    this.reasoningEffort = settings.reasoningEffort;
   }
 
   async chat(request: ChatRequest): Promise<ChatResponse> {
@@ -128,6 +130,9 @@ export class OpenAICompatibleClient implements ModelClient {
         model: this.model,
         messages: toSdkMessages(request.messages),
         ...(tools === undefined ? {} : { tools }),
+        // Left off entirely when unset: a provider that rejects the parameter
+        // must not receive it just because the operator never chose a level.
+        ...(this.reasoningEffort === undefined ? {} : { reasoning_effort: this.reasoningEffort }),
       });
     } catch (error) {
       throw new ModelRequestError(describeRequestFailure(error));
@@ -137,13 +142,34 @@ export class OpenAICompatibleClient implements ModelClient {
       throw new ModelRequestError('the provider returned no choices');
     }
     const calls = extractToolCalls(choice.message.tool_calls);
+    const reasoning = extractReasoning(choice.message);
     const message: SerializedMessage = {
       role: 'assistant',
       content: choice.message.content ?? null,
+      ...(reasoning === null ? {} : { reasoningContent: reasoning }),
       ...(calls.length === 0 ? {} : { toolCalls: calls }),
     };
     return { message, usage: extractUsage(completion.usage) };
   }
+}
+
+/**
+ * The model's thinking, when the endpoint reports it. OpenAI-compatible
+ * providers disagree on the field name — DeepSeek and others use
+ * `reasoning_content`, some use `reasoning` — so both are accepted. An empty
+ * or whitespace-only value is not a thought and is treated as absent.
+ */
+function extractReasoning(message: OpenAI.Chat.Completions.ChatCompletionMessage): string | null {
+  const raw = message as unknown as Record<string, unknown>;
+  const content = raw['reasoning_content'];
+  if (typeof content === 'string' && content.trim() !== '') {
+    return content;
+  }
+  const reasoning = raw['reasoning'];
+  if (typeof reasoning === 'string' && reasoning.trim() !== '') {
+    return reasoning;
+  }
+  return null;
 }
 
 function describeRequestFailure(error: unknown): string {
