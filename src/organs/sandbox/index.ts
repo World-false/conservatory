@@ -353,22 +353,29 @@ export async function executeSandboxedCommand(options: ExecuteCommandOptions): P
       grantReadOnly(api, resolved, capabilitySidPtr, worldSid);
     }
 
-    // 3. The deny side: configured blacklist, always-protected paths and the
-    //    read-only files. Denies are idempotent and inherit down the subtree.
-    for (const directory of uniquePaths(options.readBlacklist)) {
-      const resolved = optionalDirectory(directory);
-      if (resolved === null) {
+    // 3. The deny side: configured blacklist, always-protected paths (including
+    //    MEMORY and MODEL.json) and any read-only files.
+    for (const entry of uniquePaths(options.readBlacklist)) {
+      const resolved = path.resolve(entry);
+      if (!existsSync(resolved)) {
         continue;
       }
+      const directory = statSync(resolved).isDirectory();
       // A deny on a writable directory, or on one of its ancestors, would win
       // over the allow ACE above and lock the agent out of its own workspace.
       // The effective policy never produces that overlap; this guard keeps a
       // hand-written call from doing something silently unusable.
       const overlapsWritable = writableDirs.some(
-        (writable) => isSameOrInside(resolved, writable) || isSameOrInside(writable, resolved),
+        (writable) => isSameOrInside(resolved, writable) || (directory && isSameOrInside(writable, resolved)),
       );
       if (!overlapsWritable) {
-        denyCapability(api, resolved, capabilitySidPtr, FULL_DENY_ACCESS);
+        denyCapability(
+          api,
+          resolved,
+          capabilitySidPtr,
+          FULL_DENY_ACCESS,
+          directory ? SUB_CONTAINERS_AND_OBJECTS_INHERIT : NO_INHERITANCE,
+        );
       }
     }
     for (const file of uniquePaths(options.readOnlyFiles ?? [])) {

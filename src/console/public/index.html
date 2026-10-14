@@ -3921,19 +3921,19 @@
           key: "readBlacklist",
           title: "禁止读取路径 (Blacklist)",
           placeholder: "例如 C:\\secrets 或 D:\\work\\private",
-          empty: "黑名单为空：黑名单模式下，边界内的路径都可以读。",
+          empty: "除系统锁定的禁区外，还没有额外禁止读取的路径。",
         },
         {
           key: "readWhitelist",
           title: "允许读取路径 (Whitelist，白名单模式生效)",
           placeholder: "例如 D:\\workshop",
-          empty: "白名单为空：切到白名单模式后，Agent 什么也读不到。",
+          empty: "除系统默认放行的自身记事本目录（AGENTS\\<名字>\\notebook）外，还没有额外允许读取的路径。",
         },
         {
           key: "writableDirs",
           title: "允许写入路径 (Writable Whitelist)",
           placeholder: "例如 D:\\workshop\\out",
-          empty: "除系统锁定的记事本外，还没有额外可写的目录。",
+          empty: "除系统锁定的自身记事本目录（AGENTS\\<名字>\\notebook）外，还没有额外可写的目录。",
         },
       ];
       const SANDBOX_NUMBER_HINTS = {
@@ -3990,10 +3990,10 @@
           `<div class="mod-body">` +
           `<div class="row">` +
           `<span class="seg" role="radiogroup" aria-label="沙箱读取模式">` +
-          `<label class="seg-opt" title="除禁止列表外都能读">` +
+          `<label class="seg-opt" title="除禁止列表（含 SUPERVISOR 与其他 Agent 目录）外都能读">` +
           `<input type="radio" name="sandboxReadMode" value="blacklist" data-act="sandbox-read-mode" />` +
           `<span class="seg-face"><span class="led"></span>黑名单模式 (推荐)</span></label>` +
-          `<label class="seg-opt" title="只有允许列表里的路径可以读">` +
+          `<label class="seg-opt" title="默认可读自身 AGENTS\\<名字>\\notebook 目录及下方白名单路径">` +
           `<input type="radio" name="sandboxReadMode" value="whitelist" data-act="sandbox-read-mode" />` +
           `<span class="seg-face"><span class="led"></span>白名单模式</span></label>` +
           `</span>` +
@@ -4065,8 +4065,8 @@
           if (modeHint !== null) {
             modeHint.textContent =
               sandboxDraft.readMode === "whitelist"
-                ? "白名单：只允许读取列表里的路径"
-                : "黑名单：列表之外的路径可以读";
+                ? "白名单：默认可读自身 AGENTS\\<名字>\\notebook 目录及列表路径"
+                : "黑名单：除禁止列表（含 SUPERVISOR 与其他 Agent 目录）外均可读";
           }
           if (fillNumbers === true) {
             if (timeout !== null) timeout.value = String(sandboxDraft.commandTimeoutSeconds);

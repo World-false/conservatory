@@ -759,19 +759,25 @@ export class RoundCoordinator {
         ? '(none)'
         : chatMsgs.map((message) => `- ${isoTime(message.at)} [from ${message.sender}]: ${message.body}`).join('\n');
 
-    // Who the agent is goes on the system side, after the manual: MEMORY and
-    // the body state are read as part of its own standing description rather
-    // than as something someone said to it. The task board is not injected at
-    // all; the agent reads it with list_tasks when it wants it.
+    // Who the agent is goes on the system side, after the manual: the world
+    // (its place and wake cadence), MEMORY and the body state are read as part
+    // of its own standing description rather than as something someone said to
+    // it. The task board is not injected at all; the agent reads it with
+    // list_tasks when it wants it.
+    const heartbeatMinutes = String(Math.round(values.heartbeatSeconds / 60));
     const systemBlocks = {
       memory: memory.trimEnd(),
       bodyState,
       systemReminders,
       messages,
+      notebook: agentNotebookDir(paths, agent.name),
+      heartbeatMinutes,
     };
-    const system = [templates.manual.text, renderRoundContext(templates.systemContext.text, systemBlocks)].join(
-      '\n\n',
-    );
+    const system = [
+      templates.manual.text,
+      renderRoundContext(templates.world.text, systemBlocks),
+      renderRoundContext(templates.systemContext.text, systemBlocks),
+    ].join('\n\n');
 
     const user = renderRoundContext(templates.userContext.text, systemBlocks);
 

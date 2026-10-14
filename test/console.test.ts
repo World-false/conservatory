@@ -12,6 +12,7 @@ import { RoundRegistry } from '../src/organs/population';
 import {
   DEFAULT_SYSTEM_CONTEXT_TEMPLATE,
   DEFAULT_USER_CONTEXT_TEMPLATE,
+  DEFAULT_WORLD_TEMPLATE,
   type PromptLibrary,
   type PromptStatus,
 } from '../src/organs/prompts';
@@ -1316,6 +1317,7 @@ describe('the prompt templates in the console', () => {
     birthAgent(h, 'ada');
     writePrompts(h, {
       'manual.md': BODY_MANUAL,
+      'world.md': DEFAULT_WORLD_TEMPLATE,
       'system_context.md': DEFAULT_SYSTEM_CONTEXT_TEMPLATE,
       'memory_system.md': MEMORY_SYSTEM_PROMPT,
       'user_context.md': DEFAULT_USER_CONTEXT_TEMPLATE,
@@ -1331,6 +1333,7 @@ describe('the prompt templates in the console', () => {
     expect(prompts.dir).toBe(h.paths.promptsDir);
     expect(prompts.templates.map((template) => template.file)).toEqual([
       'manual.md',
+      'world.md',
       'system_context.md',
       'user_context.md',
       'memory_system.md',
@@ -1361,6 +1364,7 @@ describe('the prompt templates in the console', () => {
     birthAgent(h, 'ada');
     writePrompts(h, {
       'manual.md': BODY_MANUAL,
+      'world.md': DEFAULT_WORLD_TEMPLATE,
       'memory_system.md': MEMORY_SYSTEM_PROMPT,
       'system_context.md': '# MEMORY\n(no placeholder at all)\n',
       'user_context.md': DEFAULT_USER_CONTEXT_TEMPLATE,

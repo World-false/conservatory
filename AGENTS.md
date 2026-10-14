@@ -2,7 +2,7 @@
 - [Development rules](.agents/memory/feedback-development-rules.md) — Two-tier architect role, zero-jargon plain language, snapshot config, secrets out of git, staged/split hand-off briefs
 - [Model config decisions](.agents/memory/project-model-config-decisions.md) — Settled 2026-10-04 choices: provider→model layers, frozen per-agent MODEL.json snapshot with key, untouched design.md §10
 - [User profile](.agents/memory/user-profile.md) — Vibe coder workflow, Windows environment, two-tier delegation, quota-driven hand-off, console UI modal preferences
-- [Windows ACL Sandbox reference](.agents/memory/reference-windows-acl-sandbox.md) — Step 3 sandbox blueprint plus the unequal-elevation constraints (no Low label, required restricting SIDs) found while porting it
+- [Windows ACL Sandbox reference](.agents/memory/reference-windows-acl-sandbox.md) — Step 3 sandbox blueprint, host constraints, and 2026-10-13 strict notebook-only command confinement
 - [Scale & memory decisions](.agents/memory/project-scale-and-memory-decisions.md) — 1M scale, 750K memory, tool-driven memory sandbox, offset-tracked frozen sentences, private notebook dir
 
 ---

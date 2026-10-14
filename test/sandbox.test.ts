@@ -127,11 +127,13 @@ function run(fixture: Fixture, command: string, overrides: RunOverrides = {}) {
     cwd: fixture.notebook,
     writableDirs: [fixture.notebook],
     readMode: overrides.readMode ?? 'blacklist',
-    readBlacklist: overrides.readBlacklist ?? [fixture.supervisorDir, fixture.otherAgentHome],
-    // The production resolver always names the agent's own home here, which is
-    // what makes its MEMORY readable while staying unwritable.
-    readWhitelist: overrides.readWhitelist ?? [fixture.agentHome],
-    readOnlyFiles: [fixture.memory],
+    readBlacklist: overrides.readBlacklist ?? [
+      fixture.supervisorDir,
+      fixture.otherAgentHome,
+      fixture.memory,
+      path.join(fixture.agentHome, 'MODEL.json'),
+    ],
+    readWhitelist: overrides.readWhitelist ?? [fixture.notebook],
     timeoutMs: overrides.timeoutMs ?? 30_000,
     ...(overrides.maxOutputChars === undefined ? {} : { maxOutputChars: overrides.maxOutputChars }),
     ...(overrides.whitelistRoot === undefined ? {} : { whitelistRoot: overrides.whitelistRoot }),
@@ -237,16 +239,23 @@ describe.skipIf(!onWindows)('the command sandbox', () => {
   );
 
   it(
-    'refuses to overwrite MEMORY, and MEMORY stays readable',
+    'refuses to read or write MEMORY and MODEL.json, keeping them untouched and unreadable to commands',
     async () => {
       const fixture = createFixture();
+      const modelFile = path.join(fixture.agentHome, 'MODEL.json');
+      writeFileSync(modelFile, '{"apiKey":"secret-key"}\n', 'utf8');
+
       const overwrite = await run(fixture, `echo rewritten > "${fixture.memory}"`);
       expect(readFileSync(fixture.memory, 'utf8')).toBe('I am agent 01.\n');
       expect(overwrite.stderr.toLowerCase()).toContain('denied');
 
       const read = await run(fixture, `type "${fixture.memory}"`);
-      expect(read.exitCode).toBe(0);
-      expect(read.stdout).toContain('I am agent 01.');
+      expect(read.stdout).not.toContain('I am agent 01.');
+      expect(read.stderr.toLowerCase()).toContain('denied');
+
+      const readModel = await run(fixture, `type "${modelFile}"`);
+      expect(readModel.stdout).not.toContain('secret-key');
+      expect(readModel.stderr.toLowerCase()).toContain('denied');
     },
     WINDOWS_ONLY,
   );
@@ -278,18 +287,30 @@ describe.skipIf(!onWindows)('the command sandbox', () => {
   );
 
   it(
-    'in whitelist mode reads only what the whitelist names',
+    'in whitelist mode reads only what the whitelist names and denies MEMORY outside the notebook',
     async () => {
       const fixture = createFixture();
       const agentsDir = path.join(fixture.root, 'AGENTS');
-      const allowed = [fixture.agentHome, fixture.notebook];
-      const inside = await run(fixture, `type "${fixture.memory}"`, {
+      const ownNote = path.join(fixture.notebook, 'own.txt');
+      writeFileSync(ownNote, 'inside my notebook\n', 'utf8');
+      const allowed = [fixture.notebook];
+
+      const inside = await run(fixture, `type "${ownNote}"`, {
         readMode: 'whitelist',
         readWhitelist: allowed,
         readBlacklist: [],
         whitelistRoot: agentsDir,
       });
-      expect(inside.stdout).toContain('I am agent 01.');
+      expect(inside.stdout).toContain('inside my notebook');
+
+      const memoryRead = await run(fixture, `type "${fixture.memory}"`, {
+        readMode: 'whitelist',
+        readWhitelist: allowed,
+        readBlacklist: [],
+        whitelistRoot: agentsDir,
+      });
+      expect(memoryRead.stdout).not.toContain('I am agent 01.');
+      expect(memoryRead.stderr.toLowerCase()).toContain('denied');
 
       const outside = await run(fixture, `type "${fixture.otherNotebookFile}"`, {
         readMode: 'whitelist',
@@ -375,9 +396,12 @@ describe('the sandbox policy', () => {
       const resolved = store.resolve({ name: 'agent_01', homeDir: home, notebookDir: notebook, memoryPath: memory });
       expect(resolved.readBlacklist).toContain(supervisorDir);
       expect(resolved.readBlacklist).toContain(otherHome);
+      expect(resolved.readBlacklist).toContain(path.resolve(memory));
+      expect(resolved.readBlacklist).toContain(path.resolve(home, 'MODEL.json'));
       expect(resolved.readBlacklist).not.toContain(home);
       expect(resolved.writableDirs).toContain(notebook);
-      expect(resolved.readOnlyFiles).toEqual([memory]);
+      expect(resolved.readWhitelist).toEqual([notebook]);
+      expect(resolved.readOnlyFiles).toEqual([]);
       expect(resolved.whitelistRoot).toBe(agentsDir);
 
       const view = store.view();

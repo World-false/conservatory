@@ -342,21 +342,21 @@ export function createSandboxPolicyStore(options: SandboxPolicyStoreOptions): Sa
       return { ok: true, view: view() };
     },
     resolve: (agent: SandboxAgentIdentity): ResolvedSandboxPolicy => {
-      const locked = lockedBlacklist(agent.name);
+      const locked = [
+        ...lockedBlacklist(agent.name),
+        path.resolve(agent.memoryPath),
+        path.resolve(agent.homeDir, 'MODEL.json'),
+        path.resolve(agent.homeDir, 'DEATH_CERTIFICATE.md'),
+      ];
       const lockedWritableDirs = [path.resolve(agent.notebookDir)];
       // The configured blacklist loses any entry that would sit on the agent's
-      // own body: the notebook it must write, or its home and MEMORY it must
-      // still read.
+      // own notebook workspace that it must write.
       const configuredBlacklist = policy.readBlacklist.filter(
-        (entry) =>
-          !isSameOrInside(agent.homeDir, entry) &&
-          !isSameOrInside(agent.notebookDir, entry) &&
-          !isSameOrInside(agent.memoryPath, entry),
+        (entry) => !isSameOrInside(agent.notebookDir, entry),
       );
       const readBlacklist = uniqueAbsolute([...locked, ...configuredBlacklist]);
       const writableDirs = uniqueAbsolute([...lockedWritableDirs, ...policy.writableDirs]);
       const readWhitelist = uniqueAbsolute([
-        agent.homeDir,
         agent.notebookDir,
         ...policy.readWhitelist,
       ]);
@@ -369,7 +369,7 @@ export function createSandboxPolicyStore(options: SandboxPolicyStoreOptions): Sa
         maxOutputChars: policy.maxOutputChars,
         lockedReadBlacklist: locked,
         lockedWritableDirs,
-        readOnlyFiles: [path.resolve(agent.memoryPath)],
+        readOnlyFiles: [],
         whitelistRoot: path.resolve(options.agentsDir),
       };
     },

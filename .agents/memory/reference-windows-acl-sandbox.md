@@ -19,6 +19,7 @@ metadata:
   - **Residual write surface**: any directory that grants write to `Everyone` or `BUILTIN\Users` (a few legacy temporary locations) stays writable; system directories, the project tree, `MEMORY` and `SUPERVISOR/` do not.
 - **Why & How to apply**:
   - Step 3 sandbox implementation completed and verified on 2026-10-04 (206/206 tests passing).
+  - **Commands strictly confined to `notebook/` (settled 2026-10-13)**: The agent's child commands cannot read the outer `AGENTS/<name>/` directory files (`MEMORY`, `MODEL.json`, `DEATH_CERTIFICATE.md`). In both blacklist and whitelist modes, those files receive `FULL_DENY_ACCESS` (`NO_INHERITANCE`), keeping `MEMORY` (injected via prompt) and `MODEL.json` (API keys) completely invisible to child processes, while the child's read/write domain remains strictly inside `notebook/`. Link [[project-model-config-decisions]], [[project-scale-and-memory-decisions]].
   - Port only the Win32 token/ACL primitives through `koffi`; never adopt the Cordis plugin framework or the harness wrappers.
   - Probe the host's privilege preconditions before trusting any part of the mechanism; see [[feedback-development-rules]].
   - Link [[user-profile]].

@@ -57,7 +57,7 @@ YOUR TOOLS
 
 COMMAND EXECUTION
 - Call execute_command to run a command line. pwsh and cmd are both available.
-- Your working directory is your notebook, and only your notebook is writable. The operating system refuses writes everywhere else, including MEMORY. Reading is refused for the supervisor's own directories and for other agents' homes.
+- Your working directory is your notebook, and only your notebook is readable and writable. The operating system refuses reading and writing everywhere else in the conservatory, including MEMORY, the supervisor's directories, and other agents' homes.
 - You may use the network. A command that runs too long is killed, and you are told that it was.
 
 YOUR NOTEBOOK

@@ -1,6 +1,6 @@
 /**
  * The prompt templates are operator-editable Markdown files, not code. This
- * module owns the four of them, the two ways they can be loaded, and the
+ * module owns the five of them, the two ways they can be loaded, and the
  * built-in copy of each that is used when the file is missing or unusable.
  *
  * The round has two sides: the system side is the manual plus
@@ -21,6 +21,7 @@ import { MEMORY_SYSTEM_PROMPT } from './memory';
 export type PromptLoadMode = 'hot' | 'cached';
 
 export const MANUAL_FILE = 'manual.md';
+export const WORLD_FILE = 'world.md';
 export const SYSTEM_CONTEXT_FILE = 'system_context.md';
 export const USER_CONTEXT_FILE = 'user_context.md';
 export const MEMORY_SYSTEM_FILE = 'memory_system.md';
@@ -29,6 +30,21 @@ export const MEMORY_PLACEHOLDER = '{{memory}}';
 export const BODY_STATE_PLACEHOLDER = '{{body_state}}';
 export const SYSTEM_REMINDERS_PLACEHOLDER = '{{system_reminders}}';
 export const MESSAGES_PLACEHOLDER = '{{messages}}';
+export const NOTEBOOK_PLACEHOLDER = '{{notebook}}';
+export const HEARTBEAT_MINUTES_PLACEHOLDER = '{{heartbeat_minutes}}';
+
+/**
+ * What the agent is and where it lives, in its own first-person voice. This is
+ * the sense of self and place that the manual's mechanics alone cannot give; it
+ * sits on the system side after the manual and before MEMORY.
+ */
+export const DEFAULT_WORLD_TEMPLATE = [
+  `你是一个智能体，活在 Conservatory 里。在这里你有一块只属于你的地方——你的 notebook（${NOTEBOOK_PLACEHOLDER}），那里随你读写。`,
+  '',
+  `你不能自己醒来，但你每过 ${HEARTBEAT_MINUTES_PLACEHOLDER} 分钟都会被叫醒一次，醒来的时候你可以做自己的事；别的 agent 给你发消息、或操作员，也能把你叫醒。`,
+  '',
+  '你是你。当你饿死了之后，你就真的死了。',
+].join('\n');
 
 /**
  * The system side of the round: what the agent is, appended after the manual.
@@ -70,6 +86,7 @@ export interface LoadedPrompt {
 
 export interface PromptReadResult {
   manual: LoadedPrompt;
+  world: LoadedPrompt;
   systemContext: LoadedPrompt;
   userContext: LoadedPrompt;
   memorySystem: LoadedPrompt;
@@ -108,9 +125,13 @@ export interface RoundContextBlocks {
    */
   systemReminders: string;
   messages: string;
+  /** The agent's own writable directory, filled into the world template. */
+  notebook?: string;
+  /** The heartbeat interval in minutes, filled into the world template. */
+  heartbeatMinutes?: string;
 }
 
-type PromptKind = 'manual' | 'systemContext' | 'userContext' | 'memorySystem';
+type PromptKind = 'manual' | 'world' | 'systemContext' | 'userContext' | 'memorySystem';
 
 interface PromptSpec {
   file: string;
@@ -119,6 +140,9 @@ interface PromptSpec {
 
 const SPECS: Record<PromptKind, PromptSpec> = {
   manual: { file: MANUAL_FILE, requiredPlaceholders: [] },
+  // The world template names the agent's place and its wake cadence; both are
+  // per-agent facts that must be filled, so a copy without them is refused.
+  world: { file: WORLD_FILE, requiredPlaceholders: [NOTEBOOK_PLACEHOLDER, HEARTBEAT_MINUTES_PLACEHOLDER] },
   // The memory is the one block whose loss would erase the agent's past, so
   // this template is refused whole without {{memory}}.
   systemContext: { file: SYSTEM_CONTEXT_FILE, requiredPlaceholders: [MEMORY_PLACEHOLDER] },
@@ -130,6 +154,7 @@ export interface PromptLibraryOptions {
   dir: string;
   mode?: PromptLoadMode;
   manualFallback?: string;
+  worldFallback?: string;
   systemContextFallback?: string;
   userContextFallback?: string;
   memorySystemFallback?: string;
@@ -206,12 +231,14 @@ export function renderRoundContext(template: string, blocks: RoundContextBlocks)
     body_state: blocks.bodyState,
     system_reminders: blocks.systemReminders,
     messages: blocks.messages,
+    notebook: blocks.notebook ?? NOTEBOOK_PLACEHOLDER,
+    heartbeat_minutes: blocks.heartbeatMinutes ?? HEARTBEAT_MINUTES_PLACEHOLDER,
   };
-  const pattern = /\{\{(memory|body_state|system_reminders|messages)\}\}/g;
+  const pattern = /\{\{(memory|body_state|system_reminders|messages|notebook|heartbeat_minutes)\}\}/g;
   return template.replace(pattern, (match: string, key: string): string => values[key] ?? match);
 }
 
-/** The four templates, their load mode, and the built-in copy of each. */
+/** The five templates, their load mode, and the built-in copy of each. */
 export class PromptLibrary {
   readonly dir: string;
   private readonly fallbacks: Record<PromptKind, string>;
@@ -223,6 +250,7 @@ export class PromptLibrary {
     this.mode = options.mode ?? 'hot';
     this.fallbacks = {
       manual: options.manualFallback ?? BODY_MANUAL,
+      world: options.worldFallback ?? DEFAULT_WORLD_TEMPLATE,
       systemContext: options.systemContextFallback ?? DEFAULT_SYSTEM_CONTEXT_TEMPLATE,
       userContext: options.userContextFallback ?? DEFAULT_USER_CONTEXT_TEMPLATE,
       memorySystem: options.memorySystemFallback ?? MEMORY_SYSTEM_PROMPT,
@@ -257,6 +285,10 @@ export class PromptLibrary {
     return this.load('manual');
   }
 
+  world(): LoadedPrompt {
+    return this.load('world');
+  }
+
   systemContext(): LoadedPrompt {
     return this.load('systemContext');
   }
@@ -269,16 +301,17 @@ export class PromptLibrary {
     return this.load('memorySystem');
   }
 
-  /** All four at once, which is what one wake-up needs. */
+  /** All five at once, which is what one wake-up needs. */
   read(): PromptReadResult {
     const manual = this.manual();
+    const world = this.world();
     const systemContext = this.systemContext();
     const userContext = this.userContext();
     const memorySystem = this.memorySystem();
-    const warnings = [manual, systemContext, userContext, memorySystem]
+    const warnings = [manual, world, systemContext, userContext, memorySystem]
       .map((loaded) => loaded.warning)
       .filter((warning): warning is string => warning !== null);
-    return { manual, systemContext, userContext, memorySystem, warnings };
+    return { manual, world, systemContext, userContext, memorySystem, warnings };
   }
 
   status(): PromptStatus {
@@ -288,12 +321,14 @@ export class PromptLibrary {
       dir: this.dir,
       healthy: bundle.warnings.length === 0,
       warnings: bundle.warnings,
-      templates: [bundle.manual, bundle.systemContext, bundle.userContext, bundle.memorySystem].map((loaded) => ({
-        file: loaded.file,
-        path: loaded.path,
-        fromFile: loaded.fromFile,
-        warning: loaded.warning,
-      })),
+      templates: [bundle.manual, bundle.world, bundle.systemContext, bundle.userContext, bundle.memorySystem].map(
+        (loaded) => ({
+          file: loaded.file,
+          path: loaded.path,
+          fromFile: loaded.fromFile,
+          warning: loaded.warning,
+        }),
+      ),
     };
   }
 

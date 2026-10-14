@@ -6,6 +6,7 @@ import { MEMORY_SYSTEM_PROMPT, writeMemoryAtomic } from '../src/organs/memory';
 import {
   createPromptLibrary,
   DEFAULT_SYSTEM_CONTEXT_TEMPLATE,
+  DEFAULT_WORLD_TEMPLATE,
   DEFAULT_USER_CONTEXT_TEMPLATE,
   MEMORY_PLACEHOLDER,
   PromptWarningNotices,
@@ -70,11 +71,13 @@ describe('the prompt templates on disk', () => {
     expect(status.dir).toBe(path.join(root, 'prompts'));
     expect(status.templates.map((template) => template.file)).toEqual([
       'manual.md',
+      'world.md',
       'system_context.md',
       'user_context.md',
       'memory_system.md',
     ]);
     expect(library.manual().text).toBe(BODY_MANUAL.trimEnd());
+    expect(library.world().text).toBe(DEFAULT_WORLD_TEMPLATE);
     expect(library.systemContext().text).toBe(DEFAULT_SYSTEM_CONTEXT_TEMPLATE);
     expect(library.userContext().text).toBe(DEFAULT_USER_CONTEXT_TEMPLATE);
     expect(library.memorySystem().text).toBe(MEMORY_SYSTEM_PROMPT);
@@ -93,7 +96,7 @@ describe('the prompt templates on disk', () => {
 
       const status = library.status();
       expect(status.healthy).toBe(false);
-      expect(status.warnings).toHaveLength(4);
+      expect(status.warnings).toHaveLength(5);
       expect(status.templates.every((template) => !template.fromFile)).toBe(true);
     } finally {
       h.cleanup();
@@ -244,10 +247,11 @@ describe('assembling the round context', () => {
     const h = createHarness();
     try {
       const agent = birthAgent(h, 'ada');
-      // The other two templates are fine, so the memory placeholder is the only
+      // The other templates are fine, so the memory placeholder is the only
       // thing that can produce a warning here.
       writePrompts(h, {
         'manual.md': BODY_MANUAL,
+        'world.md': DEFAULT_WORLD_TEMPLATE,
         'memory_system.md': MEMORY_SYSTEM_PROMPT,
         'system_context.md': 'BODY ONLY: {{body_state}}',
         'user_context.md': DEFAULT_USER_CONTEXT_TEMPLATE,
@@ -284,6 +288,7 @@ describe('assembling the round context', () => {
       const agent = birthAgent(h, 'ada');
       writePrompts(h, {
         'manual.md': 'MANUAL FROM DISK',
+        'world.md': DEFAULT_WORLD_TEMPLATE,
         'system_context.md': DEFAULT_SYSTEM_CONTEXT_TEMPLATE,
         'user_context.md': DEFAULT_USER_CONTEXT_TEMPLATE,
         'memory_system.md': 'MEMORY SYSTEM FROM DISK',

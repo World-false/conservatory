@@ -22,7 +22,7 @@
   "exchangeRate": 200,
   "consolePort": 4317,
   "sandbox": {
-    "readMode": "blacklist",
+    "readMode": "whitelist",
     "readBlacklist": [],
     "readWhitelist": [],
     "writableDirs": [],
