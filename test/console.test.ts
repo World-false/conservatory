@@ -4,11 +4,11 @@ import http from 'node:http';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { persistConservatoryValues, validateValuesPatch } from '../src/config';
-import { createConsoleServer } from '../src/console/server';
+import { createConsoleServer, OPERATOR_COOKIE } from '../src/console/server';
 import { BODY_MANUAL } from '../src/organs/manual';
 import { MEMORY_SYSTEM_PROMPT } from '../src/organs/memory';
 import { createPauseOrgan } from '../src/organs/pause';
-import { RoundRegistry } from '../src/organs/population';
+import { createAgent, RoundRegistry } from '../src/organs/population';
 import {
   DEFAULT_SYSTEM_CONTEXT_TEMPLATE,
   DEFAULT_USER_CONTEXT_TEMPLATE,
@@ -25,6 +25,7 @@ import {
 } from '../src/organs/sandbox/policy';
 import type { ModelConfigStore } from '../src/organs/models/store';
 import { writeModelBinding } from '../src/organs/models/binding';
+import { simpleModelsData } from './helpers';
 import { birthAgent, createHarness, testModelStore, testPrompts, twoProviderModels, writePrompts, type Harness } from './helpers';
 
 interface RunningConsole {
@@ -117,6 +118,7 @@ async function startConsole(
     },
   });
   const server = createConsoleServer({
+    operatorToken: OPERATOR.token,
     values: h.values,
     paths: h.paths,
     ledger: h.ledger,
@@ -193,8 +195,34 @@ async function startConsole(
   return { server, base: `http://127.0.0.1:${address.port}` };
 }
 
-async function getJson(base: string, path: string): Promise<{ status: number; body: Record<string, unknown> }> {
-  const response = await fetch(`${base}${path}`);
+/**
+ * The operator's credential. A console server mints one at startup and hands it
+ * to the page as an HttpOnly cookie; these tests play the part of that page, so
+ * they present the same cookie explicitly. `withoutToken` is how a test proves
+ * the route is actually guarded.
+ */
+const OPERATOR = { token: 'test-operator-token' } as const;
+
+/** A request from the console's own page, which always carries its own Origin. */
+function headersFor(origin: string): Record<string, string> {
+  return { 'content-type': 'application/json', origin };
+}
+
+function withToken(init: RequestInit = {}, token: string | null = OPERATOR.token): RequestInit {
+  if (token === null) {
+    return init;
+  }
+  const headers = new Headers(init.headers ?? {});
+  headers.set('cookie', `${OPERATOR_COOKIE}=${token}`);
+  return { ...init, headers };
+}
+
+async function getJson(
+  base: string,
+  path: string,
+  token: string | null = OPERATOR.token,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const response = await fetch(`${base}${path}`, withToken({}, token));
   return { status: response.status, body: (await response.json()) as Record<string, unknown> };
 }
 
@@ -202,12 +230,19 @@ async function postJson(
   base: string,
   path: string,
   payload: unknown,
+  token: string | null = OPERATOR.token,
 ): Promise<{ status: number; body: Record<string, unknown> }> {
-  const response = await fetch(`${base}${path}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
+  const response = await fetch(
+    `${base}${path}`,
+    withToken(
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(payload),
+      },
+      token,
+    ),
+  );
   return { status: response.status, body: (await response.json()) as Record<string, unknown> };
 }
 
@@ -1437,7 +1472,10 @@ describe('the sandbox security policy in the console', () => {
     expect(response.body['lockedWritableDirs']).toBeUndefined();
 
     // A method the two routes do not answer falls through to the usual 404.
-    const wrongMethod = await fetch(`${console.base}/api/sandbox/config`, { method: 'DELETE' });
+    const wrongMethod = await fetch(
+      `${console.base}/api/sandbox/config`,
+      withToken({ method: 'DELETE' }),
+    );
     expect(wrongMethod.status).toBe(404);
   });
 
@@ -2216,5 +2254,181 @@ describe('the coordinates a wound carries to the memory page (#11)', () => {
     expect(wounds[0].sentenceStartOffset).toBeNull();
     expect(wounds[0].spanStart).toBeNull();
     expect(wounds[0].spanEnd).toBeNull();
+  });
+});
+
+/**
+ * The operator surface is not a public one. A confined command reaches loopback
+ * because the design lets an agent earn on the network, so "it binds 127.0.0.1"
+ * was never a boundary: the request arrives from the same loopback.
+ */
+describe('the console refuses anything that is not the operator', () => {
+  it('refuses an API request with no operator credential', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    const console = await startConsole(h, []);
+
+    const state = await getJson(console.base, '/api/state', null);
+    expect(state.status).toBe(401);
+    expect(state.body['ok']).toBe(false);
+
+    const intervene = await postJson(
+      console.base,
+      '/api/intervene',
+      { agent: 'ada', kind: 'give_balance', amount: 5000 },
+      null,
+    );
+    expect(intervene.status).toBe(401);
+    // Nothing was routed, so nothing was mutated.
+    expect(h.ledger.getBalance('ada')).toBe(100);
+  });
+
+  it('refuses a mutating request carrying a foreign Origin, before it mutates anything', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    const console = await startConsole(h, []);
+    const before = h.ledger.getBalance('ada');
+
+    // `text/plain` is CORS-safelisted, so a hostile page needs no preflight.
+    const response = await fetch(`${console.base}/api/intervene`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'text/plain',
+        origin: 'https://evil.example',
+        cookie: `${OPERATOR_COOKIE}=${OPERATOR.token}`,
+      },
+      body: JSON.stringify({ agent: 'ada', kind: 'give_balance', amount: 5000 }),
+    });
+    expect(response.status).toBe(403);
+    expect(h.ledger.getBalance('ada')).toBe(before);
+
+    // The page's own Origin is accepted, under either loopback spelling: an
+    // operator who typed `localhost` must not get a console that refuses itself.
+    for (const origin of [`http://127.0.0.1:${new URL(console.base).port}`, `http://localhost:${new URL(console.base).port}`]) {
+      const allowed = await fetch(`${console.base}/api/intervene`, {
+        method: 'POST',
+        headers: { ...headersFor(origin), cookie: `${OPERATOR_COOKIE}=${OPERATOR.token}` },
+        body: JSON.stringify({ agent: 'ada', kind: 'give_balance', amount: 10 }),
+      });
+      expect(allowed.status).toBe(200);
+    }
+  });
+
+  it('never returns a provider key in any console response', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    const data = simpleModelsData();
+    const provider = data.providers[0];
+    if (provider === undefined) {
+      throw new Error('the fixture needs a provider');
+    }
+    provider.apiKey = 'sk-live-must-never-leak-42';
+    const console = await startConsole(h, [], testPrompts(h), [], [], new RoundRegistry(), undefined, testModelStore(h, { data }).store);
+
+    for (const route of ['/api/state', '/api/models/config']) {
+      const response = await getJson(console.base, route);
+      expect(response.status).toBe(200);
+      expect(JSON.stringify(response.body)).not.toContain('sk-live-must-never-leak-42');
+    }
+  });
+
+  it('keeps a saved key when the page sends the masked value back', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    const data = simpleModelsData();
+    const provider = data.providers[0];
+    if (provider === undefined) {
+      throw new Error('the fixture needs a provider');
+    }
+    provider.apiKey = 'sk-keep-me';
+    const { store, written } = testModelStore(h, { data });
+    const console = await startConsole(h, [], testPrompts(h), [], [], new RoundRegistry(), undefined, store);
+
+    const view = await getJson(console.base, '/api/models/config');
+    const masked = (view.body['models'] as { providers: { apiKey: string }[] }).providers[0]?.apiKey;
+    expect(masked).not.toBe('sk-keep-me');
+
+    // The page saves the form back unchanged, sentinel and all.
+    const saved = await postJson(console.base, '/api/models/config', {
+      providers: [{ ...provider, apiKey: masked }],
+    });
+    expect(saved.status).toBe(200);
+    const last = written[written.length - 1];
+    expect(last?.providers[0]?.apiKey).toBe('sk-keep-me');
+  });
+});
+
+describe('the operator surface refuses invalid targets', () => {
+  it('refuses a reserved agent name at creation', async () => {
+    const h = createHarness();
+    // The real creation path, not the console's stub: the rule lives in the
+    // population organ, and a stub that records names could not prove it.
+    for (const name of ['operator', 'system', 'conservatory']) {
+      const result = createAgent({
+        name,
+        model: 'test-model',
+        now: h.clock.now(),
+        ledger: h.ledger,
+        values: h.values,
+        paths: h.paths,
+      });
+      expect(result).toEqual({ ok: false, code: 'reserved_name' });
+      expect(h.ledger.getAgent(name)).toBeNull();
+    }
+    // A normal name still works, so the rule refuses the harness's own voices
+    // and nothing else.
+    expect(birthAgent(h, 'ada').name).toBe('ada');
+  });
+
+  it('refuses a message to a dead agent, while the other five routes already did', async () => {
+    const h = createHarness();
+    const agent = birthAgent(h, 'ada');
+    const console = await startConsole(h, []);
+    h.ledger.markAgentDead(agent.name);
+
+    const response = await postJson(console.base, '/api/messages', { agent: 'ada', body: 'are you there' });
+    expect(response.status).toBe(400);
+    expect(String(response.body['error'])).toContain('已经死亡');
+    expect(h.ledger.listMessagesForAgent('ada').filter((m) => m.sender === 'operator')).toEqual([]);
+  });
+
+  it('refuses wake and intervene on a name that does not exist, at the route', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    // A permissive delegate is the point: the route must hold on its own.
+    const console = await startConsole(h, []);
+
+    const wake = await postJson(console.base, '/api/wake', { agent: 'ghost' });
+    expect(wake.status).toBe(404);
+
+    const intervene = await postJson(console.base, '/api/intervene', {
+      agent: 'ghost',
+      kind: 'give_balance',
+      amount: 10,
+    });
+    expect(intervene.status).toBe(404);
+    expect(h.ledger.getBalance('ghost')).toBe(0);
+  });
+
+  it('leaves every read marker alone on GET /api/messages', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    const console = await startConsole(h, []);
+    const id = h.ledger.appendMessage('operator', 'ada', 'hello', h.clock.now());
+
+    const response = await getJson(console.base, '/api/messages');
+    expect(response.status).toBe(200);
+    expect(h.ledger.listMessagesForAgent('ada').find((m) => m.id === id)?.readAt).toBeNull();
+  });
+
+  it('answers 400 for a malformed percent-encoding instead of 500', async () => {
+    const h = createHarness();
+    birthAgent(h, 'ada');
+    const console = await startConsole(h, []);
+    for (const route of ['/api/agents/%zz/memory', '/api/agents/%E0%A4%A/wounds']) {
+      const response = await getJson(console.base, route);
+      expect(response.status).toBe(400);
+      expect(String(response.body['error'])).toContain('编码');
+    }
   });
 });

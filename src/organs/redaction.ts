@@ -537,10 +537,18 @@ export function planRedaction(
   const parts = randomInt(random, values.redactionMinRanges, values.redactionMaxRanges);
   const amounts = splitAmount(random, values.redactionCharsPerTick, parts);
 
-  for (const amount of amounts) {
-    if (amount <= 0) {
-      continue;
-    }
+  /**
+   * Places one contiguous range of at most `amount` characters somewhere with
+   * room left, and reports how many characters it actually took.
+   *
+   * `requireFull` refuses to take a shorter run at all. A tick owes its
+   * configured budget, so a shortfall is carried into another range rather than
+   * dropped — dropping it was the other half of the slow-damage bug, where a
+   * starving agent lost less than the configuration says it should. The one
+   * exception is genuinely exhausted text, where the caller has nothing left to
+   * spend the shortfall on.
+   */
+  const place = (amount: number, requireFull: boolean): number => {
     const eligible: number[] = [];
     for (let index = 0; index < prepared.length; index += 1) {
       if (selectableRuns(prepared[index], chosen.get(index) ?? []).length > 0) {
@@ -548,7 +556,7 @@ export function planRedaction(
       }
     }
     if (eligible.length === 0) {
-      break;
+      return 0;
     }
     const pick = eligible[randomInt(random, 0, eligible.length - 1)];
     const plan = prepared[pick];
@@ -562,10 +570,13 @@ export function planRedaction(
       // character: the nearest legal position is used instead.
       const start = startInsideRun(plan.unit.text, run, amount, drawn);
       if (start === null) {
-        continue;
+        return 0;
       }
       range = { start, end: start + amount };
     } else {
+      if (requireFull) {
+        return 0;
+      }
       const longest = runs.reduce((best, run) => (run.end - run.start > best.end - best.start ? run : best));
       range = { start: longest.start, end: longest.end };
     }
@@ -584,6 +595,28 @@ export function planRedaction(
       originalOffset,
       originalText: original.slice(originalOffset, originalOffset + length),
     });
+    return length;
+  };
+
+  // The configured ranges first, each carrying whatever the one before it could
+  // not take. The debt is a character count, not a range count, so a range that
+  // landed in a short run hands its remainder to the next one.
+  let owed = values.redactionCharsPerTick;
+  for (const amount of amounts) {
+    if (owed <= 0) {
+      break;
+    }
+    const placed = place(Math.min(amount, owed), false);
+    if (placed === 0) {
+      break;
+    }
+    owed -= placed;
+  }
+  // Whatever this tick still owes, but only somewhere that can take the whole
+  // remainder: a nearly exhausted MEMORY must report as exhausted rather than be
+  // nibbled into an extra range to make the arithmetic come out.
+  if (owed > 0) {
+    place(owed, true);
   }
   return planned;
 }
@@ -722,6 +755,68 @@ export function ledgerFrozenRefs(ledger: Ledger, agent: string): FrozenRef[] {
   }));
 }
 
+/**
+ * Repairs MEMORY against the ledger before a tick plans anything.
+ *
+ * The wounds of a tick are committed in one transaction and MEMORY is written
+ * after it, so a crash or a full disk in between leaves the ledger holding
+ * damage the file never showed. Planning from that stale file would pick the
+ * same reachable characters again and charge them twice — the same characters,
+ * two wounds, two entries against the death line, for one physical loss.
+ *
+ * Rendering every active frozen sentence from its ledger row makes the ordering
+ * harmless: a tick first rewrites whatever the ledger already says, and only
+ * then decides where new damage goes. It is also what repairs a sentence the
+ * model has since reworded, and it locates each sentence by id, so two
+ * sentences that read the same keep their own places.
+ */
+export function reconcileMemoryWithLedger(
+  ledger: Ledger,
+  agent: string,
+  text: string,
+): { text: string; changed: boolean } {
+  const wounds = ledger.listWounds(agent);
+  const refs: FrozenRef[] = ledger.listActiveFrozenSentences(agent).map((record) => ({
+    id: record.id,
+    visible: renderSentence(
+      record.original,
+      wounds.filter((wound) => wound.sentenceId === record.id),
+    ),
+    startOffset: record.startOffset,
+  }));
+  if (refs.length === 0) {
+    return { text, changed: false };
+  }
+
+  const at = resolveFrozenLocations(
+    text,
+    refs.map((ref) => ({ id: ref.id, visible: ref.visible, startOffset: ref.startOffset ?? null })),
+  );
+  const edits: { start: number; end: number; text: string }[] = [];
+  const missing: FrozenRef[] = [];
+  for (const ref of refs) {
+    const found = at.get(ref.id);
+    if (found === undefined) {
+      missing.push(ref);
+      continue;
+    }
+    const current = text.slice(found, found + ref.visible.length);
+    if (current !== ref.visible) {
+      edits.push({ start: found, end: found + current.length, text: ref.visible });
+    }
+  }
+  let updated = text;
+  for (const edit of edits.sort((left, right) => right.start - left.start)) {
+    updated = updated.slice(0, edit.start) + edit.text + updated.slice(edit.end);
+  }
+  if (missing.length > 0) {
+    // A sentence the ledger knows never reached the file. It goes back from the
+    // ledger, which is the only place its text still exists.
+    updated = restoreFrozenSentences(updated, refs).text;
+  }
+  return { text: updated, changed: updated !== text };
+}
+
 export interface RedactionTickResult {
   status: 'applied' | 'nothing_left';
   wounds: WoundRecord[];
@@ -750,7 +845,18 @@ export function redactOnce(
   tickIndex: number,
 ): RedactionTickResult {
   const at = deps.now();
-  const text = deps.readMemory(agent);
+  let text = deps.readMemory(agent);
+  // Repair the file against the ledger first: a previous tick whose write
+  // failed left damage the file never showed, and planning from that file would
+  // charge the same characters a second time. Only when something was repaired.
+  if (deps.ledger.listActiveFrozenSentences(agent).length > 0) {
+    const repaired = reconcileMemoryWithLedger(deps.ledger, agent, text);
+    if (repaired.changed) {
+      deps.writeMemory(agent, repaired.text);
+      deps.blackbox.append(agent, 'memory_reconciled', at, null, { starvationSince, tickIndex });
+      text = repaired.text;
+    }
+  }
   const active = activeFrozenFor(deps.ledger, agent, text);
   const planned = planRedaction(text, active, deps.values, deps.random);
   if (planned.length === 0) {

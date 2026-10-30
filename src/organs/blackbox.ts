@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import path from 'node:path';
 
 export class BlackboxError extends Error {
@@ -22,6 +22,9 @@ export interface BlackboxRound {
 }
 
 const SAFE_AGENT_NAME = /^[a-z0-9_]+$/;
+
+/** The directory under the black-box root that holds dead agents' logs. */
+export const ARCHIVE_DIR_NAME = 'ARCHIVE';
 
 /**
  * The black box is the complete durable log: append-only JSON Lines, one file
@@ -89,6 +92,9 @@ export class Blackbox {
    * while an agent exists, and the one caller is total erasure: an agent that
    * never existed has no transcript. The name is validated first, because the
    * path is derived from it.
+   *
+   * The archive goes with it. Erasure is the one action that destroys history,
+   * and leaving a copy under `ARCHIVE/` would make that a fiction.
    */
   erase(agent: string): void {
     if (!SAFE_AGENT_NAME.test(agent)) {
@@ -98,6 +104,50 @@ export class Blackbox {
     if (existsSync(dir)) {
       rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
     }
+    const archive = this.archiveDirOf(agent);
+    if (existsSync(archive)) {
+      rmSync(archive, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+    }
+  }
+
+  /**
+   * Where a dead agent's log is kept: under `ARCHIVE/`, a sibling of the live
+   * boxes, so the path is derivable from the conservatory root.
+   *
+   * The live box is never deleted at death — the design promises the transcript
+   * survives — but "survives" was only ever implemented as "we did not remove
+   * it". A day file in the live tree is one directory the supervisor also
+   * writes, and nothing distinguished it from a log still being appended. The
+   * archive is the written-down copy: byte-identical, out of the tree the
+   * supervisor logs into, and named so the operator can find it.
+   */
+  archiveDirOf(agent: string): string {
+    if (!SAFE_AGENT_NAME.test(agent)) {
+      throw new BlackboxError(`unsafe agent name for a black box path: ${agent}`);
+    }
+    return path.join(this.rootDir, ARCHIVE_DIR_NAME, agent);
+  }
+
+  /**
+   * Copies every day file of a dead agent into the archive and returns what it
+   * wrote. Idempotent: running it twice leaves the same bytes in the same place,
+   * so a retried death does not fail on its own archive.
+   */
+  archive(agent: string): string[] {
+    const written: string[] = [];
+    const days = this.listDays(agent);
+    if (days.length === 0) {
+      return written;
+    }
+    const target = this.archiveDirOf(agent);
+    mkdirSync(target, { recursive: true });
+    for (const day of days) {
+      const source = path.join(this.dirOf(agent), `${day}.jsonl`);
+      const copy = path.join(target, `${day}.jsonl`);
+      copyFileSync(source, copy);
+      written.push(copy);
+    }
+    return written;
   }
 
   /** The most recent rounds, oldest first, for the operator's viewer. */

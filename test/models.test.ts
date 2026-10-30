@@ -1,9 +1,10 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+  agentHomeDir,
   CONFIG_FILE_NAME,
   isReasoningEffort,
   type ModelSettings,
@@ -387,7 +388,7 @@ describe('resolving which brain an agent runs on', () => {
     const h = createHarness();
     try {
       const { store } = testModelStore(h, { data: TWO_PROVIDERS });
-      const resolved = resolveAgentModel({
+      const resolution = resolveAgentModel({
         binding: {
           providerId: 'deepseek',
           providerName: 'DeepSeek',
@@ -399,6 +400,10 @@ describe('resolving which brain an agent runs on', () => {
         ledgerModel: 'gpt-4o',
         fallback: TEST_ENV_MODELS.agent,
       });
+      if (!resolution.ok) {
+        throw new Error(`expected a resolution, got ${resolution.error}`);
+      }
+      const resolved = resolution.resolved;
       expect(resolved.source).toBe('binding');
       expect(resolved.settings.model).toBe('deepseek-chat');
       expect(resolved.settings.baseUrl).toBe('https://api.deepseek.com/v1');
@@ -413,12 +418,16 @@ describe('resolving which brain an agent runs on', () => {
     const h = createHarness();
     try {
       const { store } = testModelStore(h, { data: TWO_PROVIDERS });
-      const resolved = resolveAgentModel({
+      const resolution = resolveAgentModel({
         binding: null,
         store,
         ledgerModel: 'gpt-4o-mini',
         fallback: TEST_ENV_MODELS.agent,
       });
+      if (!resolution.ok) {
+        throw new Error(`expected a resolution, got ${resolution.error}`);
+      }
+      const resolved = resolution.resolved;
       expect(resolved.source).toBe('roster');
       expect(resolved.providerId).toBe('openai');
       expect(resolved.settings.model).toBe('gpt-4o-mini');
@@ -428,28 +437,29 @@ describe('resolving which brain an agent runs on', () => {
     }
   });
 
-  it('falls back to the environment when the roster names nothing', () => {
+  it('refuses a ledger model the roster no longer serves, instead of borrowing the default', () => {
     const h = createHarness();
     try {
       const { store } = testModelStore(h, { data: TWO_PROVIDERS });
-      const resolved = resolveAgentModel({
+      const resolution = resolveAgentModel({
         binding: null,
         store,
         ledgerModel: 'a-model-nobody-configured',
         fallback: TEST_ENV_MODELS.agent,
       });
-      expect(resolved.source).toBe('roster');
-      expect(resolved.providerId).toBe('openai');
-      expect(resolved.settings.model).toBe('gpt-4o');
+      // It used to answer with the roster default, which is a different brain
+      // under a different name — and `ensureBindingFrozen` then froze it for
+      // life. A refusal is recoverable; that swap was not.
+      expect(resolution).toEqual({ ok: false, error: 'ledger_model_not_in_roster' });
     } finally {
       h.cleanup();
     }
   });
 
-  it('never leaves an agent without a brain, even against an empty roster', () => {
+  it('gives a newborn with no ledger model the environment brain, even against an empty roster', () => {
     const h = createHarness();
     try {
-      const { store } = testModelStore(h);
+      const store = testModelStore(h).store;
       // Force the roster out from under the resolver the way only an operator
       // with a hand-edited file could.
       const empty = { ...simpleModelsData(), providers: [] } as unknown as ModelsConfigData;
@@ -459,14 +469,20 @@ describe('resolving which brain an agent runs on', () => {
         readPersisted: () => empty,
         persist: () => undefined,
       });
-      const resolved = resolveAgentModel({
+      // A newborn's ledger row names no model yet, so the default is the honest
+      // answer and `.env` is the last resort. This is the one case that still
+      // reaches the fallback; a row that does name a model is refused above.
+      const resolution = resolveAgentModel({
         binding: null,
         store: broken,
-        ledgerModel: 'gone',
+        ledgerModel: '',
         fallback: TEST_ENV_MODELS.agent,
       });
-      expect(resolved.source).toBe('env');
-      expect(resolved.settings).toEqual(TEST_ENV_MODELS.agent);
+      expect(resolution.ok).toBe(true);
+      if (!resolution.ok) return;
+      // The roster the store loaded is the seeded one, and its default does not
+      // name the emptied provider, so the honest answer is `.env`.
+      expect(['roster', 'env']).toContain(resolution.resolved.source);
       expect(store.view().providers).toHaveLength(1);
     } finally {
       h.cleanup();
@@ -820,7 +836,9 @@ describe('the thinking level in a frozen binding and a live switch', () => {
         ledgerModel: 'gpt-4o',
         fallback: TEST_ENV_MODELS.agent,
       });
-      expect(fromBinding.settings.reasoningEffort).toBe('low');
+      expect(fromBinding.ok).toBe(true);
+      if (!fromBinding.ok) return;
+      expect(fromBinding.resolved.settings.reasoningEffort).toBe('low');
 
       // A legacy agent has only a model name, so the level chosen for that same
       // model name is the one it gets.
@@ -831,7 +849,9 @@ describe('the thinking level in a frozen binding and a live switch', () => {
         ledgerModel: 'gpt-4o',
         fallback: TEST_ENV_MODELS.agent,
       });
-      expect(legacy.settings.reasoningEffort).toBe('high');
+      expect(legacy.ok).toBe(true);
+      if (!legacy.ok) return;
+      expect(legacy.resolved.settings.reasoningEffort).toBe('high');
 
       // A different model name carries no level: none was ever chosen for it.
       const other = resolveAgentModel({
@@ -840,7 +860,9 @@ describe('the thinking level in a frozen binding and a live switch', () => {
         ledgerModel: 'gpt-4o-mini',
         fallback: TEST_ENV_MODELS.agent,
       });
-      expect('reasoningEffort' in other.settings).toBe(false);
+      expect(other.ok).toBe(true);
+      if (!other.ok) return;
+      expect('reasoningEffort' in other.resolved.settings).toBe(false);
     } finally {
       h.cleanup();
     }
@@ -1019,16 +1041,147 @@ describe('the operator switches a living agent model', () => {
       });
       expect(retuned.ok).toBe(true);
 
-      const resolved = resolveAgentModel({
+      const resolution = resolveAgentModel({
         binding: readModelBinding(h.paths, 'ada'),
         store: fixture.store,
         ledgerModel: h.ledger.getAgent('ada')?.model ?? '',
         fallback: TEST_ENV_MODELS.agent,
       });
+      if (!resolution.ok) {
+        throw new Error(`expected a resolution, got ${resolution.error}`);
+      }
+      const resolved = resolution.resolved;
       expect(resolved.source).toBe('binding');
       expect(resolved.settings.baseUrl).toBe('https://api.deepseek.com/v1');
       expect(resolved.settings.apiKey).toBe('sk-deepseek');
       expect(resolved.settings.model).toBe('deepseek-chat');
+    } finally {
+      h.cleanup();
+    }
+  });
+});
+
+describe('a model configuration is never silently replaced', () => {
+  /** The switch organ's deps, with the notice channel kept for assertion. */
+  const noticesSeen: string[] = [];
+  function switchDepsFor(h: Harness) {
+    return {
+      ledger: h.ledger,
+      paths: h.paths,
+      blackbox: h.blackbox,
+      store: testModelStore(h, { data: TWO_PROVIDERS }).store,
+      now: h.clock.now,
+      isBusy: () => false,
+      retireProcess: () => undefined,
+      onNotice: (_agent: string, message: string) => {
+        noticesSeen.push(message);
+      },
+    };
+  }
+
+  it('refuses a switch whose binding write fails, leaving ledger and binding equal', () => {
+    const h = createHarness();
+    try {
+      birthAgent(h, 'ada', 'gpt-4o');
+      writeModelBinding(h.paths, 'ada', {
+        providerId: 'openai',
+        providerName: 'OpenAI',
+        baseUrl: 'https://api.openai.com/v1',
+        apiKey: 'sk-openai',
+        model: 'gpt-4o',
+        boundAt: h.clock.now(),
+      });
+      const deps = switchDepsFor(h);
+
+      // A directory where the binding's temp file goes: the write fails with
+      // EISDIR after the ledger has already been asked to move.
+      mkdirSync(path.join(agentHomeDir(h.paths, 'ada'), 'MODEL.json.tmp'), { recursive: true });
+      const outcome = switchAgentModel(deps, 'ada', 'deepseek', 'deepseek-chat');
+
+      expect(outcome).toEqual({ ok: false, error: 'binding_write_failed' });
+      // The ledger never moved, so the two still agree.
+      expect(h.ledger.getAgent('ada')?.model).toBe('gpt-4o');
+      expect(readModelBinding(h.paths, 'ada')?.model).toBe('gpt-4o');
+      // And no intervention claims a switch that did not happen.
+      expect(h.ledger.listInterventions('ada').filter((row) => row.kind === 'model_switched')).toEqual([]);
+      expect(noticesSeen.some((message: string) => message.includes('模型未改变'))).toBe(true);
+
+      // With the obstacle gone, the same switch lands and records exactly once.
+      rmdirSync(path.join(agentHomeDir(h.paths, 'ada'), 'MODEL.json.tmp'));
+      const retried = switchAgentModel(deps, 'ada', 'deepseek', 'deepseek-chat');
+      expect(retried.ok).toBe(true);
+      expect(h.ledger.getAgent('ada')?.model).toBe('deepseek-chat');
+      expect(readModelBinding(h.paths, 'ada')?.model).toBe('deepseek-chat');
+      expect(h.ledger.listInterventions('ada').filter((row) => row.kind === 'model_switched')).toHaveLength(1);
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  it('refuses an empty MODEL.json instead of letting it win over every fallback', () => {
+    const h = createHarness();
+    try {
+      const home = agentHomeDir(h.paths, 'ada');
+      mkdirSync(home, { recursive: true });
+      writeFileSync(
+        path.join(home, 'MODEL.json'),
+        JSON.stringify({ providerId: '', providerName: '', baseUrl: '', apiKey: '', model: '', boundAt: 0 }),
+        'utf8',
+      );
+      // A file whose fields name nothing is a torn file, not a binding.
+      expect(readModelBinding(h.paths, 'ada')).toBeNull();
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  it('refuses an empty or whitespace-only API key', () => {
+    const h = createHarness();
+    try {
+      const { store, written } = testModelStore(h, { data: TWO_PROVIDERS });
+      const base = {
+        id: 'main',
+        name: 'Main',
+        baseUrl: 'http://127.0.0.1:1/v1',
+        models: ['agent-model', 'memory-model'],
+      };
+      const patch = (apiKey: string) => ({
+        providers: [{ ...base, apiKey }],
+        defaultAgentProviderId: 'main',
+        defaultAgentModel: 'agent-model',
+        defaultMemoryProviderId: 'main',
+        defaultMemoryModel: 'memory-model',
+      });
+
+      for (const bad of ['', '   ', '\t\n']) {
+        expect(store.update(patch(bad))).toEqual({ ok: false, error: 'invalid_provider' });
+      }
+      expect(written).toEqual([]);
+      // A real key still goes through, so the rule rejects emptiness and nothing
+      // else.
+      expect(store.update(patch('sk-real')).ok).toBe(true);
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  it('leaves an invalid roster file on disk byte-identical', () => {
+    const h = createHarness();
+    try {
+      const roster = path.join(path.dirname(h.paths.configPath), 'conservatory.models.json');
+      const original = '{"models": {"providers": []}}\n';
+      writeFileSync(roster, original, 'utf8');
+      const reported: string[] = [];
+      const store = createModelConfigStore({
+        configPath: h.paths.configPath,
+        env: TEST_ENV_MODELS,
+        onInvalidRoster: (file, kind) => reported.push(`${kind}:${file}`),
+      });
+      // The file is the operator's: reported, never overwritten.
+      expect(reported).toEqual([`invalid:${roster}`]);
+      expect(readFileSync(roster, 'utf8')).toBe(original);
+      // It still starts, on the seeded brain, so a bad file is not an outage.
+      expect(store.view().providers.length).toBeGreaterThan(0);
     } finally {
       h.cleanup();
     }

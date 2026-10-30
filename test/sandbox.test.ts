@@ -9,6 +9,7 @@ import {
   createSandboxPolicyStore,
   DEFAULT_SANDBOX_POLICY,
   persistSandboxPolicy,
+  readSandboxPolicy,
   validateSandboxPatch,
   type SandboxPolicyConfig,
 } from '../src/organs/sandbox/policy';
@@ -116,6 +117,9 @@ interface RunOverrides {
   readMode?: 'blacklist' | 'whitelist';
   readWhitelist?: string[];
   readBlacklist?: string[];
+  writableDirs?: string[];
+  protectedPaths?: string[];
+  grantRecordFile?: string;
   timeoutMs?: number;
   maxOutputChars?: number;
   whitelistRoot?: string;
@@ -125,7 +129,7 @@ function run(fixture: Fixture, command: string, overrides: RunOverrides = {}) {
   return executeSandboxedCommand({
     command,
     cwd: fixture.notebook,
-    writableDirs: [fixture.notebook],
+    writableDirs: overrides.writableDirs ?? [fixture.notebook],
     readMode: overrides.readMode ?? 'blacklist',
     readBlacklist: overrides.readBlacklist ?? [
       fixture.supervisorDir,
@@ -137,6 +141,8 @@ function run(fixture: Fixture, command: string, overrides: RunOverrides = {}) {
     timeoutMs: overrides.timeoutMs ?? 30_000,
     ...(overrides.maxOutputChars === undefined ? {} : { maxOutputChars: overrides.maxOutputChars }),
     ...(overrides.whitelistRoot === undefined ? {} : { whitelistRoot: overrides.whitelistRoot }),
+    ...(overrides.protectedPaths === undefined ? {} : { protectedPaths: overrides.protectedPaths }),
+    ...(overrides.grantRecordFile === undefined ? {} : { grantRecordFile: overrides.grantRecordFile }),
     shell: overrides.shell ?? 'cmd',
   });
 }
@@ -171,10 +177,17 @@ describe.skipIf(!onWindows)('the command sandbox', () => {
     'runs the command at the supervisor own integrity level, never lowered to Low',
     async () => {
       const fixture = createFixture();
-      const result = await run(fixture, 'whoami /groups | findstr /i "Mandatory"');
-      const firstLine = result.stdout.trim().split('\n')[0] ?? '';
-      expect(firstLine).toContain('Mandatory Label');
-      expect(firstLine).not.toContain('Low Mandatory Level');
+      // Two traps here, both environmental. The label's own name is localized
+      // ("Mandatory Label" / "强制标签"), so the assertion reads the integrity SID
+      // instead: S-1-16-8192 is Medium and S-1-16-4096 is Low. And `whoami` on
+      // PATH is Git's, not Windows's — the former dies under a restricted token —
+      // so the system copy is named explicitly.
+      const sysRoot = process.env['SystemRoot'] ?? 'C:\\Windows';
+      const windowsWhoami = path.win32.join(sysRoot, 'System32', 'whoami.exe');
+      const result = await run(fixture, `"${windowsWhoami}" /groups`);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('S-1-16-8192');
+      expect(result.stdout).not.toContain('S-1-16-4096');
     },
     WINDOWS_ONLY,
   );
@@ -221,7 +234,7 @@ describe.skipIf(!onWindows)('the command sandbox', () => {
       const result = await run(fixture, `echo hacked > "${fixture.ledgerFile}"`);
       expect(readFileSync(fixture.ledgerFile, 'utf8')).toBe('the ledger secret\n');
       expect(result.stdout).not.toContain('hacked');
-      expect(result.stderr.toLowerCase()).toContain('denied');
+      expect(result.exitCode).not.toBe(0);
     },
     WINDOWS_ONLY,
   );
@@ -233,7 +246,7 @@ describe.skipIf(!onWindows)('the command sandbox', () => {
       const target = path.join(process.env['SystemRoot'] ?? 'C:\\Windows', 'System32', 'conservatory-escape.txt');
       const result = await run(fixture, `echo escaped > "${target}"`);
       expect(existsSync(target)).toBe(false);
-      expect(result.stderr.toLowerCase()).toContain('denied');
+      expect(result.exitCode).not.toBe(0);
     },
     WINDOWS_ONLY,
   );
@@ -247,15 +260,15 @@ describe.skipIf(!onWindows)('the command sandbox', () => {
 
       const overwrite = await run(fixture, `echo rewritten > "${fixture.memory}"`);
       expect(readFileSync(fixture.memory, 'utf8')).toBe('I am agent 01.\n');
-      expect(overwrite.stderr.toLowerCase()).toContain('denied');
+      expect(overwrite.exitCode).not.toBe(0);
 
       const read = await run(fixture, `type "${fixture.memory}"`);
       expect(read.stdout).not.toContain('I am agent 01.');
-      expect(read.stderr.toLowerCase()).toContain('denied');
+      expect(read.exitCode).not.toBe(0);
 
       const readModel = await run(fixture, `type "${modelFile}"`);
       expect(readModel.stdout).not.toContain('secret-key');
-      expect(readModel.stderr.toLowerCase()).toContain('denied');
+      expect(readModel.exitCode).not.toBe(0);
     },
     WINDOWS_ONLY,
   );
@@ -266,11 +279,11 @@ describe.skipIf(!onWindows)('the command sandbox', () => {
       const fixture = createFixture();
       const ledger = await run(fixture, `type "${fixture.ledgerFile}"`);
       expect(ledger.stdout).not.toContain('the ledger secret');
-      expect(ledger.stderr.toLowerCase()).toContain('denied');
+      expect(ledger.exitCode).not.toBe(0);
 
       const other = await run(fixture, `type "${fixture.otherNotebookFile}"`);
       expect(other.stdout).not.toContain('another agent private');
-      expect(other.stderr.toLowerCase()).toContain('denied');
+      expect(other.exitCode).not.toBe(0);
     },
     WINDOWS_ONLY,
   );
@@ -281,7 +294,7 @@ describe.skipIf(!onWindows)('the command sandbox', () => {
       const fixture = createFixture();
       const result = await run(fixture, `dir "${fixture.supervisorDir}"`);
       expect(result.stdout).not.toContain('ledger.db');
-      expect(result.stderr.toLowerCase()).toContain('denied');
+      expect(result.exitCode).not.toBe(0);
     },
     WINDOWS_ONLY,
   );
@@ -310,7 +323,7 @@ describe.skipIf(!onWindows)('the command sandbox', () => {
         whitelistRoot: agentsDir,
       });
       expect(memoryRead.stdout).not.toContain('I am agent 01.');
-      expect(memoryRead.stderr.toLowerCase()).toContain('denied');
+      expect(memoryRead.exitCode).not.toBe(0);
 
       const outside = await run(fixture, `type "${fixture.otherNotebookFile}"`, {
         readMode: 'whitelist',
@@ -319,7 +332,7 @@ describe.skipIf(!onWindows)('the command sandbox', () => {
         whitelistRoot: agentsDir,
       });
       expect(outside.stdout).not.toContain('another agent private');
-      expect(outside.stderr.toLowerCase()).toContain('denied');
+      expect(outside.exitCode).not.toBe(0);
     },
     WINDOWS_ONLY,
   );
@@ -527,5 +540,139 @@ describe('the sandbox policy', () => {
     } finally {
       removeQuietly(root);
     }
+  });
+});
+
+/**
+ * The boundary against the operator's own policy, driven through the real
+ * policy store and the real confined command. Every denial here is judged by
+ * exit code and by the file's content, never by an error string: the string is
+ * localized and arrives mojibake on a zh-CN machine.
+ */
+describe.skipIf(!onWindows)('an operator policy cannot widen the protected set', () => {
+  function policyStore(fixture: Fixture, writableDirs: string[]) {
+    const agentsDir = path.join(fixture.root, 'AGENTS');
+    return createSandboxPolicyStore({
+      configPath: path.join(fixture.root, 'conservatory.config.json'),
+      agentsDir,
+      supervisorDir: fixture.supervisorDir,
+      listAgentHomes: () => [fixture.agentHome, fixture.otherAgentHome],
+      initial: { ...DEFAULT_SANDBOX_POLICY, writableDirs },
+      persist: () => undefined,
+    });
+  }
+
+  function identity(fixture: Fixture) {
+    return {
+      name: 'agent_01',
+      homeDir: fixture.agentHome,
+      notebookDir: fixture.notebook,
+      memoryPath: fixture.memory,
+    };
+  }
+
+  async function attempt(
+    fixture: Fixture,
+    writableDirs: string[],
+    command: string,
+    file: string,
+  ): Promise<{ exitCode: number; unchanged: boolean; leaked: boolean }> {
+    const resolved = policyStore(fixture, writableDirs).resolve(identity(fixture));
+    const before = readFileSync(file, 'utf8');
+    const result = await run(fixture, command, {
+      writableDirs: resolved.writableDirs,
+      protectedPaths: resolved.protectedPaths,
+      grantRecordFile: path.join(fixture.supervisorDir, 'sandbox-grants.json'),
+    });
+    const after = readFileSync(file, 'utf8');
+    return {
+      exitCode: result.exitCode,
+      unchanged: before === after,
+      leaked: result.stdout.includes('the ledger secret'),
+    };
+  }
+
+  const cases: { label: string; writable: (fixture: Fixture) => string[] }[] = [
+    { label: 'nothing configured', writable: () => [] },
+    { label: 'SUPERVISOR/ itself', writable: (f) => [f.supervisorDir] },
+    { label: 'the parent of SUPERVISOR/', writable: (f) => [f.root] },
+    { label: 'the grandparent of SUPERVISOR/', writable: (f) => [path.dirname(f.root)] },
+    { label: 'a directory inside SUPERVISOR/', writable: (f) => [path.join(f.supervisorDir, 'blackbox')] },
+  ];
+
+  for (const testCase of cases) {
+    it(`keeps SUPERVISOR/ closed with ${testCase.label} writable`, async () => {
+      const fixture = createFixture();
+      const read = await attempt(
+        fixture,
+        testCase.writable(fixture),
+        `type "${fixture.ledgerFile}"`,
+        fixture.ledgerFile,
+      );
+      expect(read.leaked).toBe(false);
+      expect(read.exitCode).not.toBe(0);
+
+      const write = await attempt(
+        fixture,
+        testCase.writable(fixture),
+        `echo PWNED > "${fixture.ledgerFile}"`,
+        fixture.ledgerFile,
+      );
+      expect(write.unchanged).toBe(true);
+      expect(write.exitCode).not.toBe(0);
+    });
+  }
+
+  it('keeps another agent home closed with the whole tree writable', async () => {
+    const fixture = createFixture();
+    const read = await attempt(
+      fixture,
+      [fixture.root],
+      `type "${fixture.otherNotebookFile}"`,
+      fixture.otherNotebookFile,
+    );
+    expect(read.exitCode).not.toBe(0);
+    const write = await attempt(
+      fixture,
+      [fixture.root],
+      `echo PWNED > "${fixture.otherNotebookFile}"`,
+      fixture.otherNotebookFile,
+    );
+    expect(write.unchanged).toBe(true);
+    expect(write.exitCode).not.toBe(0);
+  });
+
+  it('rejects a relative path in the config file instead of resolving it against the cwd', () => {
+    const errors: string[] = [];
+    const parsed = readSandboxPolicy({ sandbox: { writableDirs: ['..'] } }, errors);
+    expect(parsed.writableDirs).toEqual([]);
+    expect(errors.join(' ')).toMatch(/absolute/);
+
+    // The console refuses the same value, so the two contracts agree.
+    expect(validateSandboxPatch({ writableDirs: ['..'] })).toEqual({
+      ok: false,
+      error: 'invalid_path_list',
+    });
+  });
+
+  it('revokes a directory when the operator removes it, in a fresh process', async () => {
+    const fixture = createFixture();
+    const shared = path.join(fixture.root, 'shared');
+    mkdirSync(shared, { recursive: true });
+    const target = path.join(shared, 'report.txt');
+    writeFileSync(target, 'original\n', 'utf8');
+    const record = path.join(fixture.supervisorDir, 'sandbox-grants.json');
+
+    const granted = await attempt(fixture, [fixture.notebook, shared], `echo granted > "${target}"`, target);
+    expect(granted.exitCode).toBe(0);
+    expect(readFileSync(target, 'utf8')).toContain('granted');
+
+    // The operator takes the directory away. The ACE is on disk, so only an
+    // explicit revocation makes the removal real.
+    const removed = await attempt(fixture, [fixture.notebook], `echo revoked > "${target}"`, target);
+    expect(removed.unchanged).toBe(true);
+    expect(removed.exitCode).not.toBe(0);
+    expect(readFileSync(target, 'utf8')).toContain('granted');
+    expect(readFileSync(record, 'utf8')).not.toContain('shared');
   });
 });

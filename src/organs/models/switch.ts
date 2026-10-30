@@ -14,7 +14,8 @@
  * it is why a busy agent is switched rather than refused.
  */
 
-import { modelBindingPath, writeModelBinding, type AgentModelBinding } from './binding';
+import { rmSync } from 'node:fs';
+import { modelBindingPath, readModelBinding, writeModelBinding, type AgentModelBinding } from './binding';
 import type { ModelConfigStore } from './store';
 import { isReasoningEffort, type ReasoningEffort, type RuntimePaths } from '../../config';
 import type { Blackbox } from '../blackbox';
@@ -73,6 +74,7 @@ export function switchAgentModel(
   const suffix = effort === undefined ? '' : `（思考：${effort}）`;
 
   const at = deps.now();
+  const previousBinding = readModelBinding(deps.paths, agent);
   const binding: AgentModelBinding = {
     providerId: provider.id,
     providerName: provider.name,
@@ -83,13 +85,38 @@ export function switchAgentModel(
     boundAt: at,
   };
 
-  // The ledger row is what the next wake-up reads; the binding is what makes
-  // the choice survive the roster being edited underneath it. Both, or neither.
+  // The binding first, the ledger row second, and both inside one transaction of
+  // the ledger's own so a reader never sees the two disagree.
+  //
+  // The binding used to be written after the ledger, with no guard: a failed
+  // write left the ledger naming the new brain, the file naming the old one, and
+  // no intervention recorded — the state `resolveAgentModel` reads as "binding
+  // wins", so the agent kept running the old brain while every record said the
+  // new one. Writing the file first means a failure leaves the ledger untouched,
+  // which is the state the operator can simply retry from.
+  try {
+    writeModelBinding(deps.paths, agent, binding);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    deps.onNotice(agent, `切换模型失败：模型绑定文件无法写入（${message}），模型未改变。`, at);
+    return { ok: false, error: 'binding_write_failed' };
+  }
   if (!deps.ledger.updateAgentModel(agent, model)) {
     // The guarded UPDATE matched no living row: the agent died in between.
+    // Put the old binding back, so a dead agent is not left carrying a brain
+    // its ledger row never recorded.
+    try {
+      if (previousBinding === null) {
+        rmSync(modelBindingPath(deps.paths, agent), { force: true });
+      } else {
+        writeModelBinding(deps.paths, agent, previousBinding);
+      }
+    } catch {
+      // Nothing further to undo: the ledger row is the one that decides, and it
+      // still names the old model.
+    }
     return { ok: false, error: 'agent_dead' };
   }
-  writeModelBinding(deps.paths, agent, binding);
   deps.ledger.appendIntervention(
     'model_switched',
     agent,

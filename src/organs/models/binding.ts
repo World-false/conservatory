@@ -47,6 +47,22 @@ function readString(source: Record<string, unknown>, key: string): string | null
 }
 
 /**
+ * A field this file cannot do without, as a non-empty trimmed string.
+ *
+ * `readString` alone accepts `''`, and an all-empty object then read back as a
+ * binding — which won over the roster and the environment, so a torn or
+ * hand-edited file left the agent with no usable brain and no fallback. An empty
+ * string is not a provider, a URL, a key or a model name.
+ */
+function readRequired(source: Record<string, unknown>, key: string): string | null {
+  const value = readString(source, key);
+  if (value === null || value.trim() === '') {
+    return null;
+  }
+  return value;
+}
+
+/**
  * Reads the binding back. A file that is missing, unreadable, torn or
  * ill-typed returns null, so the caller falls back to the ledger and the
  * environment rather than refusing to wake an agent.
@@ -66,10 +82,12 @@ export function readModelBinding(paths: RuntimePaths, name: string): AgentModelB
   if (record === null) {
     return null;
   }
-  const providerId = readString(record, 'providerId');
-  const baseUrl = readString(record, 'baseUrl');
+  const providerId = readRequired(record, 'providerId');
+  const baseUrl = readRequired(record, 'baseUrl');
+  // The key may legitimately be empty for a keyless local endpoint, so it is
+  // only required to be a string; everything else has to name something.
   const apiKey = readString(record, 'apiKey');
-  const model = readString(record, 'model');
+  const model = readRequired(record, 'model');
   if (providerId === null || baseUrl === null || apiKey === null || model === null) {
     return null;
   }

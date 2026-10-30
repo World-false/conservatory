@@ -18,6 +18,7 @@ import {
 } from '../config';
 import type { ModelClient } from '../model/client';
 import type { Blackbox } from '../organs/blackbox';
+import { grantRecordPath } from '../organs/sandbox';
 import { listWoundViews, treat } from '../organs/clinic';
 import { reportIncome } from '../organs/income';
 import type { Ledger, TransferBalanceResult, TreatmentTier } from '../organs/ledger';
@@ -638,6 +639,9 @@ async function executeCommandTool(
         readWhitelist: policy.readWhitelist,
         readOnlyFiles: policy.readOnlyFiles,
         whitelistRoot: policy.whitelistRoot,
+        protectedPaths: policy.protectedPaths,
+        revocationScope: policy.revocationScope,
+        grantRecordFile: grantRecordPath(deps.paths.supervisorDir),
         timeoutMs: policy.commandTimeoutSeconds * 1000,
         maxOutputChars: policy.maxOutputChars,
         shell,
@@ -725,7 +729,10 @@ export class RoundCoordinator {
   }
 
   /** Everything the agent sees at the start of a round, and nothing else. */
-  buildContext(agent: AgentRecord, now: number): { system: string; user: string } {
+  buildContext(
+    agent: AgentRecord,
+    now: number,
+  ): { system: string; user: string; inboxIds: number[] } {
     const { ledger, values, paths } = this.deps;
     // One pass over prompts/ per wake: that is what makes an edit take effect
     // on the next round without a restart.
@@ -781,12 +788,14 @@ export class RoundCoordinator {
 
     const user = renderRoundContext(templates.userContext.text, systemBlocks);
 
-    ledger.markMessagesRead(
-      unread.map((message) => message.id),
-      now,
-    );
+    const inboxIds = unread.map((message) => message.id);
+    // Marked read here, not after the round, so a slow round cannot be handed
+    // the same inbox on the next wake. The ids go back to `run`, which puts them
+    // back if the model never answered: a round that dies on its first request
+    // did not consume them.
+    ledger.markMessagesRead(inboxIds, now);
 
-    return { system, user };
+    return { system, user, inboxIds };
   }
 
   /** Runs one whole round, then folds it into MEMORY. */
@@ -811,8 +820,12 @@ export class RoundCoordinator {
     });
 
     let chain: Promise<void> = Promise.resolve();
+    // Whether the model ever answered this round. A round that ends without an
+    // answer was handed an inbox nobody read, and the messages go back.
+    let modelAnswered = false;
     const handle = async (message: ChildToParentMessage): Promise<void> => {
       if (message.type === 'assistant_message') {
+        modelAnswered = true;
         entries.push({ kind: 'assistant', content: message.message.content });
         blackbox.append(agent.name, 'assistant_message', this.deps.now(), roundId, {
           message: message.message,
@@ -958,6 +971,17 @@ export class RoundCoordinator {
     await chain;
     const endedAt = this.deps.now();
     ledger.endRound(roundId, endedAt, ended.endReason);
+
+    // The inbox was marked read when the context was built, so that a slow round
+    // could not be handed the same messages twice. If the model never answered,
+    // nobody read them: put them back rather than swallow them on a 503.
+    if (!modelAnswered) {
+      ledger.markMessagesUnread(context.inboxIds);
+      blackbox.append(agent.name, 'inbox_restored', endedAt, roundId, {
+        messages: context.inboxIds.length,
+        endReason: ended.endReason,
+      });
+    }
 
     const transcript: RoundTranscript = {
       roundId,

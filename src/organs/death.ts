@@ -1,4 +1,5 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 import { agentHomeDir, type ConservatoryValues, type RuntimePaths } from '../config';
 import type { Blackbox } from './blackbox';
 import { PAUSED_SETTING_AGENT, type DeathCause, type Ledger } from './ledger';
@@ -34,6 +35,11 @@ export interface DeathCertificateBody {
     pendingIncomeReports: number[];
   };
   interventions: { kind: string; at: number; detail: string }[];
+  /**
+   * Where the dead agent's black box was copied, relative to the conservatory
+   * root. Null when it had written nothing yet.
+   */
+  blackboxArchive: string | null;
 }
 
 export interface DeathDeps {
@@ -71,13 +77,25 @@ function toolCallCounts(entries: readonly { kind: string; [key: string]: unknown
  * The last few rounds as numbers and names only: when each ran, why it ended,
  * and how many times each tool was called. The black box holds the text; the
  * certificate holds the shape.
+ *
+ * A black box is evidence, and evidence can be damaged: a half-written line
+ * after a power cut is exactly the case a death certificate exists for. A
+ * reader that throws here would cancel the death it was called to record, so a
+ * damaged log yields a certificate with no final actions instead. Retention is
+ * the black box's own promise; the death is the body's, and the body decides.
  */
 function summariseLastRounds(
   blackbox: Blackbox,
   agent: string,
   roundCount: number,
 ): DeathCertificateBody['lastActions'] {
-  return blackbox.readRecentRounds(agent, roundCount).map((group) => {
+  let rounds;
+  try {
+    rounds = blackbox.readRecentRounds(agent, roundCount);
+  } catch {
+    return [];
+  }
+  return rounds.map((group) => {
     const start = group.entries.find((entry) => entry.kind === 'round_start');
     const end = group.entries.find((entry) => entry.kind === 'round_end');
     const reason = end === undefined ? null : end['endReason'];
@@ -91,7 +109,13 @@ function summariseLastRounds(
   });
 }
 
-function buildBody(deps: DeathDeps, agent: string, cause: DeathCause, at: number): DeathCertificateBody | null {
+function buildBody(
+  deps: DeathDeps,
+  agent: string,
+  cause: DeathCause,
+  at: number,
+  blackboxArchive: string | null,
+): DeathCertificateBody | null {
   const record = deps.ledger.getAgent(agent);
   if (record === null) {
     return null;
@@ -131,6 +155,7 @@ function buildBody(deps: DeathDeps, agent: string, cause: DeathCause, at: number
     lastActions: summariseLastRounds(deps.blackbox, agent, 3),
     openCommitments: { tasks: held, pendingIncomeReports },
     interventions,
+    blackboxArchive,
   };
 }
 
@@ -148,6 +173,9 @@ export function renderDeathCertificate(body: DeathCertificateBody): string {
   lines.push(`- Lifetime redacted characters: ${body.lifetimeRedactedChars}`);
   lines.push(`- Untreated redacted characters at death: ${body.untreatedRedactedChars}`);
   lines.push(`- Death line: ${body.deathLineChars}`);
+  lines.push(
+    `- Black box archive: ${body.blackboxArchive === null ? '(nothing was logged)' : body.blackboxArchive}`,
+  );
   lines.push('');
   lines.push('## Treatment records');
   lines.push(`- Ordinary treatments: ${body.treatments.ordinary}`);
@@ -211,7 +239,18 @@ export function die(deps: DeathDeps, agent: string, cause: DeathCause, at: numbe
   if (record.status !== 'alive') {
     return { ok: false, error: 'already_dead' };
   }
-  const body = buildBody(deps, agent, cause, at);
+  // Archived first, so the certificate can name the copy. A black box that
+  // cannot be copied must not block a death — the death is the body's fact and
+  // the copy is evidence about it — so a failure is reported and the certificate
+  // says there is no archive.
+  let archivePath: string | null = null;
+  try {
+    const written = deps.blackbox.archive(agent);
+    archivePath = written.length === 0 ? null : path.relative(deps.paths.rootDir, deps.blackbox.archiveDirOf(agent));
+  } catch (error) {
+    deps.onNotice(agent, `黑盒归档失败：${error instanceof Error ? error.message : String(error)}`);
+  }
+  const body = buildBody(deps, agent, cause, at, archivePath);
   if (body === null) {
     return { ok: false, error: 'agent_not_found' };
   }

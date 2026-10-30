@@ -10,7 +10,30 @@ import { newbornMemory, writeMemoryAtomic } from './memory';
 
 export const AGENT_NAME_PATTERN = /^[a-z0-9_]+$/;
 
-export type PopulationErrorCode = 'invalid_name' | 'name_taken' | 'no_free_slot' | 'home_exists';
+export type PopulationErrorCode =
+  | 'invalid_name'
+  | 'reserved_name'
+  | 'name_taken'
+  | 'no_free_slot'
+  | 'home_exists';
+
+/**
+ * Names the harness itself speaks as.
+ *
+ * `operator` is the sender of every message the human writes, and the console
+ * labels that sender 操作员; an agent holding the name could write into the
+ * operator's inbox indistinguishable from the human, and would also receive the
+ * human's own messages. `system` is the sender the harness uses for what
+ * happened to the body, and its inbox lands under `# SYSTEM REMINDERS`, the one
+ * block an agent is meant to trust as its own body speaking. `conservatory` is
+ * the owner of the two global pause interventions.
+ */
+export const RESERVED_AGENT_NAMES: readonly string[] = ['operator', 'system', 'conservatory'];
+
+/** True when the name belongs to the harness rather than to an agent. */
+export function isReservedAgentName(name: string): boolean {
+  return RESERVED_AGENT_NAMES.includes(name.trim().toLowerCase());
+}
 
 export type CreateAgentResult =
   | { ok: true; agent: AgentRecord }
@@ -60,6 +83,11 @@ export function createAgent(input: CreateAgentInput): CreateAgentResult {
   const { ledger, values, paths, name, model, now } = input;
   if (!AGENT_NAME_PATTERN.test(name)) {
     return { ok: false, code: 'invalid_name' };
+  }
+  // Refused before anything is written: an agent cannot be born into a name the
+  // harness already speaks as.
+  if (isReservedAgentName(name)) {
+    return { ok: false, code: 'reserved_name' };
   }
   if (ledger.getAgent(name) !== null) {
     return { ok: false, code: 'name_taken' };

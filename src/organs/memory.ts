@@ -170,13 +170,13 @@ export function renderTranscript(transcript: RoundTranscript): string {
  */
 export const MEMORY_SYSTEM_PROMPT = [
   'You are the memory system of the Conservatory. You are not the agent; you maintain the one file that carries the agent between rounds.',
-  "MEMORY is a first-person record of the agent's life: facts about what happened to it, and commitments it made. It has two parts: the long-term part, and the recent rounds.",
+  "MEMORY is a first-person record of the agent's life: what happened to it, what it felt or cared about, and the commitments it made. It has two parts: the long-term part, and the recent rounds.",
   'The caller tells you in every request which single job to do, and you never do more than that job:',
   '- append: fill in the round that just ended. Write only its body.',
   '- compact: fold the rounds the caller shows you into the long-term part. The caller gives you the editing tools replace_in_memory, append_to_memory and finish_memory_edit, and the long-term text changes only through them. Never answer a compact request with the whole long-term text; call the tools and end with finish_memory_edit.',
   'Rules:',
   "- Write in the first person, as the agent's own record.",
-  '- Record facts and commitments only. Do not invent a persona, a role, or a character, and do not evaluate the agent\'s personality.',
+  "- Record what actually happened, what the agent itself felt, feared, or wanted in the round, and the commitments it made. Do not invent a persona, a role, or a character, do not add feelings the agent did not express, and do not evaluate the agent's personality.",
   '- Never write the Name or Born lines; the harness owns them.',
   '- Never write a heading of any kind, and never rewrite the whole file.',
   '- Leave every sentence that holds a \u25AE placeholder exactly as it stands. Copy it character for character: never fill it in, shorten it, or drop it.',
@@ -520,7 +520,7 @@ function appendUserPrompt(oldMemory: string, transcript: RoundTranscript): strin
     renderTranscript(transcript),
     '=== END THIS ROUND ===',
     '',
-    "Your job is APPEND. Write only the body of this round's new block: two to four first-person sentences about what happened, what I decided, and what I promised.",
+    "Your job is APPEND. Write only the body of this round's new block: two to four first-person sentences about what happened, how it felt to me, what I decided, and what I promised.",
     'Do not write a heading. Do not write the Name or Born lines. Do not repeat what MEMORY already holds, and do not rewrite the file.',
   ];
   return parts.join('\n');

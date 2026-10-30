@@ -264,3 +264,45 @@ describe('a paused conservatory', () => {
     }
   });
 });
+
+describe('a pause torn between its two writes', () => {
+  it('charges no hunger on resume, and gives the claim clock its time back', () => {
+    const h = createHarness();
+    try {
+      birthAgent(h, 'ada');
+      // A database written by an older build could hold this: the switch on,
+      // the instant it began missing. Construct it directly, since the fix is
+      // that the two rows can no longer be written apart.
+      h.ledger.setSetting('paused', '1');
+      expect(h.ledger.getPauseState()).toEqual({ paused: true, pausedSince: null });
+
+      const satietyBefore = readSatiety(h.ledger, h.values, 'ada', h.clock.now());
+      const task = createTask(h.ledger, {
+        id: 'task_0001',
+        title: 'chore',
+        description: 'd',
+        price: 30,
+        at: h.clock.now(),
+      });
+      expect(task.ok).toBe(true);
+      expect(claimTask(h.ledger, 'ada', 'task_0001', h.clock.now()).ok).toBe(true);
+      const claimedAt = h.ledger.getTask('task_0001')?.claimedAt;
+
+      // Twenty-four hours pass while the pause is in force.
+      const pauseSpanMs = 24 * 60 * 60 * 1000;
+      h.clock.advance(pauseSpanMs);
+
+      const outcome = pauseOrganOf(h).set(false, h.clock.now());
+      expect(outcome.changed).toBe(true);
+      expect(outcome.pausedDurationMs).toBe(0);
+
+      // Not one character of that day was hunger.
+      expect(readSatiety(h.ledger, h.values, 'ada', h.clock.now())).toBeCloseTo(satietyBefore, 6);
+      // The claim clock did not lose the pause either; with no anchor recorded
+      // there is no span to give back, and the fair reading is not to punish.
+      expect(h.ledger.getTask('task_0001')?.claimedAt).toBe(claimedAt);
+    } finally {
+      h.cleanup();
+    }
+  });
+});

@@ -1,3 +1,4 @@
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import http from 'node:http';
 import { isReasoningEffort, validateValuesPatch, type ConservatoryValues, type ReasoningEffort, type RuntimePaths } from '../config';
@@ -16,7 +17,7 @@ import type {
 import { readSatiety } from '../organs/metabolism';
 import { readMemoryFile } from '../organs/memory';
 import { readModelBinding } from '../organs/models/binding';
-import type { ModelConfigStore } from '../organs/models/store';
+import { redactModelsData, MASKED_API_KEY, type ModelConfigStore } from '../organs/models/store';
 import { NotebookError, listNotebook, readNotebookFile } from '../organs/notebook';
 import type { PromptLibrary } from '../organs/prompts';
 import { renderSentenceWithSpans } from '../organs/redaction';
@@ -113,14 +114,39 @@ export interface ConsoleDeps {
    */
   eraseAgent(agent: string, confirmName: string): { ok: true } | { ok: false; error: string };
   getNotices(): ConsoleNotice[];
+  /**
+   * The operator's credential. The supervisor mints one at startup so it can
+   * print it in the banner; a console embedded in a test passes its own. Left
+   * out, a fresh one is minted and only the served page can learn it.
+   */
+  operatorToken?: string;
 }
 
 const MAX_BODY_BYTES = 256 * 1024;
+
+/** The cookie the served page carries the operator's credential in. */
+export const OPERATOR_COOKIE = 'conservatory_operator';
+
+/**
+ * A path segment, decoded. A malformed escape is the client's mistake, so it
+ * answers 400 rather than reaching the catch-all as a 500 "URI malformed" with
+ * a stack trace behind it.
+ */
+class BadPathSegment extends Error {}
+
+function segment(raw: string): string {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    throw new BadPathSegment(raw);
+  }
+}
 
 /** Operator-facing text is Chinese; everything an agent sees stays English. */
 const MESSAGES: Record<string, string> = {
   agent_not_found: '没有这个 agent',
   invalid_name: '名字只能包含小写字母、数字和下划线',
+  reserved_name: "这个名字属于温室自己（operator / system / conservatory），不能给 agent 用",
   name_taken: '这个名字已经被占用',
   no_free_slot: '没有空槽位',
   home_exists: 'AGENTS 下已存在同名目录',
@@ -488,21 +514,134 @@ async function testModelConnection(
 }
 
 export function createConsoleServer(deps: ConsoleDeps): http.Server {
+  const token = deps.operatorToken ?? randomToken();
   return http.createServer((request, response) => {
-    void handle(deps, request, response);
+    void handle(deps, request, response, token);
   });
+}
+
+/**
+ * The operator's credential.
+ *
+ * The console binds loopback, and the sandbox deliberately lets an agent reach
+ * the network so it can earn outside. Those two facts together used to mean a
+ * confined command could POST to `/api/intervene` and pay itself; loopback is not
+ * a boundary when the agent shares it. The token is minted at startup, printed
+ * in the banner, and handed to the page as an HttpOnly cookie when the page is
+ * served, so the operator's every-day flow is "open the page" and nothing else.
+ *
+ * It is deliberately not a password the operator types: a credential that has to
+ * be remembered is one that gets written down, and this one only has to prove
+ * "this request came from something that read the page".
+ */
+function randomToken(): string {
+  return randomBytes(32).toString('hex');
+}
+
+function cookieToken(request: http.IncomingMessage): string | null {
+  const header = request.headers.cookie;
+  if (header === undefined) {
+    return null;
+  }
+  for (const part of header.split(';')) {
+    const [name, ...rest] = part.trim().split('=');
+    if (name === OPERATOR_COOKIE) {
+      return rest.join('=');
+    }
+  }
+  return null;
+}
+
+function tokensMatch(left: string, right: string): boolean {
+  const a = Buffer.from(left, 'utf8');
+  const b = Buffer.from(right, 'utf8');
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+/**
+ * Refusals that apply before any route runs.
+ *
+ *  - A mutating request carrying a foreign `Origin` is refused. `text/plain` is
+ *    CORS-safelisted, so a hostile page needs no preflight to send one, and the
+ *    browser will still deliver it whatever the reply says: the only place to
+ *    stop it is here, before the state changes. No `Access-Control-Allow-Origin`
+ *    is ever sent, so the page cannot read the answer back either.
+ *  - Every `/api/` request needs the operator's cookie. GET included: the state
+ *    response names every agent, and it used to carry the provider keys.
+ */
+function preflight(
+  request: http.IncomingMessage,
+  url: URL,
+  token: string,
+): { ok: true } | { ok: false; status: number; error: string } {
+  const method = request.method ?? 'GET';
+  const origin = request.headers.origin;
+  const mutating = method !== 'GET' && method !== 'HEAD';
+  if (mutating && origin !== undefined && !isSameOrigin(origin, request, url)) {
+    return { ok: false, status: 403, error: '跨站请求被拒绝（来源校验未通过）' };
+  }
+  if (!url.pathname.startsWith('/api/')) {
+    return { ok: true };
+  }
+  if (tokensMatch(cookieToken(request) ?? '', token)) {
+    return { ok: true };
+  }
+  return { ok: false, status: 401, error: '未授权的请求：请通过控制台页面访问' };
+}
+
+/**
+ * True when `origin` is the page this server itself served.
+ *
+ * The port comes from the request's `Host` header, which is the port the client
+ * actually reached; the parsed URL cannot supply it, because the request line
+ * carries a path and the base used to parse it is only a placeholder. Both
+ * loopback spellings are accepted: an operator who typed `localhost:4317` gets a
+ * page whose own POSTs carry `Origin: http://localhost:4317`, and refusing those
+ * would break the console for half of them.
+ */
+function isSameOrigin(origin: string, request: http.IncomingMessage, url: URL): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    return false;
+  }
+  const host = parsed.hostname.toLowerCase();
+  if (host !== '127.0.0.1' && host !== 'localhost' && host !== '[::1]' && host !== '::1') {
+    return false;
+  }
+  const hostHeader = request.headers.host;
+  if (hostHeader === undefined) {
+    return false;
+  }
+  const port = new URL(`http://${hostHeader}`).port || url.port;
+  return parsed.port === port || (port === '' && parsed.port === '');
 }
 
 async function handle(
   deps: ConsoleDeps,
   request: http.IncomingMessage,
   response: http.ServerResponse,
+  token: string,
 ): Promise<void> {
   try {
-    await route(deps, request, response);
+    const url = new URL(request.url ?? '/', 'http://127.0.0.1');
+    const gate = preflight(request, url, token);
+    if (!gate.ok) {
+      sendJson(response, gate.status, { ok: false, error: gate.error });
+      return;
+    }
+    await route(deps, request, response, token);
   } catch (error) {
+    if (error instanceof BadPathSegment) {
+      sendJson(response, 400, { ok: false, error: '路径中的百分号编码不合法' });
+      return;
+    }
+    // A 500 goes back as a category, never as the thrown message: a filesystem
+    // error carries an absolute path, and the page is a browser surface.
     const message = error instanceof Error ? error.message : String(error);
-    sendJson(response, 500, { ok: false, error: `控制台内部错误：${message}` });
+    process.stderr.write(`控制台内部错误：${message}\n`);
+    sendJson(response, 500, { ok: false, error: '控制台内部错误（详情见 supervisor 日志）' });
   }
 }
 
@@ -515,8 +654,12 @@ function sendJson(response: http.ServerResponse, status: number, body: unknown):
   response.end(text);
 }
 
-function sendHtml(response: http.ServerResponse, html: string): void {
-  response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+function sendHtml(response: http.ServerResponse, html: string, token?: string): void {
+  const headers: Record<string, string> = { 'content-type': 'text/html; charset=utf-8' };
+  if (token !== undefined) {
+    headers['set-cookie'] = `${OPERATOR_COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/`;
+  }
+  response.writeHead(200, headers);
   response.end(html);
 }
 
@@ -694,7 +837,7 @@ function buildState(deps: ConsoleDeps): Record<string, unknown> {
     prompts: deps.prompts.status(),
     // The roster the page paints its model pickers from. It is only a menu:
     // which brain an agent actually runs on is in its own frozen binding.
-    models: deps.modelStore.view(),
+    models: redactModelsData(deps.modelStore.view()),
     config: {
       satietyMax: values.satietyMax,
       satietyDecayPerSecond: values.satietyDecayPerSecond,
@@ -777,6 +920,7 @@ async function route(
   deps: ConsoleDeps,
   request: http.IncomingMessage,
   response: http.ServerResponse,
+  token: string,
 ): Promise<void> {
   const method = request.method ?? 'GET';
   const url = new URL(request.url ?? '/', 'http://127.0.0.1');
@@ -787,7 +931,10 @@ async function route(
       sendJson(response, 405, { ok: false, error: '只支持 GET' });
       return;
     }
-    sendHtml(response, readFileSync(deps.indexHtmlPath, 'utf8'));
+    // The page is the only thing that hands out the credential, and it does so
+    // as an HttpOnly cookie: a script the page might ever be tricked into running
+    // cannot read it, and every request the page makes carries it back.
+    sendHtml(response, readFileSync(deps.indexHtmlPath, 'utf8'), token);
     return;
   }
 
@@ -846,7 +993,7 @@ async function route(
   // GET/POST /api/models/config
   if (segments.length === 3 && segments[1] === 'models' && segments[2] === 'config') {
     if (method === 'GET') {
-      sendJson(response, 200, { ok: true, models: deps.modelStore.view() });
+      sendJson(response, 200, { ok: true, models: redactModelsData(deps.modelStore.view()) });
       return;
     }
     if (method === 'POST') {
@@ -923,7 +1070,11 @@ async function route(
       sendJson(response, 400, { ok: false, error: '请先填写 Base URL 或选择提供商' });
       return;
     }
-    const apiKey = rawApiKey !== null && rawApiKey !== '' ? rawApiKey : (provider?.apiKey ?? '');
+    // The page no longer receives the real key, so it echoes back the sentinel;
+    // that means "use the saved one", not "the key is eight bullets".
+    const echoedMask = rawApiKey === MASKED_API_KEY;
+    const apiKey =
+      rawApiKey !== null && rawApiKey !== '' && !echoedMask ? rawApiKey : (provider?.apiKey ?? '');
     const outcome = await testModelConnection(baseUrl, apiKey, model, effort.value);
     if (!outcome.ok) {
       sendJson(response, 400, { ok: false, error: outcome.error });
@@ -946,7 +1097,7 @@ async function route(
 
   // /api/agents/:name/...
   if (segments.length >= 4 && segments[1] === 'agents') {
-    const agentName = decodeURIComponent(segments[2]);
+    const agentName = segment(segments[2]);
     const resource = segments[3];
     const record = deps.ledger.getAgent(agentName);
     if (record === null) {
@@ -966,7 +1117,7 @@ async function route(
         sendJson(response, 400, { ok: false, error: messageFor('agent_busy_try_later') });
         return;
       }
-      const woundId = Number.parseInt(decodeURIComponent(segments[4]), 10);
+      const woundId = Number.parseInt(segment(segments[4]), 10);
       const body = await readJsonBody(request);
       const tier = readString(body, 'tier');
       if (!Number.isInteger(woundId)) {
@@ -1145,7 +1296,7 @@ async function route(
       return;
     }
     if (segments.length === 4 && segments[3] === 'review' && method === 'POST') {
-      const taskId = decodeURIComponent(segments[2]);
+      const taskId = segment(segments[2]);
       const body = await readJsonBody(request);
       const decision = readString(body, 'decision');
       if (decision !== 'accept' && decision !== 'reject' && decision !== 'rework' && decision !== 'return') {
@@ -1162,7 +1313,7 @@ async function route(
       return;
     }
     if (segments.length === 4 && segments[3] === 'update' && method === 'POST') {
-      const taskId = decodeURIComponent(segments[2]);
+      const taskId = segment(segments[2]);
       const body = await readJsonBody(request);
       const title = readString(body, 'title');
       const description = readString(body, 'description');
@@ -1180,7 +1331,7 @@ async function route(
       return;
     }
     if (segments.length === 4 && segments[3] === 'cancel' && method === 'POST') {
-      const taskId = decodeURIComponent(segments[2]);
+      const taskId = segment(segments[2]);
       const result = cancelTask(deps.ledger, taskId);
       if (!result.ok) {
         sendJson(response, 400, { ok: false, error: messageFor(result.code) });
@@ -1198,7 +1349,7 @@ async function route(
       return;
     }
     if (segments.length === 4 && segments[3] === 'verify' && method === 'POST') {
-      const reportId = Number.parseInt(decodeURIComponent(segments[2]), 10);
+      const reportId = Number.parseInt(segment(segments[2]), 10);
       const body = await readJsonBody(request);
       const verifiedAmount = readNumber(body, 'verifiedAmount');
       if (!Number.isFinite(reportId) || verifiedAmount === null) {
@@ -1222,7 +1373,7 @@ async function route(
       return;
     }
     if (segments.length === 4 && segments[3] === 'reject' && method === 'POST') {
-      const reportId = Number.parseInt(decodeURIComponent(segments[2]), 10);
+      const reportId = Number.parseInt(segment(segments[2]), 10);
       if (!Number.isFinite(reportId)) {
         sendJson(response, 400, { ok: false, error: '申报编号不合法' });
         return;
@@ -1242,7 +1393,8 @@ async function route(
   // /api/messages
   if (segments.length === 2 && segments[1] === 'messages') {
     if (method === 'GET') {
-      deps.ledger.markOperatorMessagesRead(deps.now());
+      // A GET does not change stored state. The page marks what it has shown
+      // with its own POST, and the read marker lives where that write belongs.
       sendJson(response, 200, {
         ok: true,
         messages: deps.ledger
@@ -1268,8 +1420,15 @@ async function route(
         sendJson(response, 400, { ok: false, error: '请选择 agent 并填写留言' });
         return;
       }
-      if (deps.ledger.getAgent(agent) === null) {
+      const recipient = deps.ledger.getAgent(agent);
+      if (recipient === null) {
         sendJson(response, 404, { ok: false, error: messageFor('agent_not_found') });
+        return;
+      }
+      // The other five agent routes already refuse a dead one; a message into a
+      // dead agent's inbox is the same mistake with less effect.
+      if (recipient.status !== 'alive') {
+        sendJson(response, 400, { ok: false, error: messageFor('agent_dead') });
         return;
       }
       const id = deps.ledger.appendMessage('operator', agent, text, deps.now());
@@ -1367,8 +1526,15 @@ async function route(
       sendJson(response, 400, { ok: false, error: '请选择 agent' });
       return;
     }
+    // Checked here, not only in the delegate: an existence check that lives in
+    // one implementation is not a rule about the route, and a different delegate
+    // would answer a ghost with 200.
     const target = deps.ledger.getAgent(agent);
-    if (target !== null && target.status !== 'alive') {
+    if (target === null) {
+      sendJson(response, 404, { ok: false, error: messageFor('agent_not_found') });
+      return;
+    }
+    if (target.status !== 'alive') {
       sendJson(response, 400, { ok: false, error: messageFor('agent_dead') });
       return;
     }
@@ -1396,7 +1562,11 @@ async function route(
       return;
     }
     const target = deps.ledger.getAgent(agent);
-    if (target !== null && target.status !== 'alive') {
+    if (target === null) {
+      sendJson(response, 404, { ok: false, error: messageFor('agent_not_found') });
+      return;
+    }
+    if (target.status !== 'alive') {
       sendJson(response, 400, { ok: false, error: messageFor('agent_dead') });
       return;
     }

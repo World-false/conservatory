@@ -456,6 +456,86 @@ describe('one redaction tick', () => {
 });
 
 describe('catching up the redactions a starving agent owes', () => {
+  /**
+   * The pace the body is configured for, measured at the wall clock. One
+   * interval of starvation takes exactly one interval's budget, whatever the
+   * number of ranges that interval is split into. Before the fix the counter
+   * counted wound rows instead of ticks, so a tick that drew six ranges was
+   * billed as six intervals and the next five were skipped.
+   */
+  const SHIPPED = {
+    redactionIntervalSeconds: 60,
+    redactionCharsPerTick: 46,
+    redactionMinRanges: 2,
+    redactionMaxRanges: 6,
+  };
+
+  /** A MEMORY long enough that every interval can always take its full budget. */
+  function longMemory(): string {
+    return body(
+      'The long afternoon by the window repeated itself in the same words until the light moved. '.repeat(400),
+    );
+  }
+
+  function runPace(
+    h: Harness,
+    random: () => number,
+    intervals: number,
+  ): { applied: number[]; chars: number[] } {
+    birthAgent(h, 'ada');
+    writeMemoryAtomic(h.paths, 'ada', longMemory());
+    // Satiety 100 at 0.05/s runs out after 2000 seconds: the episode starts there.
+    h.clock.advanceSeconds(2000);
+    const deps = depsFor(h, random);
+    const applied: number[] = [];
+    const chars: number[] = [];
+    for (let step = 0; step < intervals; step += 1) {
+      h.clock.advanceSeconds(SHIPPED.redactionIntervalSeconds);
+      applied.push(redactAgent(deps, 'ada').applied);
+      chars.push(h.ledger.untreatedRedactedChars('ada'));
+    }
+    return { applied, chars };
+  }
+
+  it('takes the full configured budget every interval, whatever ranges it is split into', () => {
+    // A real random source: the number of ranges drawn varies run to run, which
+    // is the condition that used to make the count drift.
+    let seed = 12345;
+    const random = (): number => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed / 2147483648;
+    };
+    const h = createHarness({ values: SHIPPED });
+    try {
+      const { applied, chars } = runPace(h, random, 60);
+      // Every interval was represented: none was skipped while text remained.
+      expect(applied.every((count) => count === 1)).toBe(true);
+      // And the cumulative loss is exactly what the configuration promises.
+      expect(chars[chars.length - 1]).toBe(60 * SHIPPED.redactionCharsPerTick);
+      // One tick per interval, not one per wound row.
+      const anchor = h.ledger.getSatietyAnchor('ada');
+      expect(anchor).not.toBeNull();
+      const starvationSince = starvationSinceOf(anchor!, h.values.satietyDecayPerSecond);
+      expect(h.ledger.countAppliedTicks('ada', starvationSince!)).toBe(60);
+      expect(h.ledger.listWounds('ada').length).toBeGreaterThan(60);
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  it('keeps the same pace with a single range, the control the old bug could not show', () => {
+    const h = createHarness({
+      values: { ...SHIPPED, redactionMinRanges: 1, redactionMaxRanges: 1 },
+    });
+    try {
+      const { applied, chars } = runPace(h, fixed(0), 60);
+      expect(applied.every((count) => count === 1)).toBe(true);
+      expect(chars[chars.length - 1]).toBe(60 * SHIPPED.redactionCharsPerTick);
+    } finally {
+      h.cleanup();
+    }
+  });
+
   it('applies every interval the wall clock passed and does not double-count', () => {
     const h = createHarness({
       values: { redactionCharsPerTick: 4, redactionMinRanges: 1, redactionMaxRanges: 1 },
@@ -994,6 +1074,89 @@ describe('the original text never reaches the agent', () => {
         }
         expect(readFileSync(path.join(home, name), 'utf8')).not.toContain(stolen);
       }
+    } finally {
+      h.cleanup();
+    }
+  });
+});
+
+describe('a tick that fails to write MEMORY does not charge twice', () => {
+  /** Wounds are committed in a transaction; MEMORY is written after it. */
+  it('reconciles the file against the ledger before planning the next tick', () => {
+    const h = createHarness({
+      values: { redactionCharsPerTick: 20, redactionMinRanges: 1, redactionMaxRanges: 1 },
+    });
+    try {
+      birthAgent(h, 'ada');
+      writeMemoryAtomic(h.paths, 'ada', body('Alpha bravo charlie delta echo foxtrot golf hotel india juliet.'));
+      h.clock.advanceSeconds(2000);
+      h.clock.advanceSeconds(60);
+
+      const failing = { ...depsFor(h, fixed(0)), writeMemory: () => { throw new Error('disk full'); } };
+      expect(() => redactAgent(failing, 'ada')).toThrow(/disk full/);
+
+      // The ledger holds the damage the file never showed.
+      expect(h.ledger.untreatedRedactedChars('ada')).toBe(20);
+      expect(readMemoryFile(h.paths, 'ada')).not.toContain(PLACEHOLDER);
+
+      h.clock.advanceSeconds(60);
+      const repaired = redactAgent(depsFor(h, fixed(0)), 'ada');
+      expect(repaired.applied).toBe(1);
+      // Exactly two intervals of damage, not three: the missed write was not a
+      // second physical loss of the same characters.
+      expect(h.ledger.untreatedRedactedChars('ada')).toBe(40);
+      // And the file now shows what the ledger says, placeholders and all.
+      expect((readMemoryFile(h.paths, 'ada').match(new RegExp(PLACEHOLDER, 'g')) ?? []).length).toBe(40);
+      // One wound per tick, never two over the same text.
+      const wounds = h.ledger.listWounds('ada');
+      expect(wounds.length).toBe(2);
+      expect(new Set(wounds.map((wound) => wound.tickIndex)).size).toBe(2);
+    } finally {
+      h.cleanup();
+    }
+  });
+});
+
+describe('a treatment whose rewrite is lost keeps its protection', () => {
+  it('does not re-wound or re-charge the region the agent paid for', () => {
+    const h = createHarness({
+      values: { redactionCharsPerTick: 20, redactionMinRanges: 1, redactionMaxRanges: 1 },
+    });
+    try {
+      birthAgent(h, 'ada');
+      writeMemoryAtomic(h.paths, 'ada', body('Alpha bravo charlie delta echo foxtrot golf hotel india juliet.'));
+      h.clock.advanceSeconds(2000);
+      h.clock.advanceSeconds(60);
+      redactAgent(depsFor(h, fixed(0)), 'ada');
+
+      const wound = h.ledger.listWounds('ada')[0];
+      expect(wound).toBeDefined();
+      const before = readMemoryFile(h.paths, 'ada');
+      const treated = treat(
+        { ledger: h.ledger, values: h.values, paths: h.paths, blackbox: h.blackbox, now: h.clock.now },
+        'ada',
+        wound!.id,
+        'ordinary',
+        'agent',
+      );
+      expect(treated.ok).toBe(true);
+      expect(h.ledger.untreatedRedactedChars('ada')).toBe(0);
+      const lifetimeAfterTreat = h.ledger.lifetimeRedactedChars('ada');
+
+      // The rewrite never landed: the file still shows the untreated placeholders.
+      writeMemoryAtomic(h.paths, 'ada', before);
+
+      // The next tick repairs the file from the ledger before it plans anything,
+      // so the paid-for region is not offered to the redactor again.
+      h.clock.advanceSeconds(60);
+      const next = redactAgent(depsFor(h, fixed(0)), 'ada');
+      expect(next.applied).toBe(1);
+      expect(h.ledger.untreatedRedactedChars('ada')).toBe(20);
+      expect(h.ledger.lifetimeRedactedChars('ada')).toBe(lifetimeAfterTreat + 20);
+      // The scar is visible in the file, and nothing shows the old wound.
+      const disk = readMemoryFile(h.paths, 'ada');
+      expect(disk).toContain('\u25AE(');
+      expect(h.ledger.getWound(wound!.id)?.status).toBe('scarred');
     } finally {
       h.cleanup();
     }

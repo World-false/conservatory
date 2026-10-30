@@ -82,8 +82,19 @@ export interface ModelConfigStoreOptions {
   env: { agent: ModelSettings; memory: ModelSettings };
   /** Overrides how the persisted roster is read (tests). */
   readPersisted?(): ModelsConfigData | null;
+  /**
+   * Overrides whether the roster file exists (tests). The distinction matters:
+   * a missing file is a first run and gets seeded, an invalid file is the
+   * operator's and is left alone.
+   */
+  modelsFileExists?(file: string): boolean;
   /** Overrides persistence (tests). Throws on failure. */
   persist?(data: ModelsConfigData): void;
+  /**
+   * Told when a roster file exists but does not validate, so the operator hears
+   * about it instead of running on a silently reseeded menu.
+   */
+  onInvalidRoster?(file: string, kind: 'invalid'): void;
   /**
    * Every living agent and the provider it is bound to. A provider that is
    * still in use cannot be deleted: an agent's brain is not a silent casualty
@@ -139,6 +150,24 @@ function copyProvider(provider: ModelProvider): ModelProvider {
 
 function copyData(data: ModelsConfigData): ModelsConfigData {
   return { ...data, providers: data.providers.map(copyProvider) };
+}
+
+/**
+ * What a provider looks like to a browser.
+ *
+ * The key itself never leaves the server: the console page only ever displays it
+ * masked, and the one route that needs the real value (`/api/models/test`) reads
+ * it from here. This sentinel is what the page sends back when the operator did
+ * not retype the key, so "unchanged" is distinguishable from "cleared".
+ */
+export const MASKED_API_KEY = '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022';
+
+/** The roster with every key replaced by the sentinel. */
+export function redactModelsData(data: ModelsConfigData): ModelsConfigData {
+  return {
+    ...data,
+    providers: data.providers.map((provider) => ({ ...provider, apiKey: MASKED_API_KEY, models: [...provider.models] })),
+  };
 }
 
 /**
@@ -312,7 +341,11 @@ function validateProviders(raw: unknown): ValidatedProviders | InvalidProviders 
     if (name === null || baseUrl === null) {
       return { ok: false, error: 'invalid_provider' };
     }
-    if (typeof apiKey !== 'string') {
+    if (typeof apiKey !== 'string' || apiKey.trim() === '') {
+      // A key that is empty or only spaces is not a key: it produces a request
+      // with no credential, which the console's own error text already promises
+      // is checked. A keyless local endpoint is served by putting anything in
+      // this field, so nothing legitimate is lost.
       return { ok: false, error: 'invalid_provider' };
     }
     if (!Array.isArray(rawModels)) {
@@ -343,18 +376,30 @@ export function createModelConfigStore(options: ModelConfigStoreOptions): ModelC
     options.persist ?? ((data: ModelsConfigData): void => persistModelsConfig(modelsPath, data));
 
   let data: ModelsConfigData;
-  // The reader itself answers null for a missing or unreadable file, so there
-  // is no existence check here to disagree with an injected one.
+  // The reader answers null for a missing file, and `readModelsConfig` also
+  // answers null for a file that exists but does not validate. Those are not the
+  // same thing, and treating them alike overwrote an operator's whole roster —
+  // providers and API keys — with the `.env` seed on a single bad edit.
+  const exists = options.modelsFileExists ?? ((file: string) => existsSync(file));
   const persisted = readPersisted(modelsPath);
   if (persisted === null) {
-    // First run since this feature landed: seed from .env and write the roster
-    // out, so the operator sees a working menu instead of an empty one.
-    data = seedFromEnv(options.env);
-    try {
-      persist(data);
-    } catch {
-      // A read-only location must not stop the conservatory from starting; the
-      // seeded roster stays live in memory for this run.
+    if (!exists(modelsPath)) {
+      // First run since this feature landed: seed from .env and write the roster
+      // out, so the operator sees a working menu instead of an empty one.
+      const seeded = seedFromEnv(options.env);
+      data = seeded;
+      try {
+        persist(seeded);
+      } catch {
+        // A read-only location must not stop the conservatory from starting; the
+        // seeded roster stays live in memory for this run.
+      }
+    } else {
+      // The file is there and does not validate. Leave it exactly as it is and
+      // report it: replacing it would destroy the operator's providers and keys
+      // with no backup, and the reason is theirs to fix.
+      data = seedFromEnv(options.env);
+      options.onInvalidRoster?.(modelsPath, 'invalid');
     }
   } else {
     data = persisted;
@@ -433,7 +478,16 @@ export function createModelConfigStore(options: ModelConfigStoreOptions): ModelC
             };
           }
         }
-        next.providers = validated.providers;
+        // A key the page sent back unchanged arrives as the sentinel, because the
+        // page never held the real one. Taking it literally would overwrite every
+        // saved key with eight bullets.
+        next.providers = validated.providers.map((provider) => {
+          if (provider.apiKey !== MASKED_API_KEY) {
+            return provider;
+          }
+          const existing = data.providers.find((candidate) => candidate.id === provider.id);
+          return { ...provider, apiKey: existing === undefined ? '' : existing.apiKey };
+        });
       }
 
       for (const key of [
@@ -505,6 +559,10 @@ export interface ResolvedAgentModel {
   source: 'binding' | 'roster' | 'env';
 }
 
+export type ModelResolution =
+  | { ok: true; resolved: ResolvedAgentModel }
+  | { ok: false; error: 'ledger_model_not_in_roster' | 'unknown_default_model' };
+
 /**
  * The brain one agent runs on, resolved in the order that protects it best.
  *
@@ -513,41 +571,72 @@ export interface ResolvedAgentModel {
  *     operator later does to the roster.
  *  2. The ledger's model name, matched against the roster — the path for an
  *     agent born before this feature existed and so without a binding.
- *  3. The `.env` default. An agent must always get a brain, even from a roster
- *     the operator has emptied out under it.
+ *  3. The `.env` default, for an agent whose ledger names nothing at all.
+ *
+ * What it will not do is answer a name the ledger does not carry. Falling
+ * through to the roster default used to mean an agent whose `MODEL.json` was
+ * missing silently ran on a different brain than every record of it said, and
+ * that brain was then frozen in for life. A refusal is recoverable; a silent
+ * swap is not, so an unresolvable agent keeps its ledger row and waits for the
+ * operator to bind it.
  */
 export function resolveAgentModel(input: {
   binding: AgentModelBindingLike | null;
   store: ModelConfigStore;
   ledgerModel: string;
   fallback: ModelSettings;
-}): ResolvedAgentModel {
+}): ModelResolution {
   const { binding, store, ledgerModel, fallback } = input;
   if (binding !== null) {
     return {
-      settings: {
-        baseUrl: binding.baseUrl,
-        apiKey: binding.apiKey,
-        model: binding.model,
-        ...(isReasoningEffort(binding.reasoningEffort)
-          ? { reasoningEffort: binding.reasoningEffort }
-          : {}),
+      ok: true,
+      resolved: {
+        settings: {
+          baseUrl: binding.baseUrl,
+          apiKey: binding.apiKey,
+          model: binding.model,
+          ...(isReasoningEffort(binding.reasoningEffort)
+            ? { reasoningEffort: binding.reasoningEffort }
+            : {}),
+        },
+        providerId: binding.providerId,
+        providerName: binding.providerName,
+        source: 'binding',
       },
-      providerId: binding.providerId,
-      providerName: binding.providerName,
-      source: 'binding',
     };
   }
-  const provider = store.providerOfModel(ledgerModel);
-  if (provider !== null) {
-    // An agent born before the roster has only a model name on its ledger row,
-    // so the operator's chosen thinking level for that same model is the only
-    // place it can come from. A different model name carries no effort: the
-    // level was never chosen for it.
+  if (ledgerModel.trim() === '') {
+    // Nothing names a brain yet: the operator's default is the only honest
+    // answer, and `.env` is the last resort if even that is unusable.
     const defaultSelection = store.defaultAgentSelection();
-    const effort =
-      ledgerModel === defaultSelection.model ? defaultSelection.reasoningEffort : undefined;
-    return {
+    const defaultProvider = store.getProvider(defaultSelection.providerId);
+    const settings = store.settingsFor(defaultSelection);
+    if (settings !== null && defaultProvider !== null) {
+      return {
+        ok: true,
+        resolved: {
+          settings,
+          providerId: defaultProvider.id,
+          providerName: defaultProvider.name,
+          source: 'roster',
+        },
+      };
+    }
+    return { ok: true, resolved: { settings: fallback, providerId: '', providerName: '', source: 'env' } };
+  }
+  const provider = store.providerOfModel(ledgerModel);
+  if (provider === null) {
+    return { ok: false, error: 'ledger_model_not_in_roster' };
+  }
+  // An agent born before the roster has only a model name on its ledger row, so
+  // the operator's chosen thinking level for that same model is the only place
+  // it can come from. A different model name carries no effort: the level was
+  // never chosen for it.
+  const defaultSelection = store.defaultAgentSelection();
+  const effort = ledgerModel === defaultSelection.model ? defaultSelection.reasoningEffort : undefined;
+  return {
+    ok: true,
+    resolved: {
       settings: {
         baseUrl: provider.baseUrl,
         apiKey: provider.apiKey,
@@ -557,20 +646,8 @@ export function resolveAgentModel(input: {
       providerId: provider.id,
       providerName: provider.name,
       source: 'roster',
-    };
-  }
-  const defaultSelection = store.defaultAgentSelection();
-  const defaultProvider = store.getProvider(defaultSelection.providerId);
-  const settings = store.settingsFor(defaultSelection);
-  if (settings !== null && defaultProvider !== null) {
-    return {
-      settings,
-      providerId: defaultProvider.id,
-      providerName: defaultProvider.name,
-      source: 'roster',
-    };
-  }
-  return { settings: fallback, providerId: '', providerName: '', source: 'env' };
+    },
+  };
 }
 
 /** The shape `resolveAgentModel` needs; kept structural so binding.ts stays free of this module. */

@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { fork, type ChildProcess } from 'node:child_process';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -44,6 +45,7 @@ import {
   createModelConfigStore,
   resolveAgentModel,
   type ModelConfigStore,
+  type ModelResolution,
   type ResolvedAgentModel,
 } from '../organs/models/store';
 import {
@@ -310,13 +312,13 @@ export class AgentProcess implements WorkerTransport {
       }
       if (this.activeRoundId !== null) {
         const lost = this.activeRoundId;
+        // The detail names the code and signal, which `endRoundInFlight` cannot
+        // know; everything else about settling lives there.
+        this.deps.onProblem(
+          this.agent,
+          `the agent process exited during round ${lost} (code ${String(code)}, signal ${String(signal)})`,
+        );
         this.activeRoundId = null;
-        const detail = `the agent process exited during round ${lost} (code ${String(code)}, signal ${String(signal)})`;
-        this.deps.onProblem(this.agent, detail);
-        // A round the process died inside must be settled here: otherwise
-        // run() waits on a promise nobody will ever resolve, the round row
-        // stays open, and the agent is busy forever. The handler is captured
-        // before it is cleared, and the message is delivered synchronously.
         const handler = this.handler;
         if (handler !== null) {
           handler({
@@ -324,7 +326,7 @@ export class AgentProcess implements WorkerTransport {
             roundId: lost,
             endReason: 'model_error',
             finalReply: null,
-            error: detail,
+            error: `the agent process exited during round ${lost} (code ${String(code)}, signal ${String(signal)})`,
           });
         }
       }
@@ -391,9 +393,21 @@ export class AgentProcess implements WorkerTransport {
     }
   }
 
+  /**
+   * Stops the agent's process. A round it is in the middle of is ended here,
+   * not left to the child's exit event.
+   *
+   * `stop()` used to clear the message handler before killing the child, so the
+   * exit handler found nothing to deliver the round's end to: `run()` waited on
+   * a promise nobody would resolve, and the round row kept a null end time. The
+   * agent was not left busy — `stopAgentProcess` clears the registry first — but
+   * that round's transcript was never folded into MEMORY and nothing recorded
+   * why it stopped. Ending it here makes the stop path and the crash path agree.
+   */
   stop(): void {
     const child = this.child;
     this.child = null;
+    this.endRoundInFlight('the agent process was stopped');
     this.handler = null;
     this.startedModel = null;
     this.startedLimits = null;
@@ -401,6 +415,34 @@ export class AgentProcess implements WorkerTransport {
       child.send({ type: 'shutdown' });
       child.kill();
     }
+  }
+
+  /**
+   * Delivers a `round_end` for a round this process is still carrying.
+   *
+   * A round that ends without one leaves `run()` awaiting a promise that will
+   * never settle, the round row open, and that round's memory consolidation
+   * unreachable. Both the stop path and the exit path call this, so there is one
+   * place that knows the rule rather than one guard per caller.
+   */
+  private endRoundInFlight(detail: string): void {
+    const lost = this.activeRoundId;
+    if (lost === null) {
+      return;
+    }
+    this.activeRoundId = null;
+    this.deps.onProblem(this.agent, detail);
+    const handler = this.handler;
+    if (handler === null) {
+      return;
+    }
+    handler({
+      type: 'round_end',
+      roundId: lost,
+      endReason: 'model_error',
+      finalReply: null,
+      error: detail,
+    });
   }
 
   private route(raw: unknown): void {
@@ -467,18 +509,30 @@ function main(): void {
   const modelStore: ModelConfigStore = createModelConfigStore({
     configPath: paths.configPath,
     env: { agent: models.agent, memory: models.memory },
+    // The roster file is the operator's. A file that fails validation is left
+    // exactly as it is and reported, never replaced with the .env seed: that
+    // would delete every provider and key they had with no backup.
+    onInvalidRoster: (file, kind) => {
+      process.stderr.write(
+        `模型清单 ${file} 无法解析（${kind}），已按 .env 的默认值运行，文件未被改动；请修正该文件后重启。
+`,
+      );
+    },
     listBoundAgents: () =>
       ledger
         .listAgents()
         .filter((agent) => agent.status === 'alive')
         .map((agent) => ({
           agent: agent.name,
-          providerId: resolveAgentModel({
-            binding: readModelBinding(paths, agent.name),
-            store: modelStore,
-            ledgerModel: agent.model,
-            fallback: models.agent,
-          }).providerId,
+          providerId: (() => {
+            const resolution = resolveAgentModel({
+              binding: readModelBinding(paths, agent.name),
+              store: modelStore,
+              ledgerModel: agent.model,
+              fallback: models.agent,
+            });
+            return resolution.ok ? resolution.resolved.providerId : '';
+          })(),
         })),
   });
   // The memory brain is resolved per request, not fixed at boot. An operator
@@ -589,8 +643,12 @@ function main(): void {
    * The brain one agent runs on, resolved in the order that protects it best:
    * its own frozen binding first, then the ledger's model name matched against
    * the roster, then the `.env` default. See `resolveAgentModel`.
+   *
+   * A refusal is a real outcome: it means the roster no longer serves the model
+   * the ledger names, and the agent must wait for the operator rather than wake
+   * on a different brain than every record of it says.
    */
-  function resolveModelFor(name: string): ResolvedAgentModel {
+  function resolveModelFor(name: string): ModelResolution {
     const record = ledger.getAgent(name);
     return resolveAgentModel({
       binding: readModelBinding(paths, name),
@@ -613,9 +671,17 @@ function main(): void {
       // wake-ups must reach the next process, and this object is cached.
       resolveModel: () => {
         const resolved = resolveModelFor(agent);
+        if (!resolved.ok) {
+          // The roster no longer serves this agent's model. Starting a process
+          // on a different brain is the silent swap this whole path prevents, so
+          // the start fails with the reason and the round reports it.
+          throw new Error(
+            `the model this agent records (${ledger.getAgent(agent)?.model ?? '?'}) is not in the model roster (${resolved.error}); bind the agent to a model in the console`,
+          );
+        }
         return {
-          settings: resolved.settings,
-          modelName: modelFingerprint(resolved.settings, resolved.providerId),
+          settings: resolved.resolved.settings,
+          modelName: modelFingerprint(resolved.resolved.settings, resolved.resolved.providerId),
         };
       },
       roundContextCapTokens: values.roundContextCapTokens,
@@ -762,7 +828,11 @@ function main(): void {
     const resolved = resolveModelFor(name);
     const outdated = shouldRetireProcess({
       startedModel: running.currentModel(),
-      resolvedModel: modelFingerprint(resolved.settings, resolved.providerId),
+      // A refusal is not a reason to tear a live process down: it cannot name a
+      // brain, so there is nothing to compare against.
+      resolvedModel: resolved.ok
+        ? modelFingerprint(resolved.resolved.settings, resolved.resolved.providerId)
+        : null,
     });
     if (!outdated) {
       return retireProcessIfLimitsChanged(name, running);
@@ -801,15 +871,28 @@ function main(): void {
   /**
    * An agent born before the roster existed has no binding of its own, so it
    * would otherwise follow the operator's later edits — the exact silent change
-   * of brain this design exists to prevent. The first wake-up freezes what it
-   * is already running on into its own home, and after that it is like any
-   * other agent. A failure here is a notice, never a refusal to wake.
+   * of brain this design exists to prevent. The first wake-up freezes the brain
+   * the ledger already names into the agent's own home, and after that it is like
+   * any other agent. A failure here is a notice, never a refusal to wake.
    */
   function ensureBindingFrozen(name: string): void {
     if (readModelBinding(paths, name) !== null) {
       return;
     }
-    const resolved = resolveModelFor(name);
+    const resolution = resolveModelFor(name);
+    if (!resolution.ok) {
+      // The roster does not serve the ledger's model. Nothing is frozen, because
+      // freezing the default here is precisely the silent swap: the ledger would
+      // go on saying one model while the agent ran another, for life.
+      addNotice(
+        state,
+        name,
+        `${name} 记录的模型（${ledger.getAgent(name)?.model ?? '?'}）不在当前模型清单里，无法冻结绑定；请在控制台给它指定一个模型。`,
+        now(),
+      );
+      return;
+    }
+    const resolved = resolution.resolved;
     if (resolved.providerId === '') {
       // Nothing in the roster describes this model; `.env` is all there is, and
       // there is no provider id to freeze. Leave it on the environment.
@@ -830,7 +913,7 @@ function main(): void {
       addNotice(
         state,
         name,
-        `${name} 出生时还没有模型清单，已把它当前使用的模型（${resolved.settings.model}）冻结到自己文件夹的 MODEL.json。`,
+        `${name} 出了模型清单出现之前，已把它记录里正在使用的模型（${resolved.settings.model}）冻结到自己文件夹的 MODEL.json。`,
         now(),
       );
     } catch (error) {
@@ -1179,9 +1262,14 @@ function main(): void {
     },
   });
 
+  const operatorToken = randomBytes(32).toString('hex');
   const consoleServer = createConsoleServer({
     values,
     paths,
+    // Minted here and printed in the banner: the operator's page gets it as an
+    // HttpOnly cookie, and a confined command that guesses the URL has no way to
+    // read it.
+    operatorToken,
     sandboxPolicy: sandbox,
     modelStore,
     ledger,
@@ -1237,24 +1325,26 @@ function main(): void {
           providerName: provider.name,
           source: 'roster',
         };
-      } else if (chosenEffort !== undefined) {
-        // No model was named, but a level was: keep whatever brain the defaults
-        // resolve to and only change how hard it is asked to think.
-        const fallback = resolveAgentModel({
-          binding: null,
-          store: modelStore,
-          ledgerModel: '',
-          fallback: models.agent,
-        });
-        resolved = { ...fallback, settings: { ...fallback.settings, reasoningEffort: chosenEffort } };
       } else {
-        const fallback = resolveAgentModel({
+        // A newborn has no ledger model of its own, so the default applies; a
+        // resolution that cannot name one refuses the birth rather than writing
+        // a ledger row no brain answers to.
+        const byDefault = resolveAgentModel({
           binding: null,
           store: modelStore,
           ledgerModel: '',
           fallback: models.agent,
         });
-        resolved = fallback;
+        if (!byDefault.ok) {
+          return { ok: false, error: byDefault.error };
+        }
+        resolved =
+          chosenEffort === undefined
+            ? byDefault.resolved
+            : {
+                ...byDefault.resolved,
+                settings: { ...byDefault.resolved.settings, reasoningEffort: chosenEffort },
+              };
       }
       const result = createAgent({
         name,
@@ -1376,7 +1466,8 @@ function main(): void {
     process.stdout.write(
       [
         'Conservatory 已启动。',
-        `控制台：http://127.0.0.1:${values.consolePort}`,
+        `控制台：http://127.0.0.1:${values.consolePort}（页面会自动带上访问凭据）`,
+        `操作员口令：${operatorToken}`,
         `心跳：每 ${values.heartbeatSeconds} 秒`,
         `槽位：${listSlots(values, ledger).length}`,
         `活着的 Agent：${living.length === 0 ? '（还没有，请在控制台的空槽位里创建一个）' : living.map((a) => a.name).join(', ')}`,

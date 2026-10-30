@@ -23,7 +23,7 @@
  * process is ever started with a wider token.
  */
 
-import { existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { win32Sync } from './win32';
@@ -37,6 +37,8 @@ import {
   denyCapability,
   grantCapability,
   grantReadOnly,
+  pathMentionsTrustee,
+  revokeTrustee,
 } from './acl';
 import { spawnSandboxedProcess } from './process';
 import {
@@ -71,6 +73,12 @@ export interface ExecuteCommandOptions {
   readMode: 'blacklist' | 'whitelist';
   /** Directories that must stay unreadable and unwritable. */
   readBlacklist: string[];
+  /**
+   * The body's own boundary: SUPERVISOR/, other agents' homes, this agent's
+   * MEMORY. Denied whatever `writableDirs` says, so no operator entry can widen
+   * it. Falls back to nothing when a caller predates the split.
+   */
+  protectedPaths?: string[];
   /** Directories readable in whitelist mode (also readable in blacklist mode). */
   readWhitelist: string[];
   timeoutMs?: number;
@@ -83,6 +91,19 @@ export interface ExecuteCommandOptions {
   readOnlyFiles?: string[];
   /** Directory the child sees as TEMP/TMP; created when missing. */
   tempDir?: string;
+  /**
+   * The tree a grant can be revoked under. Grants are ACEs on disk, so a
+   * directory removed from `writableDirs` keeps its access unless something
+   * takes the ACE away; this is the boundary that something walks.
+   */
+  revocationScope?: string;
+  /**
+   * The grant record. Every writable directory granted by the previous call is
+   * listed here, so a removal can be revoked across a restart instead of only
+   * being remembered by the process that granted it. Without it a removal is
+   * never revoked.
+   */
+  grantRecordFile?: string;
 }
 
 export interface CommandResult {
@@ -139,6 +160,39 @@ function isStrictlyInside(inner: string, outer: string): boolean {
   return innerKey !== outerKey && innerKey.startsWith(`${outerKey}${path.sep}`);
 }
 
+/**
+ * Directories this workspace's capability SID was last granted over.
+ *
+ * A grant is an ACE on the directory itself, so it outlives both the policy
+ * that asked for it and the process that wrote it. The record is what makes
+ * removal possible after a restart: every directory named here that is no
+ * longer in `writableDirs` is revoked, then the record is rewritten to the
+ * current set. Without a record there is nothing to compare against, and
+ * "the policy takes effect on the next command" would only ever hold in the
+ * widening direction.
+ */
+function readGrantRecord(file: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'));
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed.filter((entry): entry is string => typeof entry === 'string');
+  } catch {
+    return [];
+  }
+}
+
+function writeGrantRecord(file: string, dirs: readonly string[]): void {
+  try {
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, `${JSON.stringify(dirs, null, 2)}\n`, 'utf8');
+  } catch {
+    // A record that cannot be written must not stop the command: the grant it
+    // would have described still lives in the ACL, and the next call retries.
+  }
+}
+
 function uniquePaths(candidates: readonly string[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
@@ -151,6 +205,19 @@ function uniquePaths(candidates: readonly string[]): string[] {
     out.push(path.resolve(candidate));
   }
   return out;
+}
+
+/**
+ * Directories that were granted last time but are not writable now.
+ *
+ * Only directories somebody actually granted are considered, so a removal is
+ * revoked from the record rather than by walking a tree: the walk was both slow
+ * and unbounded, and it had no memory across a restart.
+ */
+function revocableFromRecord(record: readonly string[], writableDirs: readonly string[]): string[] {
+  return uniquePaths(record).filter(
+    (previous) => !writableDirs.some((writable) => isSameOrInside(previous, writable)),
+  );
 }
 
 function delay(milliseconds: number): Promise<void> {
@@ -294,6 +361,15 @@ function truncate(text: string, limit: number): string {
 }
 
 /**
+ * Where the grant record for one workspace lives: inside the supervisor's own
+ * directory, because it describes ACLs the supervisor wrote and the agent must
+ * never be able to rewrite it.
+ */
+export function grantRecordPath(supervisorDir: string): string {
+  return path.join(path.resolve(supervisorDir), 'sandbox-grants.json');
+}
+
+/**
  * Run one command under the sandbox. The caller is responsible for passing a
  * `cwd` inside the agent's own workspace and for listing every path that must
  * stay out of its reach.
@@ -327,6 +403,21 @@ export async function executeSandboxedCommand(options: ExecuteCommandOptions): P
   let restrictedToken: NativePtr | null = null;
 
   try {
+    // 0. Revocation. A grant is an ACE on the directory itself, so it outlives
+    //    the policy that asked for it and the process that wrote it. Every
+    //    directory granted last time that is no longer writable is revoked here,
+    //    before anything is granted, and the record is rewritten to this call's
+    //    set.
+    const recordFile = options.grantRecordFile;
+    if (recordFile !== undefined) {
+      for (const directory of revocableFromRecord(readGrantRecord(recordFile), writableDirs)) {
+        if (existsSync(directory)) {
+          revokeTrustee(api, directory, capabilitySidPtr);
+        }
+      }
+      writeGrantRecord(recordFile, writableDirs);
+    }
+
     // 1. The writable allowlist. The token is deliberately NOT lowered to Low
     //    integrity and the directories are deliberately NOT labelled: the
     //    label write (a SACL) is refused under the project tree on this host
@@ -353,22 +444,40 @@ export async function executeSandboxedCommand(options: ExecuteCommandOptions): P
       grantReadOnly(api, resolved, capabilitySidPtr, worldSid);
     }
 
-    // 3. The deny side: configured blacklist, always-protected paths (including
-    //    MEMORY and MODEL.json) and any read-only files.
+    // 3. The deny side.
+    //
+    //    `protectedPaths` is the body's own set: SUPERVISOR/, every other
+    //    agent's home, this agent's MEMORY, MODEL.json and certificate. Nothing
+    //    the operator configures may widen it, so it is denied unconditionally.
+    //    An explicit DENY also beats the ALLOW that an ancestor in
+    //    `writableDirs` would otherwise inherit down into it — which is exactly
+    //    how one operator entry naming the project root used to open the ledger.
+    //
+    //    `readBlacklist` is the operator's list. A deny there inside a writable
+    //    directory would lock the agent out of its own workspace, so that one
+    //    case still yields.
+    for (const entry of uniquePaths(options.protectedPaths ?? [])) {
+      const resolved = path.resolve(entry);
+      if (!existsSync(resolved)) {
+        continue;
+      }
+      const directory = statSync(resolved).isDirectory();
+      denyCapability(
+        api,
+        resolved,
+        capabilitySidPtr,
+        FULL_DENY_ACCESS,
+        directory ? SUB_CONTAINERS_AND_OBJECTS_INHERIT : NO_INHERITANCE,
+      );
+    }
     for (const entry of uniquePaths(options.readBlacklist)) {
       const resolved = path.resolve(entry);
       if (!existsSync(resolved)) {
         continue;
       }
       const directory = statSync(resolved).isDirectory();
-      // A deny on a writable directory, or on one of its ancestors, would win
-      // over the allow ACE above and lock the agent out of its own workspace.
-      // The effective policy never produces that overlap; this guard keeps a
-      // hand-written call from doing something silently unusable.
-      const overlapsWritable = writableDirs.some(
-        (writable) => isSameOrInside(resolved, writable) || (directory && isSameOrInside(writable, resolved)),
-      );
-      if (!overlapsWritable) {
+      const insideWritable = writableDirs.some((writable) => isSameOrInside(resolved, writable));
+      if (!insideWritable) {
         denyCapability(
           api,
           resolved,

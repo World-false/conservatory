@@ -947,3 +947,35 @@ describe('the social tools', () => {
     }
   });
 });
+
+describe('a round that dies before the model answers', () => {
+  it('does not consume the inbox it was handed', async () => {
+    const h = createHarness({ values: FOUR_SLOTS });
+    try {
+      const agent = birthAgent(h, 'ada');
+      h.ledger.appendMessage('operator', 'ada', 'Please water the plants tomorrow.', h.clock.now());
+      expect(h.ledger.listUnreadMessages('ada').length).toBe(1);
+
+      // A model that fails on the round's first request: the agent never read
+      // the message it was given.
+      const errors: string[] = [];
+      const failing = initWorker(h, new ScriptedModelClient([]));
+      const outcome = await makeCoordinator(h, [], errors).run(agent, failing);
+      expect(outcome.endReason).toBe('model_error');
+      expect(outcome.finalReply).toBeNull();
+
+      // Nothing was consumed, so nothing was lost.
+      expect(h.ledger.listUnreadMessages('ada').map((message) => message.body)).toEqual([
+        'Please water the plants tomorrow.',
+      ]);
+
+      // And the next round that does answer sees it.
+      h.clock.advanceSeconds(h.values.heartbeatSeconds);
+      const second = await runRound(h, agent, [textResponse('I will water them.')]);
+      expect(wakeOf(second.worker).user).toContain('Please water the plants tomorrow.');
+      expect(h.ledger.listUnreadMessages('ada')).toEqual([]);
+    } finally {
+      h.cleanup();
+    }
+  });
+});

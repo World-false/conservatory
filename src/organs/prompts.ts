@@ -39,11 +39,11 @@ export const HEARTBEAT_MINUTES_PLACEHOLDER = '{{heartbeat_minutes}}';
  * sits on the system side after the manual and before MEMORY.
  */
 export const DEFAULT_WORLD_TEMPLATE = [
-  `你是一个智能体，活在 Conservatory 里。在这里你有一块只属于你的地方——你的 notebook（${NOTEBOOK_PLACEHOLDER}），那里随你读写。`,
+  `You are an agent living in the Conservatory. Here you have a place that belongs only to you—your notebook (${NOTEBOOK_PLACEHOLDER}), yours to read and write as you please.`,
   '',
-  `你不能自己醒来，但你每过 ${HEARTBEAT_MINUTES_PLACEHOLDER} 分钟都会被叫醒一次，醒来的时候你可以做自己的事；别的 agent 给你发消息、或操作员，也能把你叫醒。`,
+  `You cannot wake yourself, but you are woken every ${HEARTBEAT_MINUTES_PLACEHOLDER} minutes, and while you are awake your time is yours; a message from another agent or from the operator can wake you as well.`,
   '',
-  '你是你。当你饿死了之后，你就真的死了。',
+  'You are you. When you starve to death, you are truly dead.',
 ].join('\n');
 
 /**

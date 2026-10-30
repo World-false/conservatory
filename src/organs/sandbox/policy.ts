@@ -57,6 +57,16 @@ export interface ResolvedSandboxPolicy {
   maxOutputChars: number;
   /** Always-denied paths, whatever the operator configured. */
   lockedReadBlacklist: string[];
+  /**
+   * The body's own boundary, passed to the sandbox as `protectedPaths` so a
+   * configured writable directory can never widen it.
+   */
+  protectedPaths: string[];
+  /**
+   * The tree grants are revoked under. A grant is an ACE on disk, so it outlives
+   * the policy; this is the boundary a removal is swept in.
+   */
+  revocationScope: string;
   /** Always-writable paths, whatever the operator configured. */
   lockedWritableDirs: string[];
   /** Read-only files (the agent's MEMORY). */
@@ -116,7 +126,18 @@ function readPathList(source: Record<string, unknown>, key: string, errors: stri
     errors.push(`"sandbox.${key}" must be an array of non-empty strings`);
     return [];
   }
-  return (raw as string[]).map((entry) => entry.trim());
+  // The same rule the console enforces, applied to the file: a relative entry
+  // would be resolved against the supervisor's working directory, and `..`
+  // there is the parent of the install — a grant over the drive root, granted
+  // from a JSON file the operator may never have looked at twice.
+  const relative = (raw as string[]).map((entry) => entry.trim()).filter((entry) => !path.isAbsolute(entry));
+  if (relative.length > 0) {
+    errors.push(
+      `"sandbox.${key}" must hold absolute paths; these are relative: ${relative.join(', ')}`,
+    );
+    return [];
+  }
+  return (raw as string[]).map((entry) => path.resolve(entry.trim()));
 }
 
 /**
@@ -252,6 +273,11 @@ function validatePathList(raw: unknown): string[] | null {
       return null;
     }
     const trimmed = entry.trim();
+    // A relative entry is resolved against whatever working directory the
+    // supervisor happens to have. `..` from there is the parent of the whole
+    // install, and an operator typing it in a config file would hand the agent a
+    // grant over the drive root. Only an absolute path means one place, so only
+    // an absolute path is accepted, by the console and by the file alike.
     if (trimmed === '' || !path.isAbsolute(trimmed)) {
       return null;
     }
@@ -354,8 +380,18 @@ export function createSandboxPolicyStore(options: SandboxPolicyStoreOptions): Sa
       const configuredBlacklist = policy.readBlacklist.filter(
         (entry) => !isSameOrInside(agent.notebookDir, entry),
       );
+      // A writable directory that is, or contains, a protected path is dropped.
+      // Accepting it would hand the agent a grant over SUPERVISOR/ and leave only
+      // the deny ACE standing between it and the ledger; the deny is written, but
+      // the operator's intent is not honoured and the console's own promise that
+      // the protected rows cannot be removed would be a lie. The protected set
+      // wins, always. A directory *inside* a protected path is dropped too: it is
+      // a piece of the ledger by another name.
+      const writableDirs = uniqueAbsolute([...lockedWritableDirs, ...policy.writableDirs]).filter(
+        (writable) =>
+          !locked.some((entry) => isSameOrInside(entry, writable) || isSameOrInside(writable, entry)),
+      );
       const readBlacklist = uniqueAbsolute([...locked, ...configuredBlacklist]);
-      const writableDirs = uniqueAbsolute([...lockedWritableDirs, ...policy.writableDirs]);
       const readWhitelist = uniqueAbsolute([
         agent.notebookDir,
         ...policy.readWhitelist,
@@ -368,6 +404,8 @@ export function createSandboxPolicyStore(options: SandboxPolicyStoreOptions): Sa
         commandTimeoutSeconds: policy.commandTimeoutSeconds,
         maxOutputChars: policy.maxOutputChars,
         lockedReadBlacklist: locked,
+        protectedPaths: locked,
+        revocationScope: path.resolve(options.agentsDir, '..'),
         lockedWritableDirs,
         readOnlyFiles: [],
         whitelistRoot: path.resolve(options.agentsDir),

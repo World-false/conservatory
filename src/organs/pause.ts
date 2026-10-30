@@ -71,6 +71,13 @@ export function createPauseOrgan(deps: PauseOrganDeps): PauseOrgan {
     // Resuming: the paused span counts toward nobody's hunger, so every anchor
     // restarts from the frozen value at this instant, and every held claim gets
     // the paused span back on its clock.
+    //
+    // `pausedSince` is written in the same transaction as the switch now, so a
+    // torn state should not exist. A database written by an older build can
+    // still hold one, and the safe reading of "paused, but nobody recorded when
+    // it began" is that the operator's pause charged nothing: the anchor's own
+    // value is carried forward rather than decayed across a span we cannot
+    // measure. Charging it would turn a crash into days of retroactive hunger.
     const since = current.pausedSince;
     const pausedDurationMs = since === null ? 0 : Math.max(0, now - since);
     for (const agent of ledger.listAgents()) {
@@ -81,7 +88,10 @@ export function createPauseOrgan(deps: PauseOrganDeps): PauseOrgan {
       if (anchor === null) {
         continue;
       }
-      const frozen = computeSatiety(anchor, since ?? now, values.satietyDecayPerSecond);
+      const frozen =
+        since === null
+          ? Math.min(anchor.value, values.satietyMax)
+          : computeSatiety(anchor, since, values.satietyDecayPerSecond);
       ledger.setSatietyAnchor(agent.name, frozen, now);
     }
     ledger.shiftClaimedTaskTimes(pausedDurationMs, now);

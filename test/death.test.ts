@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
@@ -13,6 +13,7 @@ import {
   type DeathDeps,
 } from '../src/organs/death';
 import type { DeathCause } from '../src/organs/ledger';
+import { eraseAgent } from '../src/organs/erasure';
 import { createTask } from '../src/organs/taskboard';
 import { birthAgent, createHarness, type Harness } from './helpers';
 
@@ -179,17 +180,30 @@ describe('death', () => {
     }
   });
 
-  it('writes the death event to the black box and never deletes it', () => {
+  it('writes the death event to the day file of that death, and never deletes it', () => {
     const h = createHarness();
     try {
       birthAgent(h, 'ada');
-      const before = h.blackbox.listDays('ada');
+      // A round first, so the file exists before the death and the death has to
+      // append to it rather than create it.
+      h.blackbox.append('ada', 'round_start', h.clock.now(), 1, { model: 'm' });
+      const day = new Date(h.clock.now()).toISOString().slice(0, 10);
+      const file = path.join(h.blackbox.dirOf('ada'), `${day}.jsonl`);
+      // The old assertion here was `after.length >= before.length` with `before`
+      // always empty: 0 >= 0, which cannot fail. These name the file and the
+      // entry, so a death that logged nothing fails.
+      expect(h.blackbox.listDays('ada')).toEqual([day]);
+
       die(depsFor(h, []), 'ada', 'redaction_death_line', h.clock.now());
-      const after = h.blackbox.listDays('ada');
-      expect(after.length).toBeGreaterThanOrEqual(before.length);
-      const entries = h.blackbox.readRecentRounds('ada', 5).flatMap((round) => round.entries);
-      expect(entries.some((entry) => entry.kind === 'death')).toBe(true);
-      expect(readdirSync(h.paths.blackboxDir).length).toBeGreaterThan(0);
+
+      expect(existsSync(file)).toBe(true);
+      const entries = readFileSync(file, 'utf8')
+        .split('\n')
+        .filter((line) => line.trim() !== '')
+        .map((line) => JSON.parse(line) as { kind: string; cause?: string });
+      const death = entries.find((entry) => entry.kind === 'death');
+      expect(death).toBeDefined();
+      expect(death?.cause).toBe('redaction_death_line');
     } finally {
       h.cleanup();
     }
@@ -228,11 +242,58 @@ describe('death', () => {
 });
 
 describe('the causes of death are exactly two', () => {
-  it('accepts only the two declared causes', () => {
-    const causes: DeathCause[] = ['redaction_death_line', 'operator_termination'];
-    expect(causes.length).toBe(2);
+  it('refuses a stored certificate whose cause is outside the declared set', () => {
+    const h = createHarness();
+    try {
+      birthAgent(h, 'ada');
+      die(depsFor(h, []), 'ada', 'redaction_death_line', h.clock.now());
+      // The old test asserted on a locally built array, so it could not fail
+      // whatever the production code did. This one asks the reader that parses
+      // a stored row, which is where the declared set is actually enforced.
+      const certificate = h.ledger.getDeathCertificate('ada');
+      expect(certificate?.cause).toBe('redaction_death_line');
+
+      const raw = new DatabaseSync(h.paths.ledgerPath);
+      try {
+        // The certificate table is append-only; a tampered cause is refused
+        // outright, which is stronger than the reader rejecting it.
+        expect(() =>
+          raw.exec("UPDATE death_certificates SET cause = 'old_age' WHERE agent = 'ada'"),
+        ).toThrow(/append-only/);
+      } finally {
+        raw.close();
+      }
+      // And a stored body naming a cause outside the set does not parse as one.
+      expect(ledgerRefusesUnknownCause(h)).toBe(true);
+    } finally {
+      h.cleanup();
+    }
   });
 });
+
+/** True when the reader refuses a cause it does not declare. */
+function ledgerRefusesUnknownCause(h: Harness): boolean {
+  const raw = new DatabaseSync(h.paths.ledgerPath);
+  try {
+    // Insert a row directly, past the append-only guard's reach only in the
+    // sense that the cause is what is being tested: the reader must reject it.
+    const body = JSON.stringify({ name: 'ghost', cause: 'old_age' });
+    raw.exec(
+      `INSERT INTO death_certificates (agent, died_at, cause, body) VALUES ('ghost', 1, 'old_age', '${body.replace(/'/g, "''")}')`,
+    );
+    try {
+      h.ledger.getDeathCertificate('ghost');
+      return false;
+    } catch {
+      return true;
+    }
+  } catch {
+    // A refusal at the INSERT is an even earlier rejection of the same fact.
+    return true;
+  } finally {
+    raw.close();
+  }
+}
 
 describe('the death line is the only mechanism that can kill by hunger', () => {
   function redactInto(h: Harness, agent: string, count: number): void {
@@ -451,6 +512,229 @@ describe('the death line is the only mechanism that can kill by hunger', () => {
       } finally {
         raw.close();
       }
+    } finally {
+      h.cleanup();
+    }
+  });
+});
+
+describe('death is not blocked by damaged evidence, and cannot be written back', () => {
+  /** A complete, valid black-box entry, so the file is well-formed before damage. */
+  function writeRound(h: Harness, agent: string): void {
+    h.blackbox.append(agent, 'round_start', h.clock.now(), 1, { model: 'test-model' });
+    h.blackbox.append(agent, 'round_end', h.clock.now(), 1, { endReason: 'final', finalReply: 'ok' });
+  }
+
+  /** Truncates the last line, exactly what a power cut in the middle of a write leaves. */
+  function corrupt(h: Harness, agent: string): void {
+    const day = new Date(h.clock.now()).toISOString().slice(0, 10);
+    const file = path.join(h.blackbox.dirOf(agent), `${day}.jsonl`);
+    const text = readFileSync(file, 'utf8');
+    const cut = text.lastIndexOf('\n{');
+    writeFileSync(file, `${text.slice(0, cut + 1)}{"kind": "round_end", "at": `, 'utf8');
+  }
+
+  it('kills an agent past the line even when its black box is truncated', () => {
+    const h = createHarness({ values: { deathLineChars: 10 } });
+    try {
+      birthAgent(h, 'ada');
+      writeRound(h, 'ada');
+      h.ledger.insertWound({
+        agent: 'ada',
+        sentenceId: h.ledger.insertFrozenSentence('ada', 'x'.repeat(20), h.clock.now()),
+        offset: 0,
+        length: 20,
+        originalText: 'x'.repeat(20),
+        starvationSince: 1,
+        tickIndex: 1,
+        createdAt: h.clock.now(),
+      });
+      corrupt(h, 'ada');
+      expect(() => h.blackbox.readRecentRounds('ada', 5)).toThrow(/not valid JSON/);
+
+      const stopped: string[] = [];
+      const outcome = checkDeathLine(depsFor(h, stopped), 'ada');
+      expect(outcome?.ok).toBe(true);
+      expect(h.ledger.getAgent('ada')?.status).toBe('dead');
+      expect(stopped).toEqual(['ada']);
+      expect(existsSync(path.join(agentHomeDir(h.paths, 'ada'), DEATH_CERTIFICATE_FILE))).toBe(true);
+      // The certificate is still facts: the rounds it could not read are absent.
+      const certificate = parseDeathCertificate(h.ledger.getDeathCertificate('ada')?.body ?? '');
+      expect(certificate?.lastActions).toEqual([]);
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  it('still records a real termination under the same corruption', () => {
+    const h = createHarness();
+    try {
+      birthAgent(h, 'ada');
+      writeRound(h, 'ada');
+      corrupt(h, 'ada');
+      const outcome = terminateByOperator(depsFor(h, []), 'ada', 'ada');
+      expect(outcome.ok).toBe(true);
+      expect(h.ledger.getAgent('ada')?.status).toBe('dead');
+      expect(h.ledger.getDeathCertificate('ada')?.cause).toBe('operator_termination');
+      expect(h.ledger.listInterventions('ada').some((row) => row.kind === 'force_terminate')).toBe(true);
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  it('refuses INSERT OR REPLACE and REPLACE INTO against a dead agent', () => {
+    const h = createHarness();
+    try {
+      birthAgent(h, 'ada');
+      die(depsFor(h, []), 'ada', 'redaction_death_line', h.clock.now());
+      expect(h.ledger.getAgent('ada')?.status).toBe('dead');
+
+      const raw = new DatabaseSync(h.paths.ledgerPath);
+      try {
+        // SQLite fires no BEFORE DELETE trigger for REPLACE unless
+        // recursive_triggers is on, so this is the vector the delete guard misses.
+        expect(() =>
+          raw.exec(
+            "INSERT OR REPLACE INTO agents (name, born_at, model, status) VALUES ('ada', 0, 'm', 'alive')",
+          ),
+        ).toThrow(/the dead do not return/);
+        expect(() =>
+          raw.exec("REPLACE INTO agents (name, born_at, model, status) VALUES ('ada', 0, 'm', 'alive')"),
+        ).toThrow(/the dead do not return/);
+      } finally {
+        raw.close();
+      }
+      expect(h.ledger.getAgent('ada')?.status).toBe('dead');
+      expect(h.ledger.getDeathCertificate('ada')).not.toBeNull();
+    } finally {
+      h.cleanup();
+    }
+  });
+});
+
+describe('the starvation pass keeps going past a damaged log', () => {
+  it('leaves every later agent its own interval, and kills only the one that is due', () => {
+    const h = createHarness({ values: { deathLineChars: 40, maxSlots: 3 } });
+    try {
+      for (const name of ['ada', 'bob', 'cara']) {
+        birthAgent(h, name);
+      }
+      // ada is past the line; bob and cara are not. Only ada's log is damaged.
+      h.ledger.insertWound({
+        agent: 'ada',
+        sentenceId: h.ledger.insertFrozenSentence('ada', 'x'.repeat(50), h.clock.now()),
+        offset: 0,
+        length: 50,
+        originalText: 'x'.repeat(50),
+        starvationSince: 1,
+        tickIndex: 1,
+        createdAt: h.clock.now(),
+      });
+      h.blackbox.append('ada', 'round_start', h.clock.now(), 1, { model: 'm' });
+      h.blackbox.append('ada', 'round_end', h.clock.now(), 1, { endReason: 'final' });
+      const day = new Date(h.clock.now()).toISOString().slice(0, 10);
+      const file = path.join(h.blackbox.dirOf('ada'), `${day}.jsonl`);
+      const text = readFileSync(file, 'utf8');
+      writeFileSync(file, `${text.slice(0, text.lastIndexOf('\n{') + 1)}{"kind": `, 'utf8');
+      expect(() => h.blackbox.readRecentRounds('ada', 5)).toThrow();
+
+      // The pass as the supervisor runs it: one iteration per living agent.
+      const stopped: string[] = [];
+      const deps = depsFor(h, stopped);
+      for (const agent of h.ledger.listAgents()) {
+        const outcome = checkDeathLine(deps, agent.name);
+        if (agent.name === 'ada') {
+          expect(outcome?.ok).toBe(true);
+        } else {
+          expect(outcome).toBeNull();
+        }
+      }
+      expect(stopped).toEqual(['ada']);
+      expect(h.ledger.getAgent('ada')?.status).toBe('dead');
+      expect(h.ledger.getAgent('bob')?.status).toBe('alive');
+      expect(h.ledger.getAgent('cara')?.status).toBe('alive');
+      // Every later agent still got its own certificate-free, untouched state:
+      // nothing about ada's damage reached them.
+      expect(h.ledger.untreatedRedactedChars('bob')).toBe(0);
+      expect(h.ledger.untreatedRedactedChars('cara')).toBe(0);
+    } finally {
+      h.cleanup();
+    }
+  });
+});
+
+describe('a dead agent black box is archived, not only left in place', () => {
+  it('copies every day file into ARCHIVE/ and says so in the certificate', () => {
+    const h = createHarness();
+    try {
+      birthAgent(h, 'ada');
+      h.blackbox.append('ada', 'round_start', h.clock.now(), 1, { model: 'm' });
+      h.blackbox.append('ada', 'round_end', h.clock.now(), 1, { endReason: 'final' });
+      const day = new Date(h.clock.now()).toISOString().slice(0, 10);
+      const live = path.join(h.blackbox.dirOf('ada'), `${day}.jsonl`);
+      const liveBytes = readFileSync(live);
+
+      die(depsFor(h, []), 'ada', 'redaction_death_line', h.clock.now());
+
+      // The live box is still there: death preserves, it does not cremate.
+      expect(existsSync(live)).toBe(true);
+      const archived = path.join(h.paths.blackboxDir, 'ARCHIVE', 'ada', `${day}.jsonl`);
+      expect(existsSync(archived)).toBe(true);
+      // Byte-identical, so the copy is evidence and not a summary.
+      expect(readFileSync(archived).equals(liveBytes)).toBe(true);
+
+      const certificate = parseDeathCertificate(h.ledger.getDeathCertificate('ada')?.body ?? '');
+      expect(certificate?.blackboxArchive).toBe(path.join('SUPERVISOR', 'blackbox', 'ARCHIVE', 'ada'));
+      // And the file a person reads says the same thing.
+      const rendered = readFileSync(path.join(agentHomeDir(h.paths, 'ada'), DEATH_CERTIFICATE_FILE), 'utf8');
+      expect(rendered).toContain('Black box archive:');
+      expect(rendered).toContain(path.join('ARCHIVE', 'ada'));
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  it('removes the live box and the archive together on total erasure', () => {
+    const h = createHarness();
+    try {
+      birthAgent(h, 'ada');
+      h.blackbox.append('ada', 'round_start', h.clock.now(), 1, { model: 'm' });
+      const day = new Date(h.clock.now()).toISOString().slice(0, 10);
+      const live = path.join(h.blackbox.dirOf('ada'), `${day}.jsonl`);
+      die(depsFor(h, []), 'ada', 'redaction_death_line', h.clock.now());
+      const archived = path.join(h.paths.blackboxDir, 'ARCHIVE', 'ada', `${day}.jsonl`);
+      expect(existsSync(live)).toBe(true);
+      expect(existsSync(archived)).toBe(true);
+
+      const outcome = eraseAgent(
+        {
+          ledger: h.ledger,
+          paths: h.paths,
+          blackbox: h.blackbox,
+          now: h.clock.now,
+          stopProcess: () => undefined,
+          onNotice: () => undefined,
+        },
+        'ada',
+      );
+      expect(outcome.ok).toBe(true);
+      // Erasure destroys history; a surviving copy would make that a fiction.
+      expect(existsSync(live)).toBe(false);
+      expect(existsSync(archived)).toBe(false);
+      expect(existsSync(path.join(h.paths.blackboxDir, 'ARCHIVE', 'ada'))).toBe(false);
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  it('dies with a certificate even when it has logged nothing', () => {
+    const h = createHarness();
+    try {
+      birthAgent(h, 'ada');
+      const outcome = die(depsFor(h, []), 'ada', 'operator_termination', h.clock.now());
+      expect(outcome.ok).toBe(true);
+      const certificate = parseDeathCertificate(h.ledger.getDeathCertificate('ada')?.body ?? '');
+      expect(certificate?.blackboxArchive).toBeNull();
     } finally {
       h.cleanup();
     }

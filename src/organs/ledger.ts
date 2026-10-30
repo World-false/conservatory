@@ -589,6 +589,19 @@ WHEN NOT EXISTS (SELECT 1 FROM erase_permits WHERE agent = OLD.name)
 BEGIN
   SELECT RAISE(ABORT, 'agents is append-only');
 END;
+-- SQLite does not fire a BEFORE DELETE trigger for the delete half of
+-- INSERT OR REPLACE unless recursive_triggers is on, and it is off by default.
+-- The insert half does fire, and it runs while the row it is about to replace is
+-- still visible, so a guard there closes the resurrection path the delete guard
+-- misses. Erasure is unaffected: it removes the row first, so by the time a new
+-- agent takes the name there is nothing left to find.
+DROP TRIGGER IF EXISTS agents_no_replace_dead;
+CREATE TRIGGER agents_no_replace_dead
+BEFORE INSERT ON agents
+WHEN EXISTS (SELECT 1 FROM agents WHERE name = NEW.name AND status = 'dead')
+BEGIN
+  SELECT RAISE(ABORT, 'the dead do not return');
+END;
 `;
 
 /**
@@ -748,13 +761,25 @@ export class Ledger {
     };
   }
 
+  /**
+   * The conservatory-wide pause. "paused" is stored as "1"/"0", and pausedSince
+   * is the instant the pause started, so a restart keeps the same anchor.
+   *
+   * Both rows are written in one transaction. Two separate writes could be torn
+   * by a crash into `{paused: true, pausedSince: null}`, and resuming from that
+   * state has no anchor to subtract: the whole pause would be charged to the
+   * agents as hunger. One transaction means the operator comes back either
+   * paused-with-an-anchor or not paused at all, both of which charge nothing.
+   */
   setPauseState(paused: boolean, pausedSince: number | null): void {
-    this.setSetting(PAUSE_KEY, paused ? '1' : '0');
-    if (paused && pausedSince !== null) {
-      this.setSetting(PAUSE_SINCE_KEY, String(pausedSince));
-    } else {
-      this.db.prepare('DELETE FROM settings WHERE key = ?').run(PAUSE_SINCE_KEY);
-    }
+    this.transaction(() => {
+      this.setSetting(PAUSE_KEY, paused ? '1' : '0');
+      if (paused && pausedSince !== null) {
+        this.setSetting(PAUSE_SINCE_KEY, String(pausedSince));
+      } else {
+        this.db.prepare('DELETE FROM settings WHERE key = ?').run(PAUSE_SINCE_KEY);
+      }
+    });
   }
 
   // --------------------------------------------------------------- balance
@@ -1032,10 +1057,19 @@ export class Ledger {
    * How many redaction ticks have already been applied since this hunger
    * episode began. A new episode (eating, or a resume) has a new
    * starvationSince, so the old count no longer matches anything.
+   *
+   * One tick writes one wound row per range it draws — between the configured
+   * minimum and maximum — so the rows are not the ticks. Counting rows made the
+   * ledger think it had paid several intervals for one, and the debt went
+   * negative: damage ran at roughly a quarter of the configured pace and the
+   * death line was four times further away than the console said. The tick
+   * index is the identity of a tick, so it is what gets counted.
    */
   countAppliedTicks(agent: string, starvationSince: number): number {
     const row = this.db
-      .prepare('SELECT COUNT(*) AS total FROM wounds WHERE agent = ? AND starvation_since = ?')
+      .prepare(
+        'SELECT COUNT(DISTINCT tick_index) AS total FROM wounds WHERE agent = ? AND starvation_since = ?',
+      )
       .get(agent, starvationSince);
     if (row === undefined) {
       return 0;
@@ -1487,6 +1521,19 @@ export class Ledger {
     this.db
       .prepare(`UPDATE messages SET read_at = ? WHERE id IN (${placeholders}) AND read_at IS NULL`)
       .run(at, ...ids);
+  }
+
+  /**
+   * Puts messages back in the inbox. The one caller is a round that died before
+   * the model ever saw them: it was handed an inbox it never read, so consuming
+   * it would lose the message to a 503 or a timeout.
+   */
+  markMessagesUnread(ids: readonly number[]): void {
+    if (ids.length === 0) {
+      return;
+    }
+    const placeholders = ids.map(() => '?').join(', ');
+    this.db.prepare(`UPDATE messages SET read_at = NULL WHERE id IN (${placeholders})`).run(...ids);
   }
 
   listMessagesForAgent(agent: string): MessageRecord[] {
