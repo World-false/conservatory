@@ -78,4 +78,4 @@ It warns first and **requires the agent's name to be typed**, and it is refused 
 
 ## License
 
-MIT
+MIT. See [LICENSE](LICENSE).
